@@ -259,7 +259,7 @@ const TRIPS = [
     to: { name: "Nürnberg Hbf", time: "10:08" },
     trainLine: "ICE 524",
     priceNote: "Bayern-Ticket ~29 €/особа",
-    contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@pohody_bavaria", phone: "+49 151 000 00000" },
+    contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@pohody_bavaria", phone: "+49 155 617 12359" },
     heroGradient: "linear-gradient(180deg, rgba(0,0,0,0.14) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.22) 100%), radial-gradient(130% 125% at 60% 28%, rgba(235,200,110,0.40) 0%, rgba(235,200,110,0) 55%), linear-gradient(118deg, #b05c06 0%, #d37412 36%, #de9226 64%, #e6bd5d 100%)",
     coords: { lat: 49.4521, lng: 11.0767 },
     meetingPoint: "München Hbf, платформа 14, біля першого вагона. Приходьте за 15 хв до відправлення.",
