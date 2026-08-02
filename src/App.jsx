@@ -985,7 +985,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           return (
             <div style={{ position: "sticky", bottom: 12, marginTop: 4 }}>
               <div style={{ background: "rgba(80,104,60,0.06)", padding: "10px 12px 12px", borderRadius: 18 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.greenDark, textAlign: "center", marginBottom: 9, letterSpacing: 0.2 }}>{t("signUp")}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.card, textAlign: "center", marginBottom: 9, letterSpacing: 0.2 }}>{t("signUp")}</div>
                 <div style={{ display: "flex", gap: 8 }}>
                   {tgUrl ? (
                     <a href={tgUrl} target="_blank" rel="noreferrer" style={tgBtn}><Send size={16} /> Telegram</a>
