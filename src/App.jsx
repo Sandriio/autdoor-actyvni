@@ -17,6 +17,10 @@ const LANGS = [
   { code: "en", label: "English", display: "EN" },
   { code: "ru", label: "Русский", display: "RU" },
 ];
+// Особистий Telegram організатора для кнопки «Записатися у поїздку».
+// Кнопка Telegram у блоці контактів веде на групу (поле telegram у contact),
+// а кнопка запису — саме сюди, з передзаповненим текстом.
+const SIGNUP_TELEGRAM = "@Sku_la";
 const T = {
   appSubtitle: { uk: "Одноденні поїздки в гори та міста", en: "Day trips to mountains and cities", de: "Tagesausflüge in Berge und Städte", ru: "Однодневные поездки в горы и города" },
   upcomingTrips: { uk: "Найближчі поїздки", en: "Upcoming trips", de: "Kommende Ausflüge", ru: "Ближайшие поездки" },
@@ -214,7 +218,7 @@ const TRIPS = [
       { from: "Murnau", fromTime: "09:18", platform: "Гл. 2", train: "RB 60", to: "Garmisch-Partenkirchen", toTime: "09:53" },
     ],
     priceNote: "Bayern-Ticket ~29 €/особа (групово дешевше)",
-    contact: { name: "Андрій", role: "Організатор", telegram: "https://t.me/+nJ_GveXnf7I0YjMy", phone: "+49 155 617 12359" },
+    contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@autdoor_actyvni", phone: "+49 155 617 12359" },
     heroGradient: "linear-gradient(180deg, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.18) 100%), radial-gradient(135% 130% at 88% 95%, rgba(190,205,90,0.40) 0%, rgba(190,205,90,0) 55%), linear-gradient(120deg, #1b92dc 0%, #38a3e0 32%, #5fb0c8 56%, #8fbf8a 78%, #aece5f 100%)",
     coords: { lat: 47.4917, lng: 11.0958 },
     meetingPoint: "Біля головного входу München Hbf, під табло відправлень. Шукайте жовтий прапорець «Аутдор Активні».",
@@ -259,7 +263,7 @@ const TRIPS = [
     to: { name: "Nürnberg Hbf", time: "10:08" },
     trainLine: "ICE 524",
     priceNote: "Bayern-Ticket ~29 €/особа",
-    contact: { name: "Андрій", role: "Організатор", telegram: "https://t.me/+nJ_GveXnf7I0YjMy", phone: "+49 155 617 12359" },
+    contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@autdoor_actyvni", phone: "+49 155 617 12359" },
     heroGradient: "linear-gradient(180deg, rgba(0,0,0,0.14) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.22) 100%), radial-gradient(130% 125% at 60% 28%, rgba(235,200,110,0.40) 0%, rgba(235,200,110,0) 55%), linear-gradient(118deg, #b05c06 0%, #d37412 36%, #de9226 64%, #e6bd5d 100%)",
     coords: { lat: 49.4521, lng: 11.0767 },
     meetingPoint: "München Hbf, платформа 14, біля першого вагона. Приходьте за 15 хв до відправлення.",
@@ -307,7 +311,7 @@ const TRIPS = [
       { from: "Garmisch-Partenkirchen", fromTime: "10:00", platform: "Гл. 1", train: "Zugspitzbahn", to: "Eibsee", toTime: "10:25" },
     ],
     priceNote: "—",
-    contact: { name: "Андрій", role: "Організатор", telegram: "https://t.me/+nJ_GveXnf7I0YjMy", phone: "+49 155 617 12359" },
+    contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@autdoor_actyvni", phone: "+49 155 617 12359" },
     heroGradient: "linear-gradient(180deg, rgba(0,0,0,0.13) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.20) 100%), radial-gradient(130% 125% at 72% 50%, rgba(225,150,90,0.48) 0%, rgba(225,150,90,0) 54%), linear-gradient(118deg, #951333 0%, #bf0c20 32%, #cf2a26 54%, #db7d4e 82%, #c5a566 100%)",
     coords: { lat: 47.4571, lng: 10.9817 },
     meetingPoint: "München Hbf, головний вхід біля каси. Звідти їдемо разом.",
@@ -962,9 +966,9 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
 
         {STATUS[trip.status]?.group === "upcoming" && (() => {
           const list = (trip.contacts && trip.contacts.length > 0) ? trip.contacts : (trip.contact ? [trip.contact] : []);
-          const withTg = list.find((c) => c && c.telegram);
           const withWa = list.find((c) => c && c.phone);
-          const tgHandle = withTg?.telegram?.replace("@", "").trim();
+          // Запис іде на особистий акаунт (SIGNUP_TELEGRAM), а не на групу.
+          const tgHandle = (SIGNUP_TELEGRAM || list.find((c) => c && c.telegram)?.telegram || "").replace("@", "").trim();
           const waNumber = withWa?.phone?.replace(/\D/g, "");
           const message = `${t("signUpMsg")}: ${tc(trip.title)}${trip.dateLabel ? ` (${trip.dateLabel})` : ""}`;
           const tgUrl = tgHandle ? `https://t.me/${tgHandle}?text=${encodeURIComponent(message)}` : null;
@@ -1080,7 +1084,7 @@ const BLANK_TRIP = () => ({
   trainLine: "",
   legs: [{ from: "München Hbf", fromTime: "", platform: "", train: "", to: "", toTime: "" }],
   priceNote: "",
-  contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@pohody_bavaria", phone: "" },
+  contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@autdoor_actyvni", phone: "+49 155 617 12359" },
   heroGradient: "linear-gradient(120deg, #1b92dc 0%, #38a3e0 32%, #5fb0c8 56%, #8fbf8a 78%, #aece5f 100%)",
   coords: { lat: 47.5, lng: 11.0 },
   meetingPoint: "",
@@ -1472,7 +1476,7 @@ export default function App() {
   const [editing, setEditing] = useState(null); // trip object being edited, or "new"
   const [pinOpen, setPinOpen] = useState(false);
   const [pin, setPin] = useState("");
-  const ADMIN_PIN = "7391"; // змініть на свій
+  const ADMIN_PIN = "7391"; // PIN організатора
 
   // Group trips by their status group. "done"/"cancelled" → Минулі; the rest
   // (upcoming, recruiting, ongoing, postponed) → Найближчі. At the start of a
