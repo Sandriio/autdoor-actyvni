@@ -980,7 +980,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
             );
           }
           const btnBase = { flex: 1, color: "#fff", border: "none", padding: "14px 10px", borderRadius: 14, fontSize: 14, fontWeight: 700, boxShadow: "0 6px 18px rgba(60,79,44,0.3)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, textDecoration: "none", boxSizing: "border-box" };
-          const tgBtn = { ...btnBase, background: C.green, cursor: tgUrl ? "pointer" : "not-allowed", opacity: tgUrl ? 1 : 0.55 };
+          const tgBtn = { ...btnBase, background: "#229ed9", cursor: tgUrl ? "pointer" : "not-allowed", opacity: tgUrl ? 1 : 0.55 };
           const waBtn = { ...btnBase, background: "#25d366", cursor: waUrl ? "pointer" : "not-allowed", opacity: waUrl ? 1 : 0.55 };
           return (
             <div style={{ position: "sticky", bottom: 12, marginTop: 4 }}>
