@@ -214,7 +214,7 @@ const TRIPS = [
       { from: "Murnau", fromTime: "09:18", platform: "Гл. 2", train: "RB 60", to: "Garmisch-Partenkirchen", toTime: "09:53" },
     ],
     priceNote: "Bayern-Ticket ~29 €/особа (групово дешевше)",
-    contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@pohody_bavaria", phone: "+49 151 000 00000" },
+    contact: { name: "Андрій", role: "Організатор", telegram: "@Sku_la", phone: "+49 155 617 12359" },
     heroGradient: "linear-gradient(180deg, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.18) 100%), radial-gradient(135% 130% at 88% 95%, rgba(190,205,90,0.40) 0%, rgba(190,205,90,0) 55%), linear-gradient(120deg, #1b92dc 0%, #38a3e0 32%, #5fb0c8 56%, #8fbf8a 78%, #aece5f 100%)",
     coords: { lat: 47.4917, lng: 11.0958 },
     meetingPoint: "Біля головного входу München Hbf, під табло відправлень. Шукайте жовтий прапорець «Аутдор Активні».",
