@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
-  Sun, CloudRain, Wind, Droplets, Navigation, Calendar, ArrowLeft,
+  Sun, CloudRain, Wind, Droplets, Navigation, Calendar, ArrowLeft, ArrowUp,
   Footprints, TrendingUp, TrendingDown, Users, Info, Snowflake, Phone, Send, Signal, MessageCircle,
   Waves, Building2, Camera, Settings, Pencil, Trash2, TreePine, MountainSnow, Landmark, Bike
 } from "lucide-react";
@@ -214,11 +214,11 @@ const TRIPS = [
       { from: "Murnau", fromTime: "09:18", platform: "Гл. 2", train: "RB 60", to: "Garmisch-Partenkirchen", toTime: "09:53" },
     ],
     priceNote: "Bayern-Ticket ~29 €/особа (групово дешевше)",
-    contact: { name: "Андрій", role: "Організатор", telegram: "@Sku_la", phone: "+49 155 617 12359" },
+    contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@pohody_bavaria", phone: "+49 151 000 00000" },
     heroGradient: "linear-gradient(180deg, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.18) 100%), radial-gradient(135% 130% at 88% 95%, rgba(190,205,90,0.40) 0%, rgba(190,205,90,0) 55%), linear-gradient(120deg, #1b92dc 0%, #38a3e0 32%, #5fb0c8 56%, #8fbf8a 78%, #aece5f 100%)",
     coords: { lat: 47.4917, lng: 11.0958 },
     meetingPoint: "Біля головного входу München Hbf, під табло відправлень. Шукайте жовтий прапорець «Аутдор Активні».",
-    image: "", // вставте URL фото місця сюди
+    image: "/garmisch.jpg",
     placeType: "gorge",
     about:
       "Партнахкламм — одна з найвидовищніших ущелин Баварських Альп: вузький каньйон, прорізаний гірською річкою, з водоспадами й тунелями просто у скелі. Маршрут починається від олімпійського трампліну, веде крізь ущелину й виходить на альпійські луки з краєвидом на Цугшпітце.",
@@ -259,11 +259,11 @@ const TRIPS = [
     to: { name: "Nürnberg Hbf", time: "10:08" },
     trainLine: "ICE 524",
     priceNote: "Bayern-Ticket ~29 €/особа",
-    contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@pohody_bavaria", phone: "+49 155 617 12359" },
+    contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@pohody_bavaria", phone: "+49 151 000 00000" },
     heroGradient: "linear-gradient(180deg, rgba(0,0,0,0.14) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.22) 100%), radial-gradient(130% 125% at 60% 28%, rgba(235,200,110,0.40) 0%, rgba(235,200,110,0) 55%), linear-gradient(118deg, #b05c06 0%, #d37412 36%, #de9226 64%, #e6bd5d 100%)",
     coords: { lat: 49.4521, lng: 11.0767 },
     meetingPoint: "München Hbf, платформа 14, біля першого вагона. Приходьте за 15 хв до відправлення.",
-    image: "", // вставте URL фото місця сюди
+    image: "/nurnberg.jpg",
     placeType: "city",
     about:
       "Прогулянка історичним центром Нюрнберга: Імператорський замок, фахверкові будинки, ринкова площа з «Гарним фонтаном» і будинок Дюрера. Місто, де добре відчувається середньовічна Баварія — і де чудові ковбаски та пряники.",
@@ -311,7 +311,7 @@ const TRIPS = [
     heroGradient: "linear-gradient(180deg, rgba(0,0,0,0.13) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.20) 100%), radial-gradient(130% 125% at 72% 50%, rgba(225,150,90,0.48) 0%, rgba(225,150,90,0) 54%), linear-gradient(118deg, #951333 0%, #bf0c20 32%, #cf2a26 54%, #db7d4e 82%, #c5a566 100%)",
     coords: { lat: 47.4571, lng: 10.9817 },
     meetingPoint: "München Hbf, головний вхід біля каси. Звідти їдемо разом.",
-    image: "", // вставте URL фото місця сюди
+    image: "/eibsee.jpg",
     placeType: "lake",
     about:
       "Кільцевий маршрут навколо Айбзеє — гірського озера з бірюзовою водою біля підніжжя найвищої гори Німеччини. Рівна стежка, доступна майже всім, з постійним краєвидом на воду й вершини.",
@@ -943,14 +943,6 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                               <span style={{ fontSize: 13, color: C.green, fontWeight: 600 }}>{person.telegram}</span>
                             </a>
                           )}
-                          {person.phone && (
-                            <a href={`tel:${person.phone.replace(/\s/g, "")}`}
-                              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: C.raspSoft, textDecoration: "none", color: C.rasp }}>
-                              <Phone size={17} />
-                              <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{t("cPhone")}</span>
-                              <span style={{ fontSize: 13, fontWeight: 600 }}>{person.phone}</span>
-                            </a>
-                          )}
                         </div>
                       </div>
                     ))}
@@ -1044,6 +1036,22 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
             </button>
           </div>
         )}
+
+        {/* Bottom nav: back to main (left) and scroll to top (right) */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 18 }}>
+          <button
+            onClick={() => { onBack(); window.scrollTo(0, 0); }}
+            aria-label="На головний екран"
+            style={{ width: 46, height: 46, borderRadius: 23, border: "none", background: C.card, color: C.green, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 3px 10px rgba(60,79,44,0.18)" }}>
+            <ArrowLeft size={21} />
+          </button>
+          <button
+            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            aria-label="Догори"
+            style={{ width: 46, height: 46, borderRadius: 23, border: "none", background: C.card, color: C.green, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 3px 10px rgba(60,79,44,0.18)" }}>
+            <ArrowUp size={21} />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1464,7 +1472,7 @@ export default function App() {
   const [editing, setEditing] = useState(null); // trip object being edited, or "new"
   const [pinOpen, setPinOpen] = useState(false);
   const [pin, setPin] = useState("");
-  const ADMIN_PIN = "7391"; // змініть на свій
+  const ADMIN_PIN = "1234"; // змініть на свій
 
   // Group trips by their status group. "done"/"cancelled" → Минулі; the rest
   // (upcoming, recruiting, ongoing, postponed) → Найближчі. At the start of a
