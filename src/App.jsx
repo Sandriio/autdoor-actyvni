@@ -26,8 +26,8 @@ const SIGNUP_TELEGRAM = "@Sku_la";
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
 // Project Settings → API. Поки поля порожні — застосунок працює в
 // демо-режимі (поїздки з коду, без збереження).
-const SUPABASE_URL = "";      // напр.: "https://abcdefgh.supabase.co"
-const SUPABASE_ANON_KEY = ""; // довгий ключ "anon public"
+const SUPABASE_URL = "https://aalanelaevutbmmbelpx.supabase.co";      // напр.: "https://abcdefgh.supabase.co"
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhbGFuZWxhZXZ1dGJtbWJlbHB4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4NDcxMjAsImV4cCI6MjEwMTQyMzEyMH0.ZHMdF83-BA_Y3p1ILara45jjHW_Ner3UMHHaJVAl3gU"; // довгий ключ "anon public"
 
 const sbConfigured = () => SUPABASE_URL.trim() !== "" && SUPABASE_ANON_KEY.trim() !== "";
 const sbHeaders = () => ({
