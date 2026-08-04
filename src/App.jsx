@@ -94,6 +94,8 @@ const T = {
   wDemo: { uk: "Демо-дані. Підключається до Open-Meteo для реального прогнозу.", en: "Demo data. Connects to Open-Meteo for a real forecast.", de: "Demodaten. Verbindet sich mit Open-Meteo für echte Vorhersage.", ru: "Демоданные. Подключается к Open-Meteo для реального прогноза." },
   wLive: { uk: "Живий прогноз Open-Meteo на дату поїздки.", en: "Live Open-Meteo forecast for the trip date.", de: "Live-Prognose von Open-Meteo.", ru: "Живой прогноз Open-Meteo на дату поездки." },
   loading: { uk: "Завантаження…", en: "Loading…", de: "Laden…", ru: "Загрузка…" },
+  loadErrorMsg: { uk: "Не вдалося завантажити поїздки з бази. Перевірте інтернет-з'єднання.", en: "Couldn't load trips from the database. Check your connection.", de: "Ausflüge konnten nicht geladen werden. Verbindung prüfen.", ru: "Не удалось загрузить поездки из базы. Проверьте подключение к интернету." },
+  retry: { uk: "Спробувати ще раз", en: "Try again", de: "Erneut versuchen", ru: "Попробовать ещё раз" },
   // travel
   dTicket: { uk: "При наявності", en: "With a", de: "Mit", ru: "При наличии" },
   transfer: { uk: "Пересадка", en: "Transfer", de: "Umstieg", ru: "Пересадка" },
@@ -1612,6 +1614,7 @@ function TripForm({ initial, onSave, onCancel }) {
 export default function App() {
   const [trips, setTrips] = useState(() => (sbConfigured() ? [] : TRIPS));
   const [loadingTrips, setLoadingTrips] = useState(() => sbConfigured());
+  const [loadError, setLoadError] = useState(false);
   const [adminPin, setAdminPin] = useState("");
   const [lang, setLang] = useState("uk");
   // Keep the module-level CURRENT_LANG in sync so t() works everywhere.
@@ -1619,12 +1622,24 @@ export default function App() {
 
   // Завантаження поїздок із Supabase (якщо підключено). Якщо база
   // недоступна — тихо відкочуємось на демо-дані, щоб сайт ніколи не падав.
+  const reloadTrips = () => {
+    if (!sbConfigured()) return;
+    setLoadingTrips(true);
+    setLoadError(false);
+    sbLoadTrips()
+      .then((rows) => { setTrips(rows); setLoadingTrips(false); })
+      .catch(() => { setLoadingTrips(false); setLoadError(true); });
+  };
   useEffect(() => {
+    // ВАЖЛИВО: на невдалому читанні НЕ відкочуємось на демо-дані з коду —
+    // інакше старі поїздки виглядають так, ніби «повернулись» після
+    // видалення, хоча насправді це просто не оновився список. Замість
+    // цього показуємо явну помилку з кнопкою «Спробувати ще раз».
     if (!sbConfigured()) return;
     let cancelled = false;
     sbLoadTrips()
       .then((rows) => { if (!cancelled) { setTrips(rows); setLoadingTrips(false); } })
-      .catch(() => { if (!cancelled) { setTrips(TRIPS); setLoadingTrips(false); } });
+      .catch(() => { if (!cancelled) { setLoadingTrips(false); setLoadError(true); } });
     return () => { cancelled = true; };
   }, []);
   const [selected, setSelected] = useState(null);
@@ -1754,8 +1769,14 @@ export default function App() {
               <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, color: C.yellow }}>{t("upcomingTrips")}</h2>
             </div>
             {loadingTrips && <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: "0 4px 14px" }}>{t("loading")}</p>}
-            {!loadingTrips && upcoming.length === 0 && <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: "0 4px 14px" }}>{t("noUpcoming")}</p>}
-            {!loadingTrips && sbConfigured() && trips.length === 0 && isAdmin && (
+            {!loadingTrips && loadError && (
+              <div style={{ background: "rgba(0,0,0,0.22)", borderRadius: 12, padding: "12px 14px", margin: "0 4px 14px" }}>
+                <p style={{ fontSize: 13, color: "rgba(255,255,255,0.85)", margin: "0 0 10px", lineHeight: 1.5 }}>{t("loadErrorMsg")}</p>
+                <button onClick={reloadTrips} style={{ background: "rgba(255,255,255,0.15)", color: "#fff", border: "1.5px solid rgba(255,255,255,0.4)", borderRadius: 10, padding: "9px 16px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{t("retry")}</button>
+              </div>
+            )}
+            {!loadingTrips && !loadError && upcoming.length === 0 && <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: "0 4px 14px" }}>{t("noUpcoming")}</p>}
+            {!loadingTrips && !loadError && sbConfigured() && trips.length === 0 && isAdmin && (
               <button onClick={seedDemo} style={{ width: "100%", background: "rgba(255,255,255,0.12)", color: "#fff", border: "1.5px dashed rgba(255,255,255,0.5)", padding: "12px", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 14 }}>
                 Завантажити демо-поїздки в базу
               </button>
