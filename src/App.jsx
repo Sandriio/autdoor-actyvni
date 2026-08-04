@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
   Sun, CloudRain, Wind, Droplets, Navigation, Calendar, ArrowLeft, ArrowUp,
@@ -21,6 +21,38 @@ const LANGS = [
 // Кнопка Telegram у блоці контактів веде на групу (поле telegram у contact),
 // а кнопка запису — саме сюди, з передзаповненим текстом.
 const SIGNUP_TELEGRAM = "@Sku_la";
+
+// ── Етап 2: база даних Supabase ────────────────────────────────────────
+// Після створення проєкту в Supabase встав сюди два значення зі сторінки
+// Project Settings → API. Поки поля порожні — застосунок працює в
+// демо-режимі (поїздки з коду, без збереження).
+const SUPABASE_URL = "";      // напр.: "https://abcdefgh.supabase.co"
+const SUPABASE_ANON_KEY = ""; // довгий ключ "anon public"
+
+const sbConfigured = () => SUPABASE_URL.trim() !== "" && SUPABASE_ANON_KEY.trim() !== "";
+const sbHeaders = () => ({
+  apikey: SUPABASE_ANON_KEY,
+  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  "Content-Type": "application/json",
+});
+async function sbLoadTrips() {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/trips?select=data&order=updated_at.asc`, { headers: sbHeaders() });
+  if (!r.ok) throw new Error("load " + r.status);
+  const rows = await r.json();
+  return rows.map((x) => x.data);
+}
+async function sbSaveTrip(trip, pin) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/save_trip`, {
+    method: "POST", headers: sbHeaders(), body: JSON.stringify({ trip, pin }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+}
+async function sbDeleteTrip(tripId, pin) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/delete_trip`, {
+    method: "POST", headers: sbHeaders(), body: JSON.stringify({ trip_id: tripId, pin }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+}
 const T = {
   appSubtitle: { uk: "Одноденні поїздки в гори та міста", en: "Day trips to mountains and cities", de: "Tagesausflüge in Berge und Städte", ru: "Однодневные поездки в горы и города" },
   upcomingTrips: { uk: "Найближчі поїздки", en: "Upcoming trips", de: "Kommende Ausflüge", ru: "Ближайшие поездки" },
@@ -60,6 +92,8 @@ const T = {
   wWind: { uk: "Вітер", en: "Wind", de: "Wind", ru: "Ветер" },
   wHumidity: { uk: "Вологість", en: "Humidity", de: "Luftfeuchte", ru: "Влажность" },
   wDemo: { uk: "Демо-дані. Підключається до Open-Meteo для реального прогнозу.", en: "Demo data. Connects to Open-Meteo for a real forecast.", de: "Demodaten. Verbindet sich mit Open-Meteo für echte Vorhersage.", ru: "Демоданные. Подключается к Open-Meteo для реального прогноза." },
+  wLive: { uk: "Живий прогноз Open-Meteo на дату поїздки.", en: "Live Open-Meteo forecast for the trip date.", de: "Live-Prognose von Open-Meteo.", ru: "Живой прогноз Open-Meteo на дату поездки." },
+  loading: { uk: "Завантаження…", en: "Loading…", de: "Laden…", ru: "Загрузка…" },
   // travel
   dTicket: { uk: "При наявності", en: "With a", de: "Mit", ru: "При наличии" },
   transfer: { uk: "Пересадка", en: "Transfer", de: "Umstieg", ru: "Пересадка" },
@@ -127,23 +161,52 @@ const tc = (val) => {
   return val[CURRENT_LANG] || val.uk || val.en || val.ru || "";
 };
 
-// ── Auto-translate hook (Method 2 — activates after publishing) ─────────
-// In this preview there is no server, so this returns the original text.
-// When the app is hosted, replace the body with a call to your translation
-// endpoint (DeepL free tier covers ~3–4 trips/month at no cost). Example:
-//
-//   const res = await fetch("/api/translate", {
-//     method: "POST",
-//     headers: { "Content-Type": "application/json" },
-//     body: JSON.stringify({ text, source: "uk", target: lang }),
-//   });
-//   return (await res.json()).translation;
-//
-// The server route holds the DeepL API key (never expose it in the client)
-// and calls https://api-free.deepl.com/v2/translate.
-async function autoTranslate(text, targetLang) {
-  // Preview fallback: no network translation available here.
-  return text;
+// ── Автопереклад вмісту (DeepL через /api/translate на Vercel) ────────
+// Викликається при збереженні поїздки: всі текстові поля перекладаються
+// на EN і RU та зберігаються як {uk,en,ru}. Якщо ключ DeepL не задано або
+// сервер недоступний — вміст лишається українським (tc() це переживе).
+const ukOf = (v) => (v == null ? "" : (typeof v === "string" ? v : (v.uk || v.en || v.ru || "")));
+const TRANSLATABLE = (trip) => {
+  const acc = [];
+  const push = (get, set) => acc.push({ get, set });
+  push(() => trip.title, (v) => (trip.title = v));
+  push(() => trip.subtitle, (v) => (trip.subtitle = v));
+  push(() => trip.about, (v) => (trip.about = v));
+  push(() => trip.difficultyNote, (v) => (trip.difficultyNote = v));
+  push(() => trip.meetingPoint, (v) => (trip.meetingPoint = v));
+  (trip.route || []).forEach((st) => { push(() => st.name, (v) => (st.name = v)); push(() => st.note, (v) => (st.note = v)); });
+  (trip.cafes || []).forEach((c) => { push(() => c.note, (v) => (c.note = v)); push(() => c.tag, (v) => (c.tag = v)); });
+  (trip.packing || []).forEach((_, i) => push(() => trip.packing[i], (v) => (trip.packing[i] = v)));
+  const cl = (trip.contacts && trip.contacts.length ? trip.contacts : (trip.contact ? [trip.contact] : []));
+  cl.forEach((c) => push(() => c.role, (v) => (c.role = v)));
+  (trip.sections || []).forEach((sec) => push(() => sec.title, (v) => (sec.title = v)));
+  return acc;
+};
+async function deeplBatch(texts, target) {
+  const r = await fetch("/api/translate", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ texts, target }),
+  });
+  if (!r.ok) throw new Error("translate http " + r.status);
+  const j = await r.json();
+  if (!j || !Array.isArray(j.translations)) throw new Error("translate disabled");
+  return j.translations;
+}
+async function translateTripContent(trip0) {
+  const trip = JSON.parse(JSON.stringify(trip0));
+  const acc = TRANSLATABLE(trip);
+  const idx = []; const texts = [];
+  acc.forEach((a, i) => { const v = ukOf(a.get()).trim(); if (v !== "") { idx.push(i); texts.push(v); } });
+  if (texts.length === 0) return trip;
+  const [en, ru] = await Promise.all([deeplBatch(texts, "EN"), deeplBatch(texts, "RU")]);
+  idx.forEach((ai, k) => acc[ai].set({ uk: texts[k], en: en[k] || texts[k], ru: ru[k] || texts[k] }));
+  return trip;
+}
+// Готує поїздку до редагування: всі багатомовні поля → прості укр. рядки.
+function toEditable(trip0) {
+  const trip = JSON.parse(JSON.stringify(trip0));
+  TRANSLATABLE(trip).forEach((a) => a.set(ukOf(a.get())));
+  return trip;
 }
 
 // Primary green #50683c · Accent raspberry #b1284b · warm neutral third
@@ -668,6 +731,97 @@ const resolveSections = (trip) => {
   return DEFAULT_SECTIONS.map((s) => ({ visible: true, type: s.type, title: t(s.tkey) }));
 };
 
+// ── Жива погода (Open-Meteo, безкоштовно, без ключів) ─────────────────
+// Тягне прогноз на дату поїздки (до 16 днів наперед) за координатами.
+// Якщо дати нема, вона в минулому або мережа недоступна — показує
+// демо-погоду, збережену в поїздці.
+const WMO_MAP = [
+  { codes: [0], icon: "sun", uk: "Ясно", en: "Clear", ru: "Ясно" },
+  { codes: [1, 2], icon: "sun", uk: "Переважно ясно", en: "Mostly clear", ru: "Преимущественно ясно" },
+  { codes: [3], icon: "cloud", uk: "Хмарно", en: "Cloudy", ru: "Облачно" },
+  { codes: [45, 48], icon: "cloud", uk: "Туман", en: "Fog", ru: "Туман" },
+  { codes: [51, 53, 55, 56, 57], icon: "rain", uk: "Мряка", en: "Drizzle", ru: "Морось" },
+  { codes: [61, 63, 65, 66, 67, 80, 81, 82], icon: "rain", uk: "Дощ", en: "Rain", ru: "Дождь" },
+  { codes: [71, 73, 75, 77, 85, 86], icon: "snow", uk: "Сніг", en: "Snow", ru: "Снег" },
+  { codes: [95, 96, 99], icon: "rain", uk: "Гроза", en: "Thunderstorm", ru: "Гроза" },
+];
+const wmoInfo = (code) => WMO_MAP.find((m) => m.codes.includes(code)) || WMO_MAP[2];
+
+function LiveWeather({ trip }) {
+  const [live, setLive] = useState(null);
+  const [mode, setMode] = useState("fallback"); // fallback | loading | live
+  useEffect(() => {
+    let cancelled = false;
+    const d = (trip.date || "").trim();
+    const lat = trip.coords?.lat, lng = trip.coords?.lng;
+    if (!d || typeof lat !== "number" || typeof lng !== "number") { setMode("fallback"); return; }
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const target = new Date(d + "T00:00:00");
+    const diff = Math.round((target - today) / 86400000);
+    if (isNaN(diff) || diff < 0 || diff > 15) { setMode("fallback"); return; }
+    setMode("loading");
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
+      `&daily=weather_code,temperature_2m_max,apparent_temperature_max,precipitation_probability_max,wind_speed_10m_max` +
+      `&hourly=relative_humidity_2m&timezone=Europe%2FBerlin&start_date=${d}&end_date=${d}`;
+    fetch(url)
+      .then((r) => r.json())
+      .then((j) => {
+        if (cancelled) return;
+        const dl = j && j.daily;
+        if (!dl || !dl.time || dl.time.length === 0) { setMode("fallback"); return; }
+        const hum = j.hourly && j.hourly.relative_humidity_2m ? j.hourly.relative_humidity_2m[12] : null;
+        const info = wmoInfo(dl.weather_code[0]);
+        setLive({
+          tempC: Math.round(dl.temperature_2m_max[0]),
+          feelsC: Math.round(dl.apparent_temperature_max[0]),
+          rainPct: dl.precipitation_probability_max[0] ?? 0,
+          windKmh: Math.round(dl.wind_speed_10m_max[0]),
+          humidity: hum != null ? Math.round(hum) : trip.weather.humidity,
+          icon: info.icon, cond: info,
+        });
+        setMode("live");
+      })
+      .catch(() => { if (!cancelled) setMode("fallback"); });
+    return () => { cancelled = true; };
+  }, [trip.id, trip.date]);
+
+  const w = mode === "live" && live ? live : {
+    tempC: trip.weather.tempC, feelsC: trip.weather.feelsC, rainPct: trip.weather.rainPct,
+    windKmh: trip.weather.windKmh, humidity: trip.weather.humidity, icon: trip.weather.icon, cond: null,
+  };
+  const condText = mode === "live" && live ? (live.cond[CURRENT_LANG] || live.cond.uk) : tc(trip.weather.condition);
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ color: C.green }}>{weatherIcon(w.icon, 44)}</div>
+          <div>
+            <div style={{ fontSize: 32, fontWeight: 800, color: C.ink, lineHeight: 1 }}>{w.tempC}°</div>
+            <div style={{ fontSize: 12.5, color: C.muted }}>{t("wFeels")} {w.feelsC}°</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 14, color: "#4a4a42", fontWeight: 600 }}>{condText}</div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+        {[
+          { icon: <Droplets size={15} />, label: t("wRain"), value: `${w.rainPct}%` },
+          { icon: <Wind size={15} />, label: t("wWind"), value: `${w.windKmh} км/г` },
+          { icon: <Cloud size={15} />, label: t("wHumidity"), value: `${w.humidity}%` },
+        ].map((x, i) => (
+          <div key={i} style={{ background: C.greenSoft, borderRadius: 11, padding: "9px 6px", textAlign: "center" }}>
+            <div style={{ color: C.green, display: "flex", justifyContent: "center", marginBottom: 3 }}>{x.icon}</div>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>{x.value}</div>
+            <div style={{ fontSize: 10.5, color: C.muted }}>{x.label}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 11, fontSize: 11, color: C.faint, fontStyle: "italic" }}>
+        {mode === "live" ? t("wLive") : t("wDemo")}
+      </div>
+    </>
+  );
+}
+
 // ── Detail view ────────────────────────────────────────────────────────
 function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSetPostponedDate }) {
   const left = trip.spots - trip.spotsTaken;
@@ -755,34 +909,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
             },
             weather: {
               icon: weatherIcon(trip.weather.icon, 17), accent: C.green,
-              body: (
-                <>
-                  <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ color: C.green }}>{weatherIcon(trip.weather.icon, 44)}</div>
-                      <div>
-                        <div style={{ fontSize: 32, fontWeight: 800, color: C.ink, lineHeight: 1 }}>{trip.weather.tempC}°</div>
-                        <div style={{ fontSize: 12.5, color: C.muted }}>{t("wFeels")} {trip.weather.feelsC}°</div>
-                      </div>
-                    </div>
-                    <div style={{ fontSize: 14, color: "#4a4a42", fontWeight: 600 }}>{tc(trip.weather.condition)}</div>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
-                    {[
-                      { icon: <Droplets size={15} />, label: t("wRain"), value: `${trip.weather.rainPct}%` },
-                      { icon: <Wind size={15} />, label: t("wWind"), value: `${trip.weather.windKmh} км/г` },
-                      { icon: <Cloud size={15} />, label: t("wHumidity"), value: `${trip.weather.humidity}%` },
-                    ].map((w, i) => (
-                      <div key={i} style={{ background: C.greenSoft, borderRadius: 11, padding: "9px 6px", textAlign: "center" }}>
-                        <div style={{ color: C.green, display: "flex", justifyContent: "center", marginBottom: 3 }}>{w.icon}</div>
-                        <div style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>{w.value}</div>
-                        <div style={{ fontSize: 10.5, color: C.muted }}>{w.label}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ marginTop: 11, fontSize: 11, color: C.faint, fontStyle: "italic" }}>{t("wDemo")}</div>
-                </>
-              ),
+              body: <LiveWeather trip={trip} />,
             },
             travel: {
               icon: <Train size={17} />, accent: C.rasp,
@@ -958,7 +1085,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           const r = renderers[sec.type];
           if (!r) return null;
           return (
-            <Section key={sec.type} icon={r.icon} title={sec.title} accent={r.accent}>
+            <Section key={sec.type} icon={r.icon} title={tc(sec.title)} accent={r.accent}>
               {r.body}
             </Section>
           );
@@ -1172,6 +1299,7 @@ function TripForm({ initial, onSave, onCancel }) {
           <Field label="Назва місця *"><input style={inp} value={t.title} onChange={(e) => set({ title: e.target.value })} placeholder="Наприклад: Айбзеє" /></Field>
           <Field label="Короткий підпис"><input style={inp} value={t.subtitle} onChange={(e) => set({ subtitle: e.target.value })} placeholder="Смарагдове озеро під Цугшпітце" /></Field>
           <Field label="Дата (текстом) *"><input style={inp} value={t.dateLabel} onChange={(e) => set({ dateLabel: e.target.value })} placeholder="Субота, 21 червня" /></Field>
+          <Field label="Дата (для прогнозу погоди)"><input style={inp} type="date" value={t.date || ""} onChange={(e) => set({ date: e.target.value })} /></Field>
           <Field label="Опис місця"><textarea style={{ ...inp, minHeight: 90, resize: "vertical" }} value={t.about} onChange={(e) => set({ about: e.target.value })} placeholder="Розкажіть про місце, маршрут, що побачать учасники…" /></Field>
           <Field label="Посилання на фото (URL)"><input style={inp} value={t.image} onChange={(e) => set({ image: e.target.value })} placeholder="https://…  (можна лишити порожнім)" /></Field>
           <Field label="Тип місця (іконка для заглушки)">
@@ -1467,10 +1595,23 @@ function TripForm({ initial, onSave, onCancel }) {
 
 // ── Root ───────────────────────────────────────────────────────────────
 export default function App() {
-  const [trips, setTrips] = useState(TRIPS);
+  const [trips, setTrips] = useState(() => (sbConfigured() ? [] : TRIPS));
+  const [loadingTrips, setLoadingTrips] = useState(() => sbConfigured());
+  const [adminPin, setAdminPin] = useState("");
   const [lang, setLang] = useState("uk");
   // Keep the module-level CURRENT_LANG in sync so t() works everywhere.
   CURRENT_LANG = lang;
+
+  // Завантаження поїздок із Supabase (якщо підключено). Якщо база
+  // недоступна — тихо відкочуємось на демо-дані, щоб сайт ніколи не падав.
+  useEffect(() => {
+    if (!sbConfigured()) return;
+    let cancelled = false;
+    sbLoadTrips()
+      .then((rows) => { if (!cancelled) { setTrips(rows); setLoadingTrips(false); } })
+      .catch(() => { if (!cancelled) { setTrips(TRIPS); setLoadingTrips(false); } });
+    return () => { cancelled = true; };
+  }, []);
   const [selected, setSelected] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [editing, setEditing] = useState(null); // trip object being edited, or "new"
@@ -1486,22 +1627,47 @@ export default function App() {
   const past = trips.filter((t) => (STATUS[t.status]?.group || "upcoming") === "past");
   const trip = trips.find((t) => t.id === selected);
 
+  // Зберігає поїздку в Supabase (якщо підключено).
+  const persistTrip = async (t1) => {
+    if (!sbConfigured()) return;
+    try { await sbSaveTrip(t1, adminPin); }
+    catch (e) { alert("Не вдалося зберегти в базі даних.\n" + (e && e.message ? e.message : e)); }
+  };
   const saveTrip = (edited) => {
     setTrips((prev) => {
       const exists = prev.some((t) => t.id === edited.id);
       return exists ? prev.map((t) => (t.id === edited.id ? edited : t)) : [...prev, edited];
     });
     setEditing(null);
+    // У фоні: автопереклад вмісту (DeepL) і збереження в базу.
+    (async () => {
+      let final = edited;
+      try {
+        final = await translateTripContent(edited);
+        setTrips((prev) => prev.map((t) => (t.id === final.id ? final : t)));
+      } catch (e) { /* переклад вимкнено або недоступний — лишаємо укр. */ }
+      await persistTrip(final);
+    })();
   };
   const deleteTrip = (id) => {
     setTrips((prev) => prev.filter((t) => t.id !== id));
     setSelected(null);
+    if (sbConfigured()) sbDeleteTrip(id, adminPin).catch((e) => alert("Не вдалося видалити з бази.\n" + e.message));
   };
   const setStatus = (id, status) => {
+    const t0 = trips.find((t) => t.id === id);
     setTrips((prev) => prev.map((t) => t.id === id ? { ...t, status } : t));
+    if (t0) persistTrip({ ...t0, status });
   };
   const setPostponedDate = (id, date) => {
+    const t0 = trips.find((t) => t.id === id);
     setTrips((prev) => prev.map((t) => t.id === id ? { ...t, postponedTo: date } : t));
+    if (t0) persistTrip({ ...t0, postponedTo: date });
+  };
+  // Разове наповнення порожньої бази демо-поїздками (кнопка для організатора).
+  const seedDemo = async () => {
+    setTrips(TRIPS);
+    for (const t of TRIPS) { await persistTrip(t); }
   };
 
   // ---- Editing form view ----
@@ -1528,7 +1694,7 @@ export default function App() {
             trip={trip}
             onBack={() => setSelected(null)}
             isAdmin={isAdmin}
-            onEdit={() => setEditing(trip)}
+            onEdit={() => setEditing(toEditable(trip))}
             onDelete={() => deleteTrip(trip.id)}
             onSetStatus={(s) => setStatus(trip.id, s)}
             onSetPostponedDate={(d) => setPostponedDate(trip.id, d)}
@@ -1572,9 +1738,15 @@ export default function App() {
               <Calendar size={16} color={C.yellow} />
               <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, color: C.yellow }}>{t("upcomingTrips")}</h2>
             </div>
-            {upcoming.length === 0 && <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: "0 4px 14px" }}>{t("noUpcoming")}</p>}
+            {loadingTrips && <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: "0 4px 14px" }}>{t("loading")}</p>}
+            {!loadingTrips && upcoming.length === 0 && <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: "0 4px 14px" }}>{t("noUpcoming")}</p>}
+            {!loadingTrips && sbConfigured() && trips.length === 0 && isAdmin && (
+              <button onClick={seedDemo} style={{ width: "100%", background: "rgba(255,255,255,0.12)", color: "#fff", border: "1.5px dashed rgba(255,255,255,0.5)", padding: "12px", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 14 }}>
+                Завантажити демо-поїздки в базу
+              </button>
+            )}
             {upcoming.map((t) => (
-              <TripCard key={t.id} trip={t} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(t)} />
+              <TripCard key={t.id} trip={t} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} />
             ))}
 
             {past.length > 0 && (
@@ -1584,7 +1756,7 @@ export default function App() {
               </div>
             )}
             {past.map((t) => (
-              <TripCard key={t.id} trip={t} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(t)} />
+              <TripCard key={t.id} trip={t} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} />
             ))}
 
             {/* Footer + organizer gear */}
@@ -1615,13 +1787,13 @@ export default function App() {
               <input
                 autoFocus type="password" inputMode="numeric" value={pin}
                 onChange={(e) => setPin(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { if (pin === ADMIN_PIN) { setIsAdmin(true); setPinOpen(false); } else setPin(""); } }}
+                onKeyDown={(e) => { if (e.key === "Enter") { if (pin === ADMIN_PIN) { setIsAdmin(true); setAdminPin(pin); setPinOpen(false); } else setPin(""); } }}
                 placeholder="••••"
                 style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px", fontSize: 18, textAlign: "center", letterSpacing: 4, marginBottom: 14, fontFamily: "inherit" }}
               />
               <div style={{ display: "flex", gap: 10 }}>
                 <button onClick={() => setPinOpen(false)} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, color: C.muted, borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{t("cancel")}</button>
-                <button onClick={() => { if (pin === ADMIN_PIN) { setIsAdmin(true); setPinOpen(false); } else setPin(""); }} style={{ flex: 1, background: C.green, border: "none", color: "#fff", borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{t("enter")}</button>
+                <button onClick={() => { if (pin === ADMIN_PIN) { setIsAdmin(true); setAdminPin(pin); setPinOpen(false); } else setPin(""); }} style={{ flex: 1, background: C.green, border: "none", color: "#fff", borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{t("enter")}</button>
               </div>
             </div>
           </div>
