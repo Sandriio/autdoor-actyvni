@@ -26,8 +26,8 @@ const SIGNUP_TELEGRAM = "@Sku_la";
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
 // Project Settings → API. Поки поля порожні — застосунок працює в
 // демо-режимі (поїздки з коду, без збереження).
-const SUPABASE_URL = "https://aalanelaevutbmmbelpx.supabase.co";      // напр.: "https://abcdefgh.supabase.co"
-const SUPABASE_ANON_KEY = "sb_publishable_-O5UyBqJa_NdAbB4qaDIdQ_qIpn0rDN"; // довгий ключ "anon public"
+const SUPABASE_URL = "";      // напр.: "https://abcdefgh.supabase.co"
+const SUPABASE_ANON_KEY = ""; // довгий ключ "anon public"
 
 const sbConfigured = () => SUPABASE_URL.trim() !== "" && SUPABASE_ANON_KEY.trim() !== "";
 const sbHeaders = () => ({
@@ -1226,22 +1226,27 @@ const BLANK_TRIP = () => ({
   sections: DEFAULT_SECTIONS.map((s) => ({ ...s, visible: true })),
 });
 
+// Стилі й Field винесені НА РІВЕНЬ МОДУЛЯ навмисно.
+// Якщо оголосити Field усередині TripForm, React вважає його новим типом
+// компонента на кожен рендер, розмонтовує поля вводу після кожного натискання
+// клавіші — і на телефоні зникає клавіатура.
+const lbl = { fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 5, display: "block" };
+const inp = {
+  width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`,
+  borderRadius: 10, padding: "10px 12px", fontSize: 14, fontFamily: "inherit",
+  background: "#fff", color: C.ink, marginBottom: 12,
+};
+const card = { background: C.card, borderRadius: 16, padding: 16, marginBottom: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" };
+const cardTitle = { margin: "0 0 14px", fontSize: 14, fontWeight: 800, color: C.ink, display: "flex", alignItems: "center", gap: 8 };
+const Field = ({ label, children }) => (
+  <div><label style={lbl}>{label}</label>{children}</div>
+);
+
 function TripForm({ initial, onSave, onCancel }) {
   const [t, setT] = useState(() => JSON.parse(JSON.stringify(initial)));
   const set = (patch) => setT((prev) => ({ ...prev, ...patch }));
   const setNested = (key, patch) => setT((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
-  const lbl = { fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 5, display: "block" };
-  const inp = {
-    width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`,
-    borderRadius: 10, padding: "10px 12px", fontSize: 14, fontFamily: "inherit",
-    background: "#fff", color: C.ink, marginBottom: 12,
-  };
-  const Field = ({ label, children }) => (
-    <div><label style={lbl}>{label}</label>{children}</div>
-  );
-  const card = { background: C.card, borderRadius: 16, padding: 16, marginBottom: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" };
-  const cardTitle = { margin: "0 0 14px", fontSize: 14, fontWeight: 800, color: C.ink, display: "flex", alignItems: "center", gap: 8 };
 
   // Route editing
   const addStop = () => set({ route: [...t.route, { name: "", note: "", t: "" }] });
@@ -1278,7 +1283,7 @@ function TripForm({ initial, onSave, onCancel }) {
     { k: "waterfall", n: "Водоспад" }, { k: "bike", n: "Вело" },
   ];
 
-  const canSave = t.title.trim() !== "" && t.dateLabel.trim() !== "";
+  const canSave = ukOf(t.title).trim() !== "" && ukOf(t.dateLabel).trim() !== "";
 
   return (
     <div style={{ paddingBottom: 100 }}>
@@ -1572,6 +1577,16 @@ function TripForm({ initial, onSave, onCancel }) {
       </div>
 
       {/* Sticky save bar */}
+      {!canSave && (
+        <div style={{ position: "fixed", bottom: 68, left: 0, right: 0, maxWidth: 440, margin: "0 auto", padding: "0 14px", zIndex: 5 }}>
+          <div style={{ background: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: 12, padding: "9px 13px", fontSize: 12.5, lineHeight: 1.45 }}>
+            Щоб зберегти, заповніть у блоці «Основне»:{" "}
+            {ukOf(t.title).trim() === "" ? "«Назва»" : ""}
+            {ukOf(t.title).trim() === "" && ukOf(t.dateLabel).trim() === "" ? " і " : ""}
+            {ukOf(t.dateLabel).trim() === "" ? "«Дата (текстом)»" : ""}
+          </div>
+        </div>
+      )}
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, maxWidth: 440, margin: "0 auto", padding: 14, background: "rgba(80,104,60,0.96)", backdropFilter: "blur(8px)", display: "flex", gap: 10 }}>
         <button onClick={onCancel} style={{ flex: 1, background: "rgba(255,255,255,0.18)", color: "#fff", border: "none", padding: "14px", borderRadius: 14, fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Скасувати</button>
         <button onClick={() => {
