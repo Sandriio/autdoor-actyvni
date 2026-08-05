@@ -26,8 +26,8 @@ const SIGNUP_TELEGRAM = "@Sku_la";
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
 // Project Settings → API. Поки поля порожні — застосунок працює в
 // демо-режимі (поїздки з коду, без збереження).
-const SUPABASE_URL = "https://aalanelaevutbmmbelpx.supabase.co";      // напр.: "https://abcdefgh.supabase.co"
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhbGFuZWxhZXZ1dGJtbWJlbHB4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4NDcxMjAsImV4cCI6MjEwMTQyMzEyMH0.ZHMdF83-BA_Y3p1ILara45jjHW_Ner3UMHHaJVAl3gU"; // довгий ключ "anon public"
+const SUPABASE_URL = "";      // напр.: "https://abcdefgh.supabase.co"
+const SUPABASE_ANON_KEY = ""; // довгий ключ "anon public"
 
 const sbConfigured = () => SUPABASE_URL.trim() !== "" && SUPABASE_ANON_KEY.trim() !== "";
 const sbHeaders = () => ({
@@ -1105,7 +1105,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           const disabled = left <= 0;
           if (disabled) {
             return (
-              <div style={{ position: "sticky", bottom: 12, marginTop: 4 }}>
+              <div style={{ position: "sticky", bottom: "calc(12px + env(safe-area-inset-bottom))", marginTop: 4 }}>
                 <button disabled style={{ width: "100%", background: C.faint, color: "#fff", border: "none", padding: "16px", borderRadius: 16, fontSize: 15.5, fontWeight: 700, cursor: "default", boxShadow: "0 6px 18px rgba(60,79,44,0.3)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                   {t("noSpots")}
                 </button>
@@ -1116,7 +1116,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           const tgBtn = { ...btnBase, background: "#229ed9", cursor: tgUrl ? "pointer" : "not-allowed", opacity: tgUrl ? 1 : 0.55 };
           const waBtn = { ...btnBase, background: "#25d366", cursor: waUrl ? "pointer" : "not-allowed", opacity: waUrl ? 1 : 0.55 };
           return (
-            <div style={{ position: "sticky", bottom: 12, marginTop: 4 }}>
+            <div style={{ position: "sticky", bottom: "calc(12px + env(safe-area-inset-bottom))", marginTop: 4 }}>
               <div style={{ background: "rgba(80,104,60,0.06)", padding: "10px 12px 12px", borderRadius: 18 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.card, textAlign: "center", marginBottom: 9, letterSpacing: 0.2 }}>{t("signUp")}</div>
                 <div style={{ display: "flex", gap: 8 }}>
@@ -1589,7 +1589,7 @@ function TripForm({ initial, onSave, onCancel }) {
           </div>
         </div>
       )}
-      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, maxWidth: 440, margin: "0 auto", padding: 14, background: "rgba(80,104,60,0.96)", backdropFilter: "blur(8px)", display: "flex", gap: 10 }}>
+      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, maxWidth: 440, margin: "0 auto", padding: "14px 14px calc(14px + env(safe-area-inset-bottom))", background: "rgba(80,104,60,0.96)", backdropFilter: "blur(8px)", display: "flex", gap: 10 }}>
         <button onClick={onCancel} style={{ flex: 1, background: "rgba(255,255,255,0.18)", color: "#fff", border: "none", padding: "14px", borderRadius: 14, fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Скасувати</button>
         <button onClick={() => {
           if (!canSave) return;
@@ -1731,7 +1731,7 @@ export default function App() {
           />
         ) : (
           <div style={{ padding: "0 16px 30px" }}>
-            <div style={{ padding: "26px 4px 20px", display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ padding: "calc(26px + env(safe-area-inset-top)) 4px 20px", display: "flex", alignItems: "center", gap: 12 }}>
               <img src={LOGO} alt="Аутдор Активні" style={{ width: 60, height: 60, borderRadius: 14, display: "block", objectFit: "cover", border: "1.5px solid rgba(253,228,70,0.45)", boxShadow: "0 3px 10px rgba(0,0,0,0.18)" }} />
               <div style={{ flex: 1 }}>
                 <h1 style={{ margin: 0, fontSize: 21, fontWeight: 800, letterSpacing: -0.4, color: "#fff" }}>Аутдор Активні</h1>
