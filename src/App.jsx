@@ -89,6 +89,15 @@ async function sbUploadImage(file) {
 // ── Розбір координат із буфера обміну ──────────────────────────────────
 // Приймає що завгодно з Google Maps: "47.4920, 11.0975", посилання виду
 // ...@47.4920,11.0975,15z, або текст із градусами — і дістає два числа.
+// Пошук місця за адресою (Nominatim / OpenStreetMap — безкоштовно, без ключа).
+async function geocodeAddress(q) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&addressdetails=0&accept-language=uk&q=${encodeURIComponent(q)}`;
+  const r = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!r.ok) throw new Error("geocode " + r.status);
+  const j = await r.json();
+  return (j || []).map((x) => ({ label: x.display_name, lat: parseFloat(x.lat), lng: parseFloat(x.lon) }));
+}
+
 function parseCoordsInput(str) {
   if (!str) return null;
   const m = String(str).match(/-?\d{1,3}\.\d+/g);
@@ -128,6 +137,10 @@ const T = {
   statDuration: { uk: "Тривалість", en: "Duration", de: "Dauer", ru: "Длительность" },
   // difficulty
   diffEasy: { uk: "Легкий", en: "Easy", de: "Leicht", ru: "Лёгкий" },
+  unitKm: { uk: "км", en: "km", de: "km", ru: "км" },
+  unitH: { uk: "год", en: "h", de: "Std.", ru: "ч" },
+  unitM: { uk: "м", en: "m", de: "m", ru: "м" },
+  translateAllBtn: { uk: "Перекласти всі поїздки (EN + RU)", en: "Translate all trips (EN + RU)", de: "Alle Ausflüge übersetzen", ru: "Перевести все поездки (EN + RU)" },
   diffMedium: { uk: "Середній", en: "Medium", de: "Mittel", ru: "Средний" },
   diffHard: { uk: "Складний", en: "Hard", de: "Schwer", ru: "Сложный" },
   // weather
@@ -459,6 +472,9 @@ const weatherIcon = (key, size = 28) => {
   }
 };
 
+// Складність зберігається українською; для показу перекладаємо.
+const diffKey = (d) => (d === "Середній" ? "diffMedium" : d === "Складний" ? "diffHard" : "diffEasy");
+const diffLabel = (d) => t(diffKey(d));
 const diffColor = (d) =>
   d === "Легкий" ? C.green : d === "Середній" ? "#7d8a4a" : C.rasp;
 
@@ -606,11 +622,11 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
         </div>
         <div style={{ padding: "13px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", gap: 14, fontSize: 12.5, color: C.inkSoft }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Footprints size={14} /> {trip.distanceKm} км</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Footprints size={14} /> {trip.distanceKm} {t("unitKm")}</span>
             <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Clock size={14} /> {trip.durationHrs}</span>
             <span style={{ display: "flex", alignItems: "center", gap: 4, color: diffColor(trip.difficulty) }}>
               <span style={{ width: 7, height: 7, borderRadius: 7, background: diffColor(trip.difficulty), display: "inline-block" }} />
-              {trip.difficulty}
+              {diffLabel(trip.difficulty)}
             </span>
           </div>
           <ChevronRight size={18} color={C.faint} />
@@ -817,22 +833,27 @@ function LiveWeather({ trip }) {
     if (diff > 15) { setReason("far"); setMode("fallback"); return; }
     setMode("loading");
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
-      `&daily=weather_code,temperature_2m_max,apparent_temperature_max,precipitation_probability_max,wind_speed_10m_max` +
-      `&hourly=relative_humidity_2m&timezone=Europe%2FBerlin&start_date=${d}&end_date=${d}`;
+      `&daily=weather_code,precipitation_probability_max` +
+      `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code` +
+      `&timezone=Europe%2FBerlin&start_date=${d}&end_date=${d}`;
     fetch(url)
       .then((r) => r.json())
       .then((j) => {
         if (cancelled) return;
-        const dl = j && j.daily;
-        if (!dl || !dl.time || dl.time.length === 0) { setReason("error"); setMode("fallback"); return; }
-        const hum = j.hourly && j.hourly.relative_humidity_2m ? j.hourly.relative_humidity_2m[12] : null;
-        const info = wmoInfo(dl.weather_code[0]);
+        const dl = j && j.daily, hr = j && j.hourly;
+        if (!dl || !dl.time || dl.time.length === 0 || !hr || !hr.temperature_2m) { setReason("error"); setMode("fallback"); return; }
+        // Беремо показники на середину дня (13:00) — це відповідає часу
+        // прогулянки. Денні максимуми давали завищені й неправдоподібні числа.
+        const H = 13;
+        const at = (arr, fb) => (arr && arr[H] != null ? arr[H] : fb);
+        const code = at(hr.weather_code, dl.weather_code[0]);
+        const info = wmoInfo(code);
         setLive({
-          tempC: Math.round(dl.temperature_2m_max[0]),
-          feelsC: Math.round(dl.apparent_temperature_max[0]),
+          tempC: Math.round(at(hr.temperature_2m, 0)),
+          feelsC: Math.round(at(hr.apparent_temperature, at(hr.temperature_2m, 0))),
           rainPct: dl.precipitation_probability_max[0] ?? 0,
-          windKmh: Math.round(dl.wind_speed_10m_max[0]),
-          humidity: hum != null ? Math.round(hum) : trip.weather.humidity,
+          windKmh: Math.round(at(hr.wind_speed_10m, 0)),
+          humidity: Math.round(at(hr.relative_humidity_2m, trip.weather.humidity)),
           icon: info.icon, cond: info,
         });
         setMode("live");
@@ -861,7 +882,7 @@ function LiveWeather({ trip }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
         {[
           { icon: <Droplets size={15} />, label: t("wRain"), value: `${w.rainPct}%` },
-          { icon: <Wind size={15} />, label: t("wWind"), value: `${w.windKmh} км/г` },
+          { icon: <Wind size={15} />, label: t("wWind"), value: `${w.windKmh} ${t("unitKm")}/${t("unitH")}` },
           { icon: <Cloud size={15} />, label: t("wHumidity"), value: `${w.humidity}%` },
         ].map((x, i) => (
           <div key={i} style={{ background: C.greenSoft, borderRadius: 11, padding: "9px 6px", textAlign: "center" }}>
@@ -922,9 +943,9 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           const sv = trip.statsVisible || {};
           // default: distance/ascent/duration shown, descent shown only if set
           const items = [
-            { key: "distance", show: sv.distance !== false, label: t("statDistance"), value: `${trip.distanceKm} км`, icon: <Footprints size={17} /> },
-            { key: "ascent", show: sv.ascent !== false, label: t("statAscent"), value: `${trip.ascentM} м`, icon: <TrendingUp size={17} /> },
-            { key: "descent", show: sv.descent === true, label: t("statDescent"), value: `${trip.descentM || 0} м`, icon: <TrendingDown size={17} /> },
+            { key: "distance", show: sv.distance !== false, label: t("statDistance"), value: `${trip.distanceKm} ${t("unitKm")}`, icon: <Footprints size={17} /> },
+            { key: "ascent", show: sv.ascent !== false, label: t("statAscent"), value: `${trip.ascentM} ${t("unitM")}`, icon: <TrendingUp size={17} /> },
+            { key: "descent", show: sv.descent === true, label: t("statDescent"), value: `${trip.descentM || 0} ${t("unitM")}`, icon: <TrendingDown size={17} /> },
             { key: "duration", show: sv.duration !== false, label: t("statDuration"), value: trip.durationHrs, icon: <Clock size={17} /> },
           ].filter((s) => s.show);
           if (items.length === 0) return null;
@@ -962,7 +983,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                         return <div key={lvl} style={{ width: 34, height: 8, borderRadius: 6, background: active ? barColor : C.line }} />;
                       })}
                     </div>
-                    <span style={{ fontSize: 15, fontWeight: 800, color: diffColor(trip.difficulty) }}>{trip.difficulty}</span>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: diffColor(trip.difficulty) }}>{diffLabel(trip.difficulty)}</span>
                   </div>
                   <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: "#4a4a42" }}>{tc(trip.difficultyNote)}</p>
                 </>
@@ -1306,6 +1327,9 @@ const Field = ({ label, children }) => (
 function TripForm({ initial, onSave, onCancel }) {
   const [t, setT] = useState(() => JSON.parse(JSON.stringify(initial)));
   const [uploading, setUploading] = useState(false);
+  const [addr, setAddr] = useState("");
+  const [addrResults, setAddrResults] = useState(null); // null | [] | [..]
+  const [addrBusy, setAddrBusy] = useState(false);
   const set = (patch) => setT((prev) => ({ ...prev, ...patch }));
   const setNested = (key, patch) => setT((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
@@ -1517,14 +1541,50 @@ function TripForm({ initial, onSave, onCancel }) {
             <textarea style={{ ...inp, minHeight: 70, resize: "vertical" }} value={t.meetingPoint} onChange={(e) => set({ meetingPoint: e.target.value })} placeholder="Наприклад: біля головного входу München Hbf, під табло. Шукайте жовтий прапорець." />
           </Field>
           <label style={lbl}>Геолокація (точка збору)</label>
-          <input
-            style={inp}
-            placeholder="Встав сюди координати або посилання з Google Maps"
-            onChange={(e) => {
-              const p = parseCoordsInput(e.target.value);
-              if (p) setNested("coords", p);
-            }}
-          />
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <input
+              style={{ ...inp, marginBottom: 0, flex: 1 }}
+              value={addr}
+              placeholder="Адреса, назва місця або координати"
+              onChange={(e) => {
+                setAddr(e.target.value);
+                // Якщо вставили координати чи посилання з Google Maps —
+                // підставляємо одразу, без пошуку.
+                const p = parseCoordsInput(e.target.value);
+                if (p) { setNested("coords", p); setAddrResults(null); }
+              }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("addr-find-btn")?.click(); } }}
+            />
+            <button
+              id="addr-find-btn"
+              onClick={async () => {
+                const q = addr.trim();
+                if (q === "") return;
+                if (parseCoordsInput(q)) return; // це вже координати
+                try {
+                  setAddrBusy(true); setAddrResults(null);
+                  setAddrResults(await geocodeAddress(q));
+                } catch (err) {
+                  alert("Пошук не спрацював. Перевірте інтернет або введіть координати вручну.");
+                } finally { setAddrBusy(false); }
+              }}
+              style={{ border: "none", background: C.green, color: "#fff", borderRadius: 10, padding: "0 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+              {addrBusy ? "…" : "Знайти"}
+            </button>
+          </div>
+          {addrResults && addrResults.length === 0 && (
+            <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 10px" }}>Нічого не знайдено. Спробуйте додати місто чи країну — напр. «Bayerstraße 10A, München».</p>
+          )}
+          {addrResults && addrResults.length > 0 && (
+            <div style={{ border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden", marginBottom: 10 }}>
+              {addrResults.map((r, i) => (
+                <button key={i} onClick={() => { setNested("coords", { lat: r.lat, lng: r.lng }); setAddrResults(null); setAddr(r.label); }}
+                  style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "none", borderBottom: i === addrResults.length - 1 ? "none" : `1px solid ${C.line}`, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.4, color: C.ink, cursor: "pointer", fontFamily: "inherit" }}>
+                  📍 {r.label}
+                </button>
+              ))}
+            </div>
+          )}
           {(() => {
             const la = parseFloat(t.coords && t.coords.lat), ln = parseFloat(t.coords && t.coords.lng);
             return !isNaN(la) && !isNaN(ln) && (la !== 0 || ln !== 0) ? (
@@ -1537,7 +1597,7 @@ function TripForm({ initial, onSave, onCancel }) {
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "10px 12px", background: C.greenSoft, borderRadius: 10, fontSize: 12, color: C.greenDark, lineHeight: 1.5 }}>
             <Info size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-            <span>Відкрийте <a href="https://www.google.com/maps" target="_blank" rel="noreferrer" style={{ color: C.greenDark, fontWeight: 700 }}>Google Maps</a>, знайдіть місце, затисніть на ньому палець (або клік правою) — скопіюйте координати чи посилання «Поділитися» і просто вставте у поле вище. Числа підставляться самі, а нижче з'явиться карта для перевірки.</span>
+            <span>Напишіть адресу або назву місця й натисніть <b>«Знайти»</b> — оберіть потрібний варіант зі списку, координати підставляться самі. Або вставте у це ж поле готові координати чи посилання з <a href="https://www.google.com/maps" target="_blank" rel="noreferrer" style={{ color: C.greenDark, fontWeight: 700 }}>Google Maps</a>. Перевіряйте точку на карті вище.</span>
           </div>
           {(t.coords.lat !== 0 || t.coords.lng !== 0) && (
             <a href={`https://www.google.com/maps/search/?api=1&query=${t.coords.lat},${t.coords.lng}`} target="_blank" rel="noreferrer"
@@ -1889,7 +1949,7 @@ export default function App() {
             )}
             {isAdmin && sbConfigured() && trips.length > 0 && (
               <button onClick={translateAll} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "rgba(255,255,255,0.10)", color: "#fff", border: "1.5px dashed rgba(255,255,255,0.45)", padding: "11px", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", marginBottom: 14 }}>
-                🌐 Перекласти всі поїздки (EN + RU)
+                🌐 {t("translateAllBtn")}
               </button>
             )}
 
@@ -1926,9 +1986,7 @@ export default function App() {
 
             {/* Footer + organizer gear */}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: 26, gap: 14 }}>
-              <p style={{ textAlign: "center", fontSize: 11.5, color: "rgba(255,255,255,0.5)", margin: 0, lineHeight: 1.5 }}>
-                Прототип · демо-дані<br />Погода та розклад підключаються до реальних сервісів при публікації
-              </p>
+              {null}
               {isAdmin ? (
                 <button onClick={() => setIsAdmin(false)} style={{ background: "none", border: "1px solid rgba(255,255,255,0.3)", color: "rgba(255,255,255,0.7)", borderRadius: 20, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                   {t("exitOrganizer")}
