@@ -245,6 +245,27 @@ const TRANSLATABLE = (trip) => {
   (trip.sections || []).forEach((sec) => push(() => sec.title, (v) => (sec.title = v)));
   return acc;
 };
+// Запасний перекладач: працює прямо з браузера, без сервера й ключів.
+// Використовується, якщо /api/translate недоступний (напр. функція DeepL
+// ще не налаштована на Vercel). Якість нижча за DeepL, але переклад є.
+async function mmOne(text, target) {
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=uk|${target.toLowerCase()}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("mm " + r.status);
+  const j = await r.json();
+  const out = j && j.responseData && j.responseData.translatedText;
+  if (!out || /^MYMEMORY WARNING/i.test(out)) throw new Error("mm limit");
+  return out;
+}
+async function mmBatch(texts, target) {
+  const out = [];
+  for (const t0 of texts) {
+    try { out.push(await mmOne(t0, target)); }
+    catch { out.push(t0); } // не вдалося — лишаємо оригінал
+  }
+  return out;
+}
+
 async function deeplBatch(texts, target) {
   const r = await fetch("/api/translate", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -261,7 +282,13 @@ async function translateTripContent(trip0) {
   const idx = []; const texts = [];
   acc.forEach((a, i) => { const v = ukOf(a.get()).trim(); if (v !== "") { idx.push(i); texts.push(v); } });
   if (texts.length === 0) return trip;
-  const [en, ru] = await Promise.all([deeplBatch(texts, "EN"), deeplBatch(texts, "RU")]);
+  // Спершу пробуємо DeepL через свій сервер; якщо його немає — запасний
+  // перекладач прямо з браузера, щоб функція працювала в будь-якому разі.
+  const runBatch = async (target) => {
+    try { return await deeplBatch(texts, target); }
+    catch { return await mmBatch(texts, target); }
+  };
+  const [en, ru] = await Promise.all([runBatch("EN"), runBatch("RU")]);
   idx.forEach((ai, k) => acc[ai].set({ uk: texts[k], en: en[k] || texts[k], ru: ru[k] || texts[k] }));
   return trip;
 }
@@ -1391,6 +1418,23 @@ function TripForm({ initial, onSave, onCancel }) {
           <Field label="Короткий підпис"><input style={inp} value={t.subtitle} onChange={(e) => set({ subtitle: e.target.value })} placeholder="Смарагдове озеро під Цугшпітце" /></Field>
           <Field label="Дата (текстом) *"><input style={inp} value={t.dateLabel} onChange={(e) => set({ dateLabel: e.target.value })} placeholder="Субота, 21 червня" /></Field>
           <Field label="Дата (для прогнозу погоди)"><input style={inp} type="date" value={t.date || ""} onChange={(e) => set({ date: e.target.value })} /></Field>
+          {(() => {
+            // Живий прогноз одразу в редакторі — щойно вказані дата й координати.
+            const la = parseFloat(t.coords && t.coords.lat), ln = parseFloat(t.coords && t.coords.lng);
+            if (!t.date || isNaN(la) || isNaN(ln)) {
+              return (
+                <p style={{ fontSize: 12, color: C.muted, margin: "-6px 0 12px", lineHeight: 1.45 }}>
+                  Вкажіть дату й точку збору нижче — і тут з'явиться прогноз погоди на цей день.
+                </p>
+              );
+            }
+            const w = { tempC: 0, feelsC: 0, condition: "", icon: "cloud", rainPct: 0, windKmh: 0, humidity: 0, ...(t.weather || {}) };
+            return (
+              <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                <LiveWeather trip={{ id: t.id, date: t.date, coords: { lat: la, lng: ln }, weather: w }} />
+              </div>
+            );
+          })()}
           <Field label="Опис місця"><textarea style={{ ...inp, minHeight: 90, resize: "vertical" }} value={t.about} onChange={(e) => set({ about: e.target.value })} placeholder="Розкажіть про місце, маршрут, що побачать учасники…" /></Field>
           <Field label="Фото місця">
             {t.image && t.image.trim() !== "" && (
@@ -1605,31 +1649,6 @@ function TripForm({ initial, onSave, onCancel }) {
               <Navigation size={14} /> Перевірити на карті
             </a>
           )}
-        </div>
-
-        {/* Weather */}
-        <div style={card}>
-          <h3 style={cardTitle}><Cloud size={15} /> Погода (демо)</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <Field label="Температура °C"><input style={inp} type="number" value={t.weather.tempC} onChange={(e) => setNested("weather", { tempC: e.target.value })} /></Field>
-            <Field label="Відчувається °C"><input style={inp} type="number" value={t.weather.feelsC} onChange={(e) => setNested("weather", { feelsC: e.target.value })} /></Field>
-          </div>
-          <Field label="Опис погоди"><input style={inp} value={t.weather.condition} onChange={(e) => setNested("weather", { condition: e.target.value })} placeholder="Сонячно / Мінлива хмарність" /></Field>
-          <Field label="Іконка">
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              {[["sun", "Сонце"], ["cloud", "Хмари"], ["rain", "Дощ"], ["snow", "Сніг"]].map(([k, n]) => (
-                <button key={k} onClick={() => setNested("weather", { icon: k })} style={{
-                  flex: 1, border: `1.5px solid ${t.weather.icon === k ? C.rasp : C.line}`, background: t.weather.icon === k ? C.raspSoft : "#fff",
-                  color: t.weather.icon === k ? C.rasp : C.muted, borderRadius: 10, padding: "8px 4px", fontSize: 12, fontWeight: 600, cursor: "pointer",
-                }}>{n}</button>
-              ))}
-            </div>
-          </Field>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-            <Field label="Опади %"><input style={inp} type="number" value={t.weather.rainPct} onChange={(e) => setNested("weather", { rainPct: e.target.value })} /></Field>
-            <Field label="Вітер км/г"><input style={inp} type="number" value={t.weather.windKmh} onChange={(e) => setNested("weather", { windKmh: e.target.value })} /></Field>
-            <Field label="Волог. %"><input style={inp} type="number" value={t.weather.humidity} onChange={(e) => setNested("weather", { humidity: e.target.value })} /></Field>
-          </div>
         </div>
 
         {/* Route */}
@@ -1878,9 +1897,9 @@ export default function App() {
         setTrips((prev) => prev.map((x) => (x.id === f.id ? f : x)));
         await persistTrip(f);
       }
-      alert("Готово! Перемкніть мову на EN чи RU і відкрийте поїздку, щоб перевірити.");
+      alert("Готово! Перемкніть мову на EN чи RU і відкрийте поїздку, щоб перевірити.\n\nЯкщо частина тексту лишилась українською — денний ліміт запасного перекладача вичерпано, спробуйте завтра або підключіть DeepL.");
     } catch (e) {
-      alert("Переклад не спрацював.\n\nНайчастіша причина: ключ DeepL не доданий у Vercel або після додавання не зроблено Redeploy (Частина В інструкції Етапу 2).\n\nТехнічна деталь: " + (e && e.message ? e.message : e));
+      alert("Переклад не завершився.\n\nПеревірте інтернет-зʼєднання і спробуйте ще раз.\n\nТехнічна деталь: " + (e && e.message ? e.message : e));
     }
   };
 
