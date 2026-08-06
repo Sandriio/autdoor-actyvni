@@ -110,6 +110,7 @@ function parseCoordsInput(str) {
   return { lat, lng };
 }
 const T = {
+  appName: { uk: "Аутдор Активні", en: "Autdoor Actyvni", de: "Autdoor Actyvni", ru: "Аутдор Активные" },
   appSubtitle: { uk: "Одноденні поїздки в гори та міста", en: "Day trips to mountains and cities", de: "Tagesausflüge in Berge und Städte", ru: "Однодневные поездки в горы и города" },
   upcomingTrips: { uk: "Найближчі поїздки", en: "Upcoming trips", de: "Kommende Ausflüge", ru: "Ближайшие поездки" },
   pastTrips: { uk: "Минулі поїздки", en: "Past trips", de: "Vergangene Ausflüge", ru: "Прошлые поездки" },
@@ -1975,9 +1976,9 @@ export default function App() {
         ) : (
           <div style={{ padding: "0 16px 30px" }}>
             <div style={{ padding: "calc(26px + env(safe-area-inset-top)) 4px 20px", display: "flex", alignItems: "center", gap: 12 }}>
-              <img src={LOGO} alt="Аутдор Активні" style={{ width: 60, height: 60, borderRadius: 14, display: "block", objectFit: "cover", border: "1.5px solid rgba(253,228,70,0.45)", boxShadow: "0 3px 10px rgba(0,0,0,0.18)" }} />
+              <img src={LOGO} alt={t("appName")} style={{ width: 60, height: 60, borderRadius: 14, display: "block", objectFit: "cover", border: "1.5px solid rgba(253,228,70,0.45)", boxShadow: "0 3px 10px rgba(0,0,0,0.18)" }} />
               <div style={{ flex: 1 }}>
-                <h1 style={{ margin: 0, fontSize: 21, fontWeight: 800, letterSpacing: -0.4, color: "#fff" }}>Аутдор Активні</h1>
+                <h1 style={{ margin: 0, fontSize: 21, fontWeight: 800, letterSpacing: -0.4, color: "#fff" }}>{t("appName")}</h1>
                 <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,0.75)" }}>{t("appSubtitle")}</p>
               </div>
               {isAdmin && (
