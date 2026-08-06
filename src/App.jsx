@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v9";
+const APP_VERSION = "v10";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -804,6 +804,17 @@ const DB_PROFILES = ["", "db", "dbweb"];
 let DB_LAST_ERROR = "";
 async function dbFetch(path, params) {
   let lastErr = "";
+  // 1) Через власний сервер (/api/db) — надійніше: немає блокувань браузера.
+  try {
+    const p = new URLSearchParams(params);
+    p.set("path", path);
+    const r = await fetch(`/api/db?${p.toString()}`);
+    if (r.ok) { DB_LAST_ERROR = ""; return await r.json(); }
+    lastErr = `проксі HTTP ${r.status}`;
+  } catch (e) {
+    lastErr = "проксі: " + ((e && e.message) || "network");
+  }
+  // 2) Якщо сервер недоступний — пробуємо напряму з браузера.
   for (const prof of DB_PROFILES) {
     const p = new URLSearchParams(params);
     if (prof) p.set("profile", prof);
