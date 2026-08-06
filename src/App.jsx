@@ -21,6 +21,9 @@ const LANGS = [
 // Кнопка Telegram у блоці контактів веде на групу (поле telegram у contact),
 // а кнопка запису — саме сюди, з передзаповненим текстом.
 const SIGNUP_TELEGRAM = "@Sku_la";
+// Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
+// чи на сайті свіжа збірка.
+const APP_VERSION = "v6";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -245,24 +248,29 @@ const TRANSLATABLE = (trip) => {
   (trip.sections || []).forEach((sec) => push(() => sec.title, (v) => (sec.title = v)));
   return acc;
 };
-// Запасний перекладач: працює прямо з браузера, без сервера й ключів.
-// Використовується, якщо /api/translate недоступний (напр. функція DeepL
-// ще не налаштована на Vercel). Якість нижча за DeepL, але переклад є.
+// ── Переклад тексту: три джерела поспіль ──────────────────────────────
+// 1) DeepL через власний сервер (якщо налаштований — найкраща якість)
+// 2) Google Translate з браузера (без ключа, працює завжди)
+// 3) MyMemory (останній запас)
+// Якщо всі три не спрацювали для рядка — лишається оригінал.
+
+async function gtxOne(text, target) {
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=uk&tl=${target.toLowerCase()}&dt=t&q=${encodeURIComponent(text)}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("gtx " + r.status);
+  const j = await r.json();
+  const out = (j && j[0] ? j[0].map((x) => (x && x[0]) || "").join("") : "").trim();
+  if (!out) throw new Error("gtx empty");
+  return out;
+}
+
 async function mmOne(text, target) {
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=uk|${target.toLowerCase()}`;
   const r = await fetch(url);
   if (!r.ok) throw new Error("mm " + r.status);
   const j = await r.json();
   const out = j && j.responseData && j.responseData.translatedText;
-  if (!out || /^MYMEMORY WARNING/i.test(out)) throw new Error("mm limit");
-  return out;
-}
-async function mmBatch(texts, target) {
-  const out = [];
-  for (const t0 of texts) {
-    try { out.push(await mmOne(t0, target)); }
-    catch { out.push(t0); } // не вдалося — лишаємо оригінал
-  }
+  if (!out || /^MYMEMORY WARNING|QUERY LENGTH LIMIT/i.test(out)) throw new Error("mm limit");
   return out;
 }
 
@@ -273,23 +281,47 @@ async function deeplBatch(texts, target) {
   });
   if (!r.ok) throw new Error("translate http " + r.status);
   const j = await r.json();
-  if (!j || !Array.isArray(j.translations)) throw new Error("translate disabled");
+  if (!j || !Array.isArray(j.translations) || j.translations.length !== texts.length) throw new Error("translate disabled");
   return j.translations;
 }
+
+// Перекладає масив рядків, повертає масив тієї ж довжини.
+async function translateBatch(texts, target) {
+  try {
+    const d = await deeplBatch(texts, target);
+    if (d && d.length === texts.length && d.every((x) => x)) return d;
+  } catch { /* пробуємо наступне джерело */ }
+
+  // По 4 паралельно — помітно швидше, ніж по одному, і без перевантаження.
+  const out = new Array(texts.length).fill(null);
+  const CHUNK = 4;
+  for (let i = 0; i < texts.length; i += CHUNK) {
+    const slice = texts.slice(i, i + CHUNK);
+    const res = await Promise.all(slice.map((x) => gtxOne(x, target).catch(() => null)));
+    res.forEach((v, k) => { out[i + k] = v; });
+  }
+  for (let i = 0; i < texts.length; i++) {
+    if (out[i] == null) {
+      try { out[i] = await mmOne(texts[i], target); } catch { out[i] = null; }
+    }
+  }
+  return out.map((v, i) => (v == null ? texts[i] : v));
+}
+
 async function translateTripContent(trip0) {
   const trip = JSON.parse(JSON.stringify(trip0));
   const acc = TRANSLATABLE(trip);
   const idx = []; const texts = [];
   acc.forEach((a, i) => { const v = ukOf(a.get()).trim(); if (v !== "") { idx.push(i); texts.push(v); } });
   if (texts.length === 0) return trip;
-  // Спершу пробуємо DeepL через свій сервер; якщо його немає — запасний
-  // перекладач прямо з браузера, щоб функція працювала в будь-якому разі.
-  const runBatch = async (target) => {
-    try { return await deeplBatch(texts, target); }
-    catch { return await mmBatch(texts, target); }
-  };
-  const [en, ru] = await Promise.all([runBatch("EN"), runBatch("RU")]);
-  idx.forEach((ai, k) => acc[ai].set({ uk: texts[k], en: en[k] || texts[k], ru: ru[k] || texts[k] }));
+  const [en, ru] = await Promise.all([translateBatch(texts, "EN"), translateBatch(texts, "RU")]);
+  let changed = 0;
+  idx.forEach((ai, k) => {
+    const e = en[k] || texts[k], r = ru[k] || texts[k];
+    if (e !== texts[k] || r !== texts[k]) changed++;
+    acc[ai].set({ uk: texts[k], en: e, ru: r });
+  });
+  trip.__translated = changed;
   return trip;
 }
 // Готує поїздку до редагування: всі багатомовні поля → прості укр. рядки.
@@ -1799,6 +1831,7 @@ export default function App() {
   const [trips, setTrips] = useState(() => (sbConfigured() ? [] : TRIPS));
   const [loadingTrips, setLoadingTrips] = useState(() => sbConfigured());
   const [loadError, setLoadError] = useState(false);
+  const [tProgress, setTProgress] = useState(null); // null | {done, total}
   const [adminPin, setAdminPin] = useState("");
   const [lang, setLang] = useState("uk");
   // Keep the module-level CURRENT_LANG in sync so t() works everywhere.
@@ -1890,17 +1923,24 @@ export default function App() {
   // Разовий переклад ВЖЕ збережених поїздок (для тих, що потрапили в базу
   // до підключення DeepL). Кнопка в режимі організатора.
   const translateAll = async () => {
-    if (!window.confirm("Перекласти вміст усіх поїздок на EN і RU через DeepL? Це перезапише наявні переклади.")) return;
-    try {
-      for (const t0 of trips) {
-        const f = await translateTripContent(toEditable(t0));
+    if (!window.confirm("Перекласти вміст усіх поїздок на англійську й російську?\n\nЦе займе до хвилини та перезапише наявні переклади.")) return;
+    const total = trips.length;
+    let ok = 0, failed = 0;
+    setTProgress({ done: 0, total });
+    for (let i = 0; i < trips.length; i++) {
+      try {
+        const f = await translateTripContent(toEditable(trips[i]));
+        if (f.__translated > 0) ok++; else failed++;
+        delete f.__translated;
         setTrips((prev) => prev.map((x) => (x.id === f.id ? f : x)));
         await persistTrip(f);
-      }
-      alert("Готово! Перемкніть мову на EN чи RU і відкрийте поїздку, щоб перевірити.\n\nЯкщо частина тексту лишилась українською — денний ліміт запасного перекладача вичерпано, спробуйте завтра або підключіть DeepL.");
-    } catch (e) {
-      alert("Переклад не завершився.\n\nПеревірте інтернет-зʼєднання і спробуйте ще раз.\n\nТехнічна деталь: " + (e && e.message ? e.message : e));
+      } catch { failed++; }
+      setTProgress({ done: i + 1, total });
     }
+    setTProgress(null);
+    if (failed === 0) alert(`Готово — перекладено поїздок: ${ok}.\n\nПеремкніть мову на EN або RU, щоб перевірити.`);
+    else if (ok > 0) alert(`Перекладено: ${ok} з ${total}.\n\nЧастина не вдалася — можливо, тимчасово недоступний сервіс перекладу. Спробуйте натиснути ще раз через кілька хвилин.`);
+    else alert("Не вдалося перекласти жодної поїздки.\n\nПеревірте інтернет-зʼєднання і спробуйте ще раз.");
   };
 
   // ---- Editing form view ----
@@ -1941,7 +1981,7 @@ export default function App() {
                 <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,0.75)" }}>{t("appSubtitle")}</p>
               </div>
               {isAdmin && (
-                <span style={{ fontSize: 10, fontWeight: 800, color: C.greenDark, background: C.yellow, padding: "4px 9px", borderRadius: 20, textTransform: "uppercase", letterSpacing: 0.5 }}>{t("organizer")}</span>
+                <span style={{ fontSize: 10, fontWeight: 800, color: C.greenDark, background: C.yellow, padding: "4px 9px", borderRadius: 20, textTransform: "uppercase", letterSpacing: 0.5 }}>{t("organizer")} · {APP_VERSION}</span>
               )}
             </div>
 
@@ -1966,9 +2006,9 @@ export default function App() {
                 <span style={{ fontSize: 19 }}>＋</span> {t("addTrip")}
               </button>
             )}
-            {isAdmin && sbConfigured() && trips.length > 0 && (
-              <button onClick={translateAll} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "rgba(255,255,255,0.10)", color: "#fff", border: "1.5px dashed rgba(255,255,255,0.45)", padding: "11px", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", marginBottom: 14 }}>
-                🌐 {t("translateAllBtn")}
+            {isAdmin && trips.length > 0 && (
+              <button onClick={translateAll} disabled={!!tProgress} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "rgba(255,255,255,0.10)", color: "#fff", border: "1.5px dashed rgba(255,255,255,0.45)", padding: "11px", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: tProgress ? "default" : "pointer", marginBottom: 14, opacity: tProgress ? 0.7 : 1 }}>
+                🌐 {tProgress ? `Перекладаю… ${tProgress.done}/${tProgress.total}` : t("translateAllBtn")}
               </button>
             )}
 
