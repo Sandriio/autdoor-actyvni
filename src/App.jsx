@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v7";
+const APP_VERSION = "v8";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1531,6 +1531,12 @@ function TripForm({ initial, onSave, onCancel }) {
   const [addr, setAddr] = useState("");
   const [addrResults, setAddrResults] = useState(null); // null | [] | [..]
   const [addrBusy, setAddrBusy] = useState(false);
+  // Автопідбір поїздів через Deutsche Bahn
+  const [dbFrom, setDbFrom] = useState("");
+  const [dbTo, setDbTo] = useState("");
+  const [dbBusy, setDbBusy] = useState(false);
+  const [dbRes, setDbRes] = useState(null);
+  const [dbErr, setDbErr] = useState("");
   const set = (patch) => setT((prev) => ({ ...prev, ...patch }));
   const setNested = (key, patch) => setT((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
@@ -1732,6 +1738,73 @@ function TripForm({ initial, onSave, onCancel }) {
           <p style={{ fontSize: 12, color: C.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
             Додайте один або кілька поїздів. Між поїздами автоматично показується пересадка.
           </p>
+
+          {/* Автопідбір розкладу з Deutsche Bahn */}
+          <div style={{ border: `1.5px dashed ${C.green}`, background: C.greenSoft, borderRadius: 12, padding: 12, marginBottom: 12 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: C.greenDark, marginBottom: 8 }}>
+              🚆 Підтягнути розклад з Deutsche Bahn
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+              <input style={{ ...inp, marginBottom: 0 }} value={dbFrom} onChange={(e) => setDbFrom(e.target.value)} placeholder="Звідки (вокзал)" />
+              <input style={{ ...inp, marginBottom: 0 }} value={dbTo} onChange={(e) => setDbTo(e.target.value)} placeholder="Куди (вокзал)" />
+            </div>
+            <button
+              disabled={dbBusy || dbFrom.trim() === "" || dbTo.trim() === ""}
+              onClick={async () => {
+                setDbBusy(true); setDbErr(""); setDbRes(null);
+                try {
+                  const [fl, tl] = await Promise.all([dbLocations(dbFrom.trim()), dbLocations(dbTo.trim())]);
+                  if (fl.length === 0 || tl.length === 0) { setDbErr("Не знайдено вокзал. Спробуйте точнішу назву, напр. «Augsburg Hbf»."); return; }
+                  const d = (t.date || "").trim();
+                  const when = d ? `${d}T07:00:00` : null;
+                  const js = await dbJourneys(fl[0].id, tl[0].id, when);
+                  if (js.length === 0) { setDbErr("Рейсів не знайдено на цю дату."); return; }
+                  setDbRes(js);
+                } catch (e) {
+                  setDbErr("Сервіс розкладу зараз недоступний. Спробуйте пізніше або впишіть поїзди вручну.");
+                } finally { setDbBusy(false); }
+              }}
+              style={{ width: "100%", border: "none", background: dbBusy || dbFrom.trim() === "" || dbTo.trim() === "" ? "rgba(80,104,60,0.25)" : C.green, color: "#fff", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: dbBusy ? "default" : "pointer" }}>
+              {dbBusy ? "Шукаю…" : "Знайти рейси"}
+            </button>
+            {dbErr !== "" && <p style={{ fontSize: 12, color: C.rasp, margin: "8px 0 0", lineHeight: 1.4 }}>{dbErr}</p>}
+            {dbRes && (
+              <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                {dbRes.slice(0, 4).map((jr, i) => {
+                  const ls = (jr.legs || []).filter((l) => !l.walking);
+                  if (ls.length === 0) return null;
+                  const f0 = ls[0], l0 = ls[ls.length - 1];
+                  return (
+                    <button key={i}
+                      onClick={() => {
+                        const newLegs = ls.map((l) => ({
+                          from: (l.origin && l.origin.name) || "",
+                          fromTime: hhmm(l.plannedDeparture || l.departure),
+                          platform: l.departurePlatform || l.plannedDeparturePlatform || "",
+                          train: (l.line && (l.line.name || l.line.product)) || "",
+                          to: (l.destination && l.destination.name) || "",
+                          toTime: hhmm(l.plannedArrival || l.arrival),
+                        }));
+                        const last = newLegs[newLegs.length - 1];
+                        set({
+                          legs: newLegs,
+                          from: { name: newLegs[0].from, time: newLegs[0].fromTime, platform: newLegs[0].platform },
+                          to: { name: last.to, time: last.toTime },
+                          trainLine: newLegs[0].train,
+                        });
+                        setDbRes(null);
+                      }}
+                      style={{ textAlign: "left", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 11px", fontSize: 12.5, cursor: "pointer", fontFamily: "inherit", color: C.ink }}>
+                      <b>{hhmm(f0.plannedDeparture || f0.departure)} → {hhmm(l0.plannedArrival || l0.arrival)}</b>
+                      {"  "}· {ls.map((l) => (l.line && (l.line.name || l.line.product)) || "?").join(" → ")}
+                      {"  "}· {ls.length === 1 ? "без пересадок" : `${ls.length - 1} пересадка(и)`}
+                    </button>
+                  );
+                })}
+                <p style={{ fontSize: 11, color: C.muted, margin: 0 }}>Натисніть варіант — поїзди підставляться в поля нижче.</p>
+              </div>
+            )}
+          </div>
           {(t.legs || []).map((leg, i) => (
             <div key={i} style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 10, background: "#fff" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
