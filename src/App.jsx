@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v8";
+const APP_VERSION = "v9";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -798,22 +798,34 @@ function PlacePhoto({ trip }) {
 // недоступний — показуємо кнопку на офіційний сайт DB.
 const DB_API = "https://v6.db.transport.rest";
 
+// Сервіс має кілька «профілів» доступу до даних DB. Якщо основний
+// відмовляє (буває через ліміти чи блокування), пробуємо наступні.
+const DB_PROFILES = ["", "db", "dbweb"];
+let DB_LAST_ERROR = "";
+async function dbFetch(path, params) {
+  let lastErr = "";
+  for (const prof of DB_PROFILES) {
+    const p = new URLSearchParams(params);
+    if (prof) p.set("profile", prof);
+    try {
+      const r = await fetch(`${DB_API}${path}?${p.toString()}`);
+      if (r.ok) { DB_LAST_ERROR = ""; return await r.json(); }
+      lastErr = `HTTP ${r.status}${prof ? " (" + prof + ")" : ""}`;
+    } catch (e) {
+      lastErr = (e && e.message) || "network";
+    }
+  }
+  DB_LAST_ERROR = lastErr;
+  throw new Error(lastErr);
+}
 async function dbLocations(query) {
-  const url = `${DB_API}/locations?query=${encodeURIComponent(query)}&results=6&addresses=false&poi=false`;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error("db locations " + r.status);
-  const j = await r.json();
+  const j = await dbFetch("/locations", { query, results: "6", addresses: "false", poi: "false" });
   return (j || []).filter((x) => x && x.id && x.name).map((x) => ({ id: x.id, name: x.name }));
 }
 async function dbJourneys(fromId, toId, whenISO) {
-  const params = new URLSearchParams({
-    from: fromId, to: toId, results: "4", stopovers: "false",
-    remarks: "true", language: "de",
-  });
-  if (whenISO) params.set("departure", whenISO);
-  const r = await fetch(`${DB_API}/journeys?${params.toString()}`);
-  if (!r.ok) throw new Error("db journeys " + r.status);
-  const j = await r.json();
+  const params = { from: fromId, to: toId, results: "4", stopovers: "false" };
+  if (whenISO) params.departure = whenISO;
+  const j = await dbFetch("/journeys", params);
   return (j && j.journeys) || [];
 }
 
@@ -953,7 +965,10 @@ function JourneyPlanner({ trip }) {
       )}
 
       {err && (
-        <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{t("jpError")}</p>
+        <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>
+          {t("jpError")}
+          {DB_LAST_ERROR ? <span style={{ display: "block", fontSize: 10.5, color: C.muted, marginTop: 3 }}>({DB_LAST_ERROR})</span> : null}
+        </p>
       )}
 
       {canSearch && (
@@ -1761,7 +1776,7 @@ function TripForm({ initial, onSave, onCancel }) {
                   if (js.length === 0) { setDbErr("Рейсів не знайдено на цю дату."); return; }
                   setDbRes(js);
                 } catch (e) {
-                  setDbErr("Сервіс розкладу зараз недоступний. Спробуйте пізніше або впишіть поїзди вручну.");
+                  setDbErr("Сервіс розкладу зараз недоступний (" + ((e && e.message) || "?") + "). Спробуйте пізніше або впишіть поїзди вручну.");
                 } finally { setDbBusy(false); }
               }}
               style={{ width: "100%", border: "none", background: dbBusy || dbFrom.trim() === "" || dbTo.trim() === "" ? "rgba(80,104,60,0.25)" : C.green, color: "#fff", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: dbBusy ? "default" : "pointer" }}>
