@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v6";
+const APP_VERSION = "v7";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -170,6 +170,17 @@ const T = {
   jpPlaceholder: { uk: "Наприклад: Augsburg Hbf", en: "e.g. Augsburg Hbf", de: "z.B. Augsburg Hbf", ru: "Например: Augsburg Hbf" },
   jpButton: { uk: "Показати розклад Deutsche Bahn", en: "Show Deutsche Bahn schedule", de: "Deutsche Bahn Fahrplan anzeigen", ru: "Показать расписание Deutsche Bahn" },
   jpButtonEmpty: { uk: "Введіть місто відправлення", en: "Enter departure city", de: "Abfahrtsort eingeben", ru: "Введите город отправления" },
+  jpSearch: { uk: "Знайти", en: "Search", de: "Suchen", ru: "Найти" },
+  jpNoStation: { uk: "Станцію не знайдено. Спробуйте назву вокзалу, напр. «Augsburg Hbf».", en: "Station not found. Try a station name, e.g. \"Augsburg Hbf\".", de: "Bahnhof nicht gefunden.", ru: "Станция не найдена. Попробуйте название вокзала, напр. «Augsburg Hbf»." },
+  jpNoTrips: { uk: "Немає рейсів на цей час.", en: "No connections for this time.", de: "Keine Verbindungen.", ru: "Нет рейсов на это время." },
+  jpMin: { uk: "хв", en: "min", de: "Min", ru: "мин" },
+  jpOnTime: { uk: "за розкладом", en: "on time", de: "pünktlich", ru: "по расписанию" },
+  jpDirect: { uk: "без пересадок", en: "direct", de: "direkt", ru: "без пересадок" },
+  jpChanges: { uk: "пересадка(и)", en: "changes", de: "Umstiege", ru: "пересадка(и)" },
+  jpCancelled: { uk: "Рейс скасовано або є скасовані ділянки", en: "Cancelled or partly cancelled", de: "Fahrt entfällt teilweise", ru: "Рейс отменён или есть отменённые участки" },
+  jpTrack: { uk: "кол.", en: "pl.", de: "Gl.", ru: "пут." },
+  jpError: { uk: "Не вдалося отримати живий розклад. Скористайтеся кнопкою нижче — офіційний сайт DB.", en: "Couldn't load the live timetable. Use the DB website below.", de: "Live-Fahrplan nicht verfügbar. Bitte DB-Website nutzen.", ru: "Не удалось получить живое расписание. Воспользуйтесь сайтом DB ниже." },
+  jpLiveNote: { uk: "Дані Deutsche Bahn у реальному часі: затримки, скасування, платформи. Джерело — публічний сервіс, можливі короткі перебої.", en: "Live Deutsche Bahn data: delays, cancellations, platforms. Provided by a public service, brief outages possible.", de: "Echtzeitdaten der Deutschen Bahn.", ru: "Данные Deutsche Bahn в реальном времени: задержки, отмены, платформы. Источник — публичный сервис, возможны краткие перебои." },
   jpNote: { uk: "Відкриває розклад на сайті Deutsche Bahn. Після публікації застосунку розклад показуватиметься прямо тут.", en: "Opens the schedule on Deutsche Bahn's site. Once the app is published, times will show right here.", de: "Öffnet den Fahrplan auf der Deutsche-Bahn-Website. Nach Veröffentlichung erscheinen die Zeiten direkt hier.", ru: "Открывает расписание на сайте Deutsche Bahn. После публикации приложения расписание будет показываться здесь." },
   destFallback: { uk: "місця призначення", en: "the destination", de: "dem Ziel", ru: "места назначения" },
   // meeting
@@ -779,18 +790,88 @@ function PlacePhoto({ trip }) {
 }
 
 // ── Journey planner: enter your origin city → DB schedule ──────────────
+// ── Живий розклад Deutsche Bahn ────────────────────────────────────────
+// Використовує публічний сервіс v6.db.transport.rest (обгортка навколо
+// офіційних даних DB Navigator): реальні часи, затримки, скасування,
+// платформи. Без ключів, з підтримкою запитів прямо з браузера.
+// ВАЖЛИВО: сервіс community-проєкт, не офіційний DB. Якщо він тимчасово
+// недоступний — показуємо кнопку на офіційний сайт DB.
+const DB_API = "https://v6.db.transport.rest";
+
+async function dbLocations(query) {
+  const url = `${DB_API}/locations?query=${encodeURIComponent(query)}&results=6&addresses=false&poi=false`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("db locations " + r.status);
+  const j = await r.json();
+  return (j || []).filter((x) => x && x.id && x.name).map((x) => ({ id: x.id, name: x.name }));
+}
+async function dbJourneys(fromId, toId, whenISO) {
+  const params = new URLSearchParams({
+    from: fromId, to: toId, results: "4", stopovers: "false",
+    remarks: "true", language: "de",
+  });
+  if (whenISO) params.set("departure", whenISO);
+  const r = await fetch(`${DB_API}/journeys?${params.toString()}`);
+  if (!r.ok) throw new Error("db journeys " + r.status);
+  const j = await r.json();
+  return (j && j.journeys) || [];
+}
+
+const hhmm = (iso) => {
+  if (!iso) return "--:--";
+  try { return new Date(iso).toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" }); }
+  catch { return "--:--"; }
+};
+const delayMin = (sec) => (typeof sec === "number" && sec !== 0 ? Math.round(sec / 60) : 0);
+
 function JourneyPlanner({ trip }) {
   const [origin, setOrigin] = useState("");
-  const dest = trip.to.name || "";
+  const [opts, setOpts] = useState(null);     // список станцій для вибору
+  const [fromStop, setFromStop] = useState(null);
+  const [journeys, setJourneys] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(false);
 
-  // Build a Deutsche Bahn timetable URL with origin + destination prefilled.
-  // Uses the mobile.bahn.de query format, which still accepts plain station
-  // names and opens a real schedule. DB recommends replacing spaces with "+".
-  // When the app is later hosted, a live DB API call can render results here.
+  const legs = trip.legs && trip.legs.length > 0 ? trip.legs : null;
+  const dest = (legs ? legs[legs.length - 1].to : trip.to.name) || "";
+
   const buildDbUrl = () => {
     const o = origin.trim().replace(/\s+/g, "+");
     const d = dest.replace(/\s+/g, "+");
     return `https://mobile.bahn.de/bin/query.exe/dox?S=${encodeURIComponent(o).replace(/%2B/g, "+")}&Z=${encodeURIComponent(d).replace(/%2B/g, "+")}&timeSel=depart&start=1`;
+  };
+
+  // Момент відправлення: дата поїздки + час першого поїзда (якщо задані).
+  const departureISO = () => {
+    const d = (trip.date || "").trim();
+    if (!d) return null;
+    const timeSrc = (legs ? legs[0].fromTime : trip.from.time) || "08:00";
+    const m = String(timeSrc).match(/(\d{1,2}):(\d{2})/);
+    const hh = m ? m[1].padStart(2, "0") : "08", mm = m ? m[2] : "00";
+    return `${d}T${hh}:${mm}:00`;
+  };
+
+  const search = async () => {
+    const q = origin.trim();
+    if (q === "") return;
+    setBusy(true); setErr(false); setJourneys(null); setOpts(null);
+    try {
+      const list = await dbLocations(q);
+      if (list.length === 0) { setOpts([]); return; }
+      if (list.length === 1) { await loadFor(list[0]); return; }
+      setOpts(list);
+    } catch { setErr(true); }
+    finally { setBusy(false); }
+  };
+
+  const loadFor = async (stop) => {
+    setBusy(true); setErr(false); setOpts(null); setFromStop(stop);
+    try {
+      const dl = await dbLocations(dest);
+      if (dl.length === 0) { setErr(true); return; }
+      setJourneys(await dbJourneys(stop.id, dl[0].id, departureISO()));
+    } catch { setErr(true); }
+    finally { setBusy(false); }
   };
 
   const canSearch = origin.trim() !== "";
@@ -803,26 +884,86 @@ function JourneyPlanner({ trip }) {
       <div style={{ fontSize: 12, color: C.inkSoft, marginBottom: 10, lineHeight: 1.4 }}>
         {t("jpHint")} «{dest || t("destFallback")}».
       </div>
-      <input
-        value={origin}
-        onChange={(e) => setOrigin(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter" && canSearch) window.open(buildDbUrl(), "_blank"); }}
-        placeholder={t("jpPlaceholder")}
-        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 10 }}
-      />
-      {canSearch ? (
-        <a
-          href={buildDbUrl()} target="_blank" rel="noreferrer"
-          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: C.green, color: "#fff", borderRadius: 11, padding: "12px", fontSize: 13.5, fontWeight: 700, textDecoration: "none" }}>
-          <Train size={16} /> {t("jpButton")}
-        </a>
-      ) : (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: "rgba(80,104,60,0.15)", color: C.muted, borderRadius: 11, padding: "12px", fontSize: 13.5, fontWeight: 700 }}>
-          <Train size={16} /> {t("jpButtonEmpty")}
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <input
+          value={origin}
+          onChange={(e) => { setOrigin(e.target.value); setJourneys(null); setOpts(null); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && canSearch) search(); }}
+          placeholder={t("jpPlaceholder")}
+          style={{ flex: 1, boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink }}
+        />
+        <button onClick={search} disabled={!canSearch || busy}
+          style={{ border: "none", background: canSearch ? C.green : "rgba(80,104,60,0.25)", color: "#fff", borderRadius: 10, padding: "0 16px", fontSize: 13, fontWeight: 700, cursor: canSearch && !busy ? "pointer" : "default", whiteSpace: "nowrap" }}>
+          {busy ? "…" : t("jpSearch")}
+        </button>
+      </div>
+
+      {opts && opts.length === 0 && (
+        <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 10px" }}>{t("jpNoStation")}</p>
+      )}
+      {opts && opts.length > 0 && (
+        <div style={{ border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden", marginBottom: 10, background: "#fff" }}>
+          {opts.map((o) => (
+            <button key={o.id} onClick={() => loadFor(o)}
+              style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "none", borderBottom: `1px solid ${C.line}`, padding: "10px 12px", fontSize: 13, color: C.ink, cursor: "pointer", fontFamily: "inherit" }}>
+              🚉 {o.name}
+            </button>
+          ))}
         </div>
       )}
+
+      {journeys && journeys.length === 0 && (
+        <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 10px" }}>{t("jpNoTrips")}</p>
+      )}
+      {journeys && journeys.length > 0 && (
+        <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+          {journeys.slice(0, 3).map((jr, i) => {
+            const ls = (jr.legs || []).filter((l) => !l.walking);
+            if (ls.length === 0) return null;
+            const first = ls[0], last = ls[ls.length - 1];
+            const anyCancelled = ls.some((l) => l.cancelled);
+            const dep = delayMin(first.departureDelay), arr = delayMin(last.arrivalDelay);
+            return (
+              <div key={i} style={{ background: "#fff", borderRadius: 11, padding: 11, border: `1px solid ${anyCancelled ? C.rasp : C.line}` }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 17, fontWeight: 800, color: C.ink }}>{hhmm(first.departure || first.plannedDeparture)}</span>
+                  <span style={{ color: C.faint }}>→</span>
+                  <span style={{ fontSize: 17, fontWeight: 800, color: C.ink }}>{hhmm(last.arrival || last.plannedArrival)}</span>
+                  {dep > 0 && <span style={{ fontSize: 11.5, fontWeight: 700, color: C.rasp }}>+{dep} {t("jpMin")}</span>}
+                  {dep === 0 && arr === 0 && !anyCancelled && <span style={{ fontSize: 11.5, fontWeight: 700, color: C.green }}>{t("jpOnTime")}</span>}
+                  <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>
+                    {ls.length === 1 ? t("jpDirect") : `${ls.length - 1} ${t("jpChanges")}`}
+                  </span>
+                </div>
+                {anyCancelled && (
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.rasp, marginBottom: 6 }}>⚠ {t("jpCancelled")}</div>
+                )}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                  {ls.map((l, k) => (
+                    <span key={k} style={{ fontSize: 11, fontWeight: 700, background: l.cancelled ? C.raspSoft : C.yellow, color: l.cancelled ? C.rasp : C.yellowInk, padding: "3px 8px", borderRadius: 20 }}>
+                      {(l.line && (l.line.name || l.line.product)) || "?"}
+                      {l.departurePlatform ? ` · ${t("jpTrack")} ${l.departurePlatform}` : ""}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {err && (
+        <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{t("jpError")}</p>
+      )}
+
+      {canSearch && (
+        <a href={buildDbUrl()} target="_blank" rel="noreferrer"
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: journeys ? "rgba(80,104,60,0.12)" : C.green, color: journeys ? C.greenDark : "#fff", borderRadius: 11, padding: "11px", fontSize: 13, fontWeight: 700, textDecoration: "none" }}>
+          <Train size={16} /> {t("jpButton")}
+        </a>
+      )}
       <div style={{ marginTop: 8, fontSize: 10.5, color: C.muted, fontStyle: "italic", lineHeight: 1.4 }}>
-        {t("jpNote")}
+        {t("jpLiveNote")}
       </div>
     </div>
   );
