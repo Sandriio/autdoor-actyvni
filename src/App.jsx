@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v11";
+const APP_VERSION = "v12";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -170,6 +170,7 @@ const T = {
   jpPlaceholder: { uk: "Наприклад: Augsburg Hbf", en: "e.g. Augsburg Hbf", de: "z.B. Augsburg Hbf", ru: "Например: Augsburg Hbf" },
   jpButton: { uk: "Показати розклад Deutsche Bahn", en: "Show Deutsche Bahn schedule", de: "Deutsche Bahn Fahrplan anzeigen", ru: "Показать расписание Deutsche Bahn" },
   jpButtonEmpty: { uk: "Введіть місто відправлення", en: "Enter departure city", de: "Abfahrtsort eingeben", ru: "Введите город отправления" },
+  jpDestPlaceholder: { uk: "Куди їдете (кінцева станція)", en: "Destination station", de: "Zielbahnhof", ru: "Куда едете (конечная станция)" },
   jpRegionalOnly: { uk: "Лише регіональні (діє Deutschland-Ticket)", en: "Regional trains only (Deutschland-Ticket)", de: "Nur Nahverkehr (Deutschland-Ticket)", ru: "Только региональные (действует Deutschland-Ticket)" },
   jpSearch: { uk: "Знайти", en: "Search", de: "Suchen", ru: "Найти" },
   jpNoStation: { uk: "Станцію не знайдено. Спробуйте назву вокзалу, напр. «Augsburg Hbf».", en: "Station not found. Try a station name, e.g. \"Augsburg Hbf\".", de: "Bahnhof nicht gefunden.", ru: "Станция не найдена. Попробуйте название вокзала, напр. «Augsburg Hbf»." },
@@ -842,6 +843,18 @@ async function dbJourneys(fromId, toId, whenISO, regionalOnly) {
   return (j && j.journeys) || [];
 }
 
+// Зсув німецького часу відносно всесвітнього для конкретної дати
+// (+02:00 влітку, +01:00 взимку). Без цього пошук зміщувався на 1-2 години.
+function berlinOffset(dateStr) {
+  try {
+    const d = new Date(`${dateStr}T12:00:00Z`);
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Berlin", timeZoneName: "longOffset" }).formatToParts(d);
+    const tz = (parts.find((p) => p.type === "timeZoneName") || {}).value || "GMT+02:00";
+    const off = tz.replace("GMT", "").trim();
+    return /^[+-]\d{2}:\d{2}$/.test(off) ? off : "+02:00";
+  } catch { return "+02:00"; }
+}
+
 const hhmm = (iso) => {
   if (!iso) return "--:--";
   try { return new Date(iso).toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" }); }
@@ -867,9 +880,12 @@ function JourneyPlanner({ trip }) {
   const [qDate, setQDate] = useState(initialDate);
   const [qTime, setQTime] = useState(initialTime);
   const [regionalOnly, setRegionalOnly] = useState(true);
+  const [expanded, setExpanded] = useState(null);
 
   const legs = trip.legs && trip.legs.length > 0 ? trip.legs : null;
-  const dest = (legs ? legs[legs.length - 1].to : trip.to.name) || "";
+  const defaultDest = (legs ? legs[legs.length - 1].to : trip.to.name) || "";
+  const [destInput, setDestInput] = useState(defaultDest);
+  const dest = destInput.trim() || defaultDest;
 
   const buildDbUrl = () => {
     const o = origin.trim().replace(/\s+/g, "+");
@@ -882,7 +898,7 @@ function JourneyPlanner({ trip }) {
     if (!qDate) return null;
     const m = String(qTime || "").match(/(\d{1,2}):(\d{2})/);
     const hh = m ? m[1].padStart(2, "0") : "08", mm = m ? m[2] : "00";
-    return `${qDate}T${hh}:${mm}:00`;
+    return `${qDate}T${hh}:${mm}:00${berlinOffset(qDate)}`;
   };
 
   const search = async () => {
@@ -929,6 +945,12 @@ function JourneyPlanner({ trip }) {
         <span style={{ fontSize: 13 }}>{regionalOnly ? "✓" : "○"}</span>
         {t("jpRegionalOnly")}
       </button>
+      <input
+        value={destInput}
+        onChange={(e) => { setDestInput(e.target.value); setJourneys(null); }}
+        placeholder={t("jpDestPlaceholder")}
+        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 8 }}
+      />
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         <input
           value={origin}
@@ -962,35 +984,88 @@ function JourneyPlanner({ trip }) {
       )}
       {journeys && journeys.length > 0 && (
         <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
-          {journeys.slice(0, 3).map((jr, i) => {
+          {journeys.slice(0, 4).map((jr, i) => {
             const ls = (jr.legs || []).filter((l) => !l.walking);
             if (ls.length === 0) return null;
             const first = ls[0], last = ls[ls.length - 1];
             const anyCancelled = ls.some((l) => l.cancelled);
             const dep = delayMin(first.departureDelay), arr = delayMin(last.arrivalDelay);
+            const isOpen = expanded === i;
+            const mins = (a, b) => {
+              const d = (new Date(a) - new Date(b)) / 60000;
+              return isNaN(d) ? null : Math.round(d);
+            };
             return (
-              <div key={i} style={{ background: "#fff", borderRadius: 11, padding: 11, border: `1px solid ${anyCancelled ? C.rasp : C.line}` }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 17, fontWeight: 800, color: C.ink }}>{hhmm(first.departure || first.plannedDeparture)}</span>
-                  <span style={{ color: C.faint }}>→</span>
-                  <span style={{ fontSize: 17, fontWeight: 800, color: C.ink }}>{hhmm(last.arrival || last.plannedArrival)}</span>
-                  {dep > 0 && <span style={{ fontSize: 11.5, fontWeight: 700, color: C.rasp }}>+{dep} {t("jpMin")}</span>}
-                  {dep === 0 && arr === 0 && !anyCancelled && <span style={{ fontSize: 11.5, fontWeight: 700, color: C.green }}>{t("jpOnTime")}</span>}
-                  <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>
-                    {ls.length === 1 ? t("jpDirect") : `${ls.length - 1} ${t("jpChanges")}`}
-                  </span>
-                </div>
-                {anyCancelled && (
-                  <div style={{ fontSize: 12, fontWeight: 700, color: C.rasp, marginBottom: 6 }}>⚠ {t("jpCancelled")}</div>
-                )}
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                  {ls.map((l, k) => (
-                    <span key={k} style={{ fontSize: 11, fontWeight: 700, background: l.cancelled ? C.raspSoft : C.yellow, color: l.cancelled ? C.rasp : C.yellowInk, padding: "3px 8px", borderRadius: 20 }}>
-                      {(l.line && (l.line.name || l.line.product)) || "?"}
-                      {l.departurePlatform ? ` · ${t("jpTrack")} ${l.departurePlatform}` : ""}
+              <div key={i} style={{ background: "#fff", borderRadius: 11, border: `1px solid ${anyCancelled ? C.rasp : C.line}`, overflow: "hidden" }}>
+                <button onClick={() => setExpanded(isOpen ? null : i)}
+                  style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 17, fontWeight: 800, color: C.ink }}>{hhmm(first.departure || first.plannedDeparture)}</span>
+                    <span style={{ color: C.faint }}>→</span>
+                    <span style={{ fontSize: 17, fontWeight: 800, color: C.ink }}>{hhmm(last.arrival || last.plannedArrival)}</span>
+                    {dep > 0 && <span style={{ fontSize: 11.5, fontWeight: 700, color: C.rasp }}>+{dep} {t("jpMin")}</span>}
+                    {dep === 0 && arr === 0 && !anyCancelled && <span style={{ fontSize: 11.5, fontWeight: 700, color: C.green }}>{t("jpOnTime")}</span>}
+                    <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>
+                      {ls.length === 1 ? t("jpDirect") : `${ls.length - 1} ${t("jpChanges")}`} {isOpen ? "▲" : "▼"}
                     </span>
-                  ))}
-                </div>
+                  </div>
+                  {anyCancelled && (
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.rasp, marginBottom: 6 }}>⚠ {t("jpCancelled")}</div>
+                  )}
+                  {!isOpen && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                      {ls.map((l, k) => (
+                        <span key={k} style={{ fontSize: 11, fontWeight: 700, background: l.cancelled ? C.raspSoft : C.yellow, color: l.cancelled ? C.rasp : C.yellowInk, padding: "3px 8px", borderRadius: 20 }}>
+                          {(l.line && (l.line.name || l.line.product)) || "?"}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </button>
+                {isOpen && (
+                  <div style={{ borderTop: `1px solid ${C.line}`, padding: "11px 13px 13px", background: "rgba(80,104,60,0.04)" }}>
+                    {ls.map((l, k) => {
+                      const prev = k > 0 ? ls[k - 1] : null;
+                      const wait = prev ? mins(l.departure || l.plannedDeparture, prev.arrival || prev.plannedArrival) : null;
+                      const ld = delayMin(l.departureDelay), la = delayMin(l.arrivalDelay);
+                      return (
+                        <div key={k}>
+                          {prev && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 7, margin: "8px 0", padding: "6px 10px", background: C.yellowSoft, borderRadius: 9 }}>
+                              <span style={{ fontSize: 12 }}>⤾</span>
+                              <span style={{ fontSize: 11.5, fontWeight: 700, color: C.yellowInk }}>
+                                {t("transfer")}{wait != null ? ` · ${wait} ${t("jpMin")}` : ""}
+                              </span>
+                            </div>
+                          )}
+                          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                            <div style={{ minWidth: 46 }}>
+                              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>{hhmm(l.departure || l.plannedDeparture)}</div>
+                              {ld > 0 && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rasp }}>+{ld}</div>}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{(l.origin && l.origin.name) || ""}</div>
+                              {l.departurePlatform && <div style={{ fontSize: 11, color: C.rasp, fontWeight: 600 }}>{t("jpTrack")} {l.departurePlatform}</div>}
+                              <div style={{ display: "inline-block", margin: "5px 0", fontSize: 11, fontWeight: 800, background: l.cancelled ? C.raspSoft : C.yellow, color: l.cancelled ? C.rasp : C.yellowInk, padding: "3px 9px", borderRadius: 20 }}>
+                                {(l.line && (l.line.name || l.line.product)) || "?"}
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 2 }}>
+                            <div style={{ minWidth: 46 }}>
+                              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>{hhmm(l.arrival || l.plannedArrival)}</div>
+                              {la > 0 && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rasp }}>+{la}</div>}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{(l.destination && l.destination.name) || ""}</div>
+                              {l.arrivalPlatform && <div style={{ fontSize: 11, color: C.rasp, fontWeight: 600 }}>{t("jpTrack")} {l.arrivalPlatform}</div>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}
