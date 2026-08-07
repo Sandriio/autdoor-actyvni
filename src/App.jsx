@@ -169,7 +169,7 @@ const T = {
   transfer: { uk: "Пересадка", en: "Transfer", de: "Umstieg", ru: "Пересадка" },
   dTicketTail: { uk: "— проїзд безкоштовний", en: "— travel is free", de: "— Fahrt ist kostenlos", ru: "— проезд бесплатный" },
   jpTitle: { uk: "Звідки ви їдете?", en: "Where are you coming from?", de: "Woher reisen Sie an?", ru: "Откуда вы едете?" },
-  jpHint: { uk: "Введіть своє місто чи вокзал — покажемо розклад поїздів до", en: "Enter your city or station — we'll show train times to", de: "Stadt oder Bahnhof eingeben — wir zeigen Verbindungen nach", ru: "Введите свой город или вокзал — покажем расписание поездов до" },
+  jpHint: { uk: "Введіть своє місто чи вокзал — покажемо розклад поїздів до кінцевого пункту", en: "Enter your city or station — we'll show train times to the destination", de: "Stadt oder Bahnhof eingeben — wir zeigen Verbindungen zum Ziel", ru: "Введите свой город или вокзал — покажем расписание поездов до конечного пункта" },
   jpPlaceholder: { uk: "Звідки їдете (напр. Augsburg Hbf)", en: "From (e.g. Augsburg Hbf)", de: "Von (z.B. Augsburg Hbf)", ru: "Откуда едете (напр. Augsburg Hbf)" },
   jpButton: { uk: "Показати розклад Deutsche Bahn", en: "Show Deutsche Bahn schedule", de: "Deutsche Bahn Fahrplan anzeigen", ru: "Показать расписание Deutsche Bahn" },
   jpButtonEmpty: { uk: "Введіть місто відправлення", en: "Enter departure city", de: "Abfahrtsort eingeben", ru: "Введите город отправления" },
@@ -185,7 +185,7 @@ const T = {
   jpCancelled: { uk: "Рейс скасовано або є скасовані ділянки", en: "Cancelled or partly cancelled", de: "Fahrt entfällt teilweise", ru: "Рейс отменён или есть отменённые участки" },
   jpTrack: { uk: "кол.", en: "pl.", de: "Gl.", ru: "пут." },
   jpError: { uk: "Не вдалося отримати живий розклад. Скористайтеся кнопкою нижче — офіційний сайт DB.", en: "Couldn't load the live timetable. Use the DB website below.", de: "Live-Fahrplan nicht verfügbar. Bitte DB-Website nutzen.", ru: "Не удалось получить живое расписание. Воспользуйтесь сайтом DB ниже." },
-  jpLiveNote: { uk: "Дані Deutsche Bahn у реальному часі: затримки, скасування, платформи. Джерело — публічний сервіс, можливі короткі перебої.", en: "Live Deutsche Bahn data: delays, cancellations, platforms. Provided by a public service, brief outages possible.", de: "Echtzeitdaten der Deutschen Bahn.", ru: "Данные Deutsche Bahn в реальном времени: задержки, отмены, платформы. Источник — публичный сервис, возможны краткие перебои." },
+  jpLiveNote: { uk: "Дані з відкритих джерел. Список може відрізнятися від офіційного — перед виїздом звіряйте на сайті Deutsche Bahn.", en: "Open-data source. The list may differ from the official one — check on the Deutsche Bahn site before travelling.", de: "Open-Data-Quelle. Bitte vor der Fahrt auf bahn.de prüfen.", ru: "Данные из открытых источников. Список может отличаться от официального — перед выездом сверяйте на сайте Deutsche Bahn." },
   jpNote: { uk: "Відкриває розклад на сайті Deutsche Bahn. Після публікації застосунку розклад показуватиметься прямо тут.", en: "Opens the schedule on Deutsche Bahn's site. Once the app is published, times will show right here.", de: "Öffnet den Fahrplan auf der Deutsche-Bahn-Website. Nach Veröffentlichung erscheinen die Zeiten direkt hier.", ru: "Открывает расписание на сайте Deutsche Bahn. После публикации приложения расписание будет показываться здесь." },
   destFallback: { uk: "місця призначення", en: "the destination", de: "dem Ziel", ru: "места назначения" },
   // meeting
@@ -935,7 +935,7 @@ function JourneyPlanner({ trip }) {
         <Train size={15} color={C.green} /> {t("jpTitle")}
       </div>
       <div style={{ fontSize: 12, color: C.inkSoft, marginBottom: 10, lineHeight: 1.4 }}>
-        {t("jpHint")} «{dest || t("destFallback")}».
+        {t("jpHint")}.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
         <input type="date" value={qDate} onChange={(e) => { setQDate(e.target.value); setJourneys(null); }}
@@ -948,25 +948,24 @@ function JourneyPlanner({ trip }) {
         <span style={{ fontSize: 13 }}>{regionalOnly ? "✓" : "○"}</span>
         {t("jpRegionalOnly")}
       </button>
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <input
-          value={origin}
-          onChange={(e) => { setOrigin(e.target.value); setJourneys(null); setOpts(null); }}
-          onKeyDown={(e) => { if (e.key === "Enter" && canSearch) search(); }}
-          placeholder={t("jpPlaceholder")}
-          style={{ flex: 1, boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink }}
-        />
-        <button onClick={search} disabled={!canSearch || busy}
-          style={{ border: "none", background: canSearch ? C.green : "rgba(80,104,60,0.25)", color: "#fff", borderRadius: 10, padding: "0 16px", fontSize: 13, fontWeight: 700, cursor: canSearch && !busy ? "pointer" : "default", whiteSpace: "nowrap" }}>
-          {busy ? "…" : t("jpSearch")}
-        </button>
-      </div>
+      <input
+        value={origin}
+        onChange={(e) => { setOrigin(e.target.value); setJourneys(null); setOpts(null); }}
+        onKeyDown={(e) => { if (e.key === "Enter" && canSearch) search(); }}
+        placeholder={t("jpPlaceholder")}
+        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 8 }}
+      />
       <input
         value={destInput}
         onChange={(e) => { setDestInput(e.target.value); setJourneys(null); }}
+        onKeyDown={(e) => { if (e.key === "Enter" && canSearch) search(); }}
         placeholder={t("jpDestPlaceholder")}
         style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 10 }}
       />
+      <button onClick={search} disabled={!canSearch || busy}
+        style={{ width: "100%", border: "none", background: canSearch ? C.green : "rgba(80,104,60,0.25)", color: "#fff", borderRadius: 12, padding: "14px", fontSize: 15, fontWeight: 800, cursor: canSearch && !busy ? "pointer" : "default", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        <Train size={17} /> {busy ? "…" : t("jpSearch")}
+      </button>
 
       {opts && opts.length === 0 && (
         <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 10px" }}>{t("jpNoStation")}</p>
