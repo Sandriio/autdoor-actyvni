@@ -45,7 +45,7 @@ async function locationsTransitous(query) {
 
 // ── Пошук рейсів ──────────────────────────────────────────────────────
 async function journeysDbRest(from, to, departure, regionalOnly) {
-  const p = new URLSearchParams({ from, to, results: "6", stopovers: "false" });
+  const p = new URLSearchParams({ from, to, results: "8", stopovers: "false" });
   if (departure) p.set("departure", departure);
   if (regionalOnly) {
     // Вимикаємо далекобійні поїзди (ICE/IC/EC) — Deutschland-Ticket і
@@ -58,6 +58,8 @@ async function journeysDbRest(from, to, departure, regionalOnly) {
     p.set("bus", "true");
     p.set("subway", "true");
     p.set("tram", "true");
+    p.set("ferry", "true");
+    p.set("taxi", "true");
   }
   const j = await getJson(`${DBREST}/journeys?${p}`);
   return (j && j.journeys) || [];
@@ -86,12 +88,13 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
   const p = new URLSearchParams({
     fromPlace: String(from).replace(/^T:/, ""),
     toPlace: String(to).replace(/^T:/, ""),
-    numItineraries: "6",
+    numItineraries: "10",
   });
-  if (regionalOnly) {
-    p.set("transitModes", "REGIONAL_RAIL,REGIONAL_FAST_RAIL,METRO,SUBWAY,TRAM,BUS");
-  }
   if (departure) p.set("time", new Date(departure).toISOString());
+  // Дозволяємо пішохідні пересадки між вокзалами — без цього губляться
+  // варіанти, які показує офіційний застосунок DB.
+  p.set("maxPreTransitTime", "900");
+  p.set("maxPostTransitTime", "900");
   const j = await getJson(`${TRANSITOUS}/api/v1/plan?${p}`);
   const its = (j && (j.itineraries || (j.plan && j.plan.itineraries))) || [];
   return its.map((it) => ({
