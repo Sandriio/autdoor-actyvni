@@ -44,14 +44,36 @@ async function locationsTransitous(query) {
 }
 
 // ── Пошук рейсів ──────────────────────────────────────────────────────
-async function journeysDbRest(from, to, departure) {
-  const p = new URLSearchParams({ from, to, results: "4", stopovers: "false" });
+async function journeysDbRest(from, to, departure, regionalOnly) {
+  const p = new URLSearchParams({ from, to, results: "6", stopovers: "false" });
   if (departure) p.set("departure", departure);
+  if (regionalOnly) {
+    // Вимикаємо далекобійні поїзди (ICE/IC/EC) — Deutschland-Ticket і
+    // Bayern-Ticket на них не діють.
+    p.set("nationalExpress", "false");
+    p.set("national", "false");
+    p.set("regionalExpress", "true");
+    p.set("regional", "true");
+    p.set("suburban", "true");
+    p.set("bus", "true");
+    p.set("subway", "true");
+    p.set("tram", "true");
+  }
   const j = await getJson(`${DBREST}/journeys?${p}`);
   return (j && j.journeys) || [];
 }
 
 const iso = (v) => (v ? String(v) : null);
+
+// Далекобійні поїзди, на які не діють Deutschland-/Bayern-Ticket.
+const LONG_DISTANCE = /^(ICE|IC|EC|ECE|RJX|RJ|TGV|FLX|NJ|EN|THA|WB)\b/i;
+function isRegionalJourney(jr) {
+  return (jr.legs || []).every((l) => {
+    if (l.walking) return true;
+    const name = (l.line && l.line.name) || "";
+    return !LONG_DISTANCE.test(String(name).trim());
+  });
+}
 const delaySec = (actual, planned) => {
   if (!actual || !planned) return 0;
   const d = (new Date(actual) - new Date(planned)) / 1000;
@@ -60,12 +82,15 @@ const delaySec = (actual, planned) => {
 
 // Приводимо відповідь Transitous до вигляду DB, щоб застосунок не
 // помічав різниці між джерелами.
-async function journeysTransitous(from, to, departure) {
+async function journeysTransitous(from, to, departure, regionalOnly) {
   const p = new URLSearchParams({
     fromPlace: String(from).replace(/^T:/, ""),
     toPlace: String(to).replace(/^T:/, ""),
-    numItineraries: "4",
+    numItineraries: "6",
   });
+  if (regionalOnly) {
+    p.set("transitModes", "REGIONAL_RAIL,REGIONAL_FAST_RAIL,METRO,SUBWAY,TRAM,BUS");
+  }
   if (departure) p.set("time", new Date(departure).toISOString());
   const j = await getJson(`${TRANSITOUS}/api/v1/plan?${p}`);
   const its = (j && (j.itineraries || (j.plan && j.plan.itineraries))) || [];
@@ -119,10 +144,17 @@ export default async function handler(req, res) {
     if (path === "/journeys") {
       if (!from || !to) { res.status(400).json({ error: "no from/to" }); return; }
       const useT = String(from).startsWith("T:") || String(to).startsWith("T:");
+      const regionalOnly = String(req.query.regional || "") === "1";
       const chain = useT ? [journeysTransitous] : [journeysDbRest, journeysTransitous];
       for (const fn of chain) {
         try {
-          const out = await fn(from, to, departure);
+          let out = await fn(from, to, departure, regionalOnly);
+          // Підстраховка: навіть якщо сервіс проігнорував фільтр, прибираємо
+          // варіанти з ICE/IC/EC вручну.
+          if (regionalOnly) {
+            const filtered = out.filter(isRegionalJourney);
+            if (filtered.length > 0) out = filtered;
+          }
           if (out.length > 0) { res.status(200).json({ journeys: out }); return; }
           errors.push(fn.name + ": empty");
         } catch (e) { errors.push(fn.name + ": " + ((e && e.message) || e)); }
