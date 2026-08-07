@@ -91,6 +91,10 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
     numItineraries: "10",
   });
   if (departure) p.set("time", new Date(departure).toISOString());
+  // Режим «розклад»: віддає рейси підряд у вікні часу, а не лише кілька
+  // найшвидших. Вікно 6 годин — щоб було з чого обирати.
+  p.set("timetableView", "true");
+  p.set("searchWindow", "21600");
   // Дозволяємо пішохідні пересадки між вокзалами — без цього губляться
   // варіанти, які показує офіційний застосунок DB.
   p.set("maxPreTransitTime", "900");
