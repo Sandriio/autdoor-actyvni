@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v12";
+const APP_VERSION = "v13";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -156,7 +156,10 @@ const T = {
   wLive: { uk: "Живий прогноз Open-Meteo на дату поїздки.", en: "Live Open-Meteo forecast for the trip date.", de: "Live-Prognose von Open-Meteo.", ru: "Живой прогноз Open-Meteo на дату поездки." },
   wNoDate: { uk: "Це орієнтовні дані. Вкажіть дату поїздки в редакторі — і тут з'явиться живий прогноз.", en: "Sample data. Set the trip date in the editor to see a live forecast.", de: "Beispieldaten. Datum setzen für Live-Prognose.", ru: "Это ориентировочные данные. Укажите дату поездки в редакторе — появится живой прогноз." },
   wNoCoords: { uk: "Це орієнтовні дані. Додайте координати точки збору — і тут з'явиться живий прогноз.", en: "Sample data. Add meeting point coordinates to see a live forecast.", de: "Beispieldaten. Koordinaten setzen für Live-Prognose.", ru: "Это ориентировочные данные. Добавьте координаты точки сбора — появится живой прогноз." },
-  wFar: { uk: "Дата поїздки далі ніж за 16 днів — живий прогноз з'явиться ближче до дати.", en: "Trip is more than 16 days away — live forecast will appear closer to the date.", de: "Mehr als 16 Tage entfernt — Live-Prognose folgt näher am Datum.", ru: "До поездки больше 16 дней — живой прогноз появится ближе к дате." },
+  wClimate: { uk: "Типова погода для цієї дати за минулі роки. Справжній прогноз з'явиться за 16 днів до поїздки.", en: "Typical weather for this date based on past years. A real forecast appears 16 days before the trip.", de: "Typisches Wetter für dieses Datum.", ru: "Типичная погода для этой даты за прошлые годы. Настоящий прогноз появится за 16 дней до поездки." },
+  wClimateCond: { uk: "Типово для цієї пори", en: "Typical for the season", de: "Saisontypisch", ru: "Типично для этого времени" },
+  jpWalk: { uk: "Перехід пішки", en: "Walk", de: "Fußweg", ru: "Переход пешком" },
+  wFar: { uk: "Далі ніж за 60 днів прогнозу немає — показано орієнтовні дані.", en: "No forecast beyond 60 days — showing sample data.", de: "Keine Prognose über 60 Tage hinaus.", ru: "Дальше 60 дней прогноза нет — показаны ориентировочные данные." },
   wPast: { uk: "Дата поїздки вже минула — показано збережені дані.", en: "Trip date has passed — showing saved data.", de: "Datum liegt in der Vergangenheit — gespeicherte Daten.", ru: "Дата поездки уже прошла — показаны сохранённые данные." },
   loading: { uk: "Завантаження…", en: "Loading…", de: "Laden…", ru: "Загрузка…" },
   loadErrorMsg: { uk: "Не вдалося завантажити поїздки з бази. Перевірте інтернет-з'єднання.", en: "Couldn't load trips from the database. Check your connection.", de: "Ausflüge konnten nicht geladen werden. Verbindung prüfen.", ru: "Не удалось загрузить поездки из базы. Проверьте подключение к интернету." },
@@ -167,10 +170,10 @@ const T = {
   dTicketTail: { uk: "— проїзд безкоштовний", en: "— travel is free", de: "— Fahrt ist kostenlos", ru: "— проезд бесплатный" },
   jpTitle: { uk: "Звідки ви їдете?", en: "Where are you coming from?", de: "Woher reisen Sie an?", ru: "Откуда вы едете?" },
   jpHint: { uk: "Введіть своє місто чи вокзал — покажемо розклад поїздів до", en: "Enter your city or station — we'll show train times to", de: "Stadt oder Bahnhof eingeben — wir zeigen Verbindungen nach", ru: "Введите свой город или вокзал — покажем расписание поездов до" },
-  jpPlaceholder: { uk: "Наприклад: Augsburg Hbf", en: "e.g. Augsburg Hbf", de: "z.B. Augsburg Hbf", ru: "Например: Augsburg Hbf" },
+  jpPlaceholder: { uk: "Звідки їдете (напр. Augsburg Hbf)", en: "From (e.g. Augsburg Hbf)", de: "Von (z.B. Augsburg Hbf)", ru: "Откуда едете (напр. Augsburg Hbf)" },
   jpButton: { uk: "Показати розклад Deutsche Bahn", en: "Show Deutsche Bahn schedule", de: "Deutsche Bahn Fahrplan anzeigen", ru: "Показать расписание Deutsche Bahn" },
   jpButtonEmpty: { uk: "Введіть місто відправлення", en: "Enter departure city", de: "Abfahrtsort eingeben", ru: "Введите город отправления" },
-  jpDestPlaceholder: { uk: "Куди їдете (кінцева станція)", en: "Destination station", de: "Zielbahnhof", ru: "Куда едете (конечная станция)" },
+  jpDestPlaceholder: { uk: "Куди їдете (кінцева станція)", en: "To (destination station)", de: "Nach (Zielbahnhof)", ru: "Куда едете (конечная станция)" },
   jpRegionalOnly: { uk: "Лише регіональні (діє Deutschland-Ticket)", en: "Regional trains only (Deutschland-Ticket)", de: "Nur Nahverkehr (Deutschland-Ticket)", ru: "Только региональные (действует Deutschland-Ticket)" },
   jpSearch: { uk: "Знайти", en: "Search", de: "Suchen", ru: "Найти" },
   jpNoStation: { uk: "Станцію не знайдено. Спробуйте назву вокзалу, напр. «Augsburg Hbf».", en: "Station not found. Try a station name, e.g. \"Augsburg Hbf\".", de: "Bahnhof nicht gefunden.", ru: "Станция не найдена. Попробуйте название вокзала, напр. «Augsburg Hbf»." },
@@ -945,13 +948,7 @@ function JourneyPlanner({ trip }) {
         <span style={{ fontSize: 13 }}>{regionalOnly ? "✓" : "○"}</span>
         {t("jpRegionalOnly")}
       </button>
-      <input
-        value={destInput}
-        onChange={(e) => { setDestInput(e.target.value); setJourneys(null); }}
-        placeholder={t("jpDestPlaceholder")}
-        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 8 }}
-      />
-      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
         <input
           value={origin}
           onChange={(e) => { setOrigin(e.target.value); setJourneys(null); setOpts(null); }}
@@ -964,6 +961,12 @@ function JourneyPlanner({ trip }) {
           {busy ? "…" : t("jpSearch")}
         </button>
       </div>
+      <input
+        value={destInput}
+        onChange={(e) => { setDestInput(e.target.value); setJourneys(null); }}
+        placeholder={t("jpDestPlaceholder")}
+        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 10 }}
+      />
 
       {opts && opts.length === 0 && (
         <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 10px" }}>{t("jpNoStation")}</p>
@@ -984,7 +987,7 @@ function JourneyPlanner({ trip }) {
       )}
       {journeys && journeys.length > 0 && (
         <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
-          {journeys.slice(0, 4).map((jr, i) => {
+          {journeys.slice(0, 6).map((jr, i) => {
             const ls = (jr.legs || []).filter((l) => !l.walking);
             if (ls.length === 0) return null;
             const first = ls[0], last = ls[ls.length - 1];
@@ -1024,8 +1027,17 @@ function JourneyPlanner({ trip }) {
                 </button>
                 {isOpen && (
                   <div style={{ borderTop: `1px solid ${C.line}`, padding: "11px 13px 13px", background: "rgba(80,104,60,0.04)" }}>
-                    {ls.map((l, k) => {
-                      const prev = k > 0 ? ls[k - 1] : null;
+                    {(jr.legs || []).map((l, k, arr) => {
+                      if (l.walking) {
+                        return (
+                          <div key={"w" + k} style={{ display: "flex", alignItems: "center", gap: 7, margin: "8px 0", padding: "6px 10px", background: "rgba(0,0,0,0.05)", borderRadius: 9 }}>
+                            <span style={{ fontSize: 12 }}>🚶</span>
+                            <span style={{ fontSize: 11.5, fontWeight: 700, color: C.muted }}>{t("jpWalk")}</span>
+                          </div>
+                        );
+                      }
+                      const prevArr = arr.slice(0, k).filter((x) => !x.walking);
+                      const prev = prevArr.length > 0 ? prevArr[prevArr.length - 1] : null;
                       const wait = prev ? mins(l.departure || l.plannedDeparture, prev.arrival || prev.plannedArrival) : null;
                       const ld = delayMin(l.departureDelay), la = delayMin(l.arrivalDelay);
                       return (
@@ -1154,7 +1166,39 @@ function LiveWeather({ trip }) {
     const target = new Date(d + "T00:00:00");
     const diff = Math.round((target - today) / 86400000);
     if (isNaN(diff) || diff < 0) { setReason("past"); setMode("fallback"); return; }
-    if (diff > 15) { setReason("far"); setMode("fallback"); return; }
+    if (diff > 15) {
+      // Справжній прогноз існує лише на ~16 днів. Далі — типова погода для
+      // цієї дати за минулі роки, чесно підписана.
+      if (diff <= 60) {
+        setMode("loading");
+        const yr = new Date(d + "T00:00:00").getFullYear();
+        const md = d.slice(5);
+        Promise.all([yr - 1, yr - 2, yr - 3].map((y) =>
+          fetch(`https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&start_date=${y}-${md}&end_date=${y}-${md}&daily=temperature_2m_max,apparent_temperature_max,precipitation_sum,wind_speed_10m_max,relative_humidity_2m_mean&timezone=Europe%2FBerlin`)
+            .then((r) => r.json()).catch(() => null)
+        )).then((rs) => {
+          if (cancelled) return;
+          const vals = rs.filter((r) => r && r.daily && r.daily.temperature_2m_max && r.daily.temperature_2m_max[0] != null);
+          if (vals.length === 0) { setReason("far"); setMode("fallback"); return; }
+          const avg = (pick) => {
+            const nums = vals.map((v) => pick(v.daily)).filter((x) => typeof x === "number");
+            return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+          };
+          const rain = avg((dd) => dd.precipitation_sum && dd.precipitation_sum[0]);
+          setLive({
+            tempC: Math.round(avg((dd) => dd.temperature_2m_max[0]) || 0),
+            feelsC: Math.round(avg((dd) => dd.apparent_temperature_max && dd.apparent_temperature_max[0]) || 0),
+            rainPct: rain != null ? Math.min(100, Math.round(rain * 20)) : 0,
+            windKmh: Math.round(avg((dd) => dd.wind_speed_10m_max && dd.wind_speed_10m_max[0]) || 0),
+            humidity: Math.round(avg((dd) => dd.relative_humidity_2m_mean && dd.relative_humidity_2m_mean[0]) || 60),
+            icon: "cloud", cond: null,
+          });
+          setReason("climate"); setMode("climate");
+        });
+        return;
+      }
+      setReason("far"); setMode("fallback"); return;
+    }
     setMode("loading");
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
       `&daily=weather_code,precipitation_probability_max` +
@@ -1186,11 +1230,12 @@ function LiveWeather({ trip }) {
     return () => { cancelled = true; };
   }, [trip.id, trip.date]);
 
-  const w = mode === "live" && live ? live : {
+  const w = (mode === "live" || mode === "climate") && live ? live : {
     tempC: trip.weather.tempC, feelsC: trip.weather.feelsC, rainPct: trip.weather.rainPct,
     windKmh: trip.weather.windKmh, humidity: trip.weather.humidity, icon: trip.weather.icon, cond: null,
   };
-  const condText = mode === "live" && live ? (live.cond[CURRENT_LANG] || live.cond.uk) : tc(trip.weather.condition);
+  const condText = mode === "live" && live && live.cond ? (live.cond[CURRENT_LANG] || live.cond.uk)
+    : mode === "climate" ? t("wClimateCond") : tc(trip.weather.condition);
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
@@ -1217,7 +1262,8 @@ function LiveWeather({ trip }) {
         ))}
       </div>
       <div style={{ marginTop: 11, fontSize: 11, color: C.faint, fontStyle: "italic" }}>
-        {mode === "live" ? t("wLive")
+        {mode === "climate" ? t("wClimate")
+          : mode === "live" ? t("wLive")
           : reason === "nodate" ? t("wNoDate")
           : reason === "nocoords" ? t("wNoCoords")
           : reason === "far" ? t("wFar")
@@ -2209,7 +2255,7 @@ export default function App() {
   const [editing, setEditing] = useState(null); // trip object being edited, or "new"
   const [pinOpen, setPinOpen] = useState(false);
   const [pin, setPin] = useState("");
-  const ADMIN_PIN = "7391"; // PIN організатора
+  const ADMIN_PIN = "73914628"; // PIN організатора — 8 символів
 
   // Group trips by their status group. "done"/"cancelled" → Минулі; the rest
   // (upcoming, recruiting, ongoing, postponed) → Найближчі. At the start of a
@@ -2415,7 +2461,7 @@ export default function App() {
                 autoFocus type="password" inputMode="numeric" value={pin}
                 onChange={(e) => setPin(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { if (pin === ADMIN_PIN) { setIsAdmin(true); setAdminPin(pin); setPinOpen(false); } else setPin(""); } }}
-                placeholder="••••"
+                placeholder="••••••••"
                 style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px", fontSize: 18, textAlign: "center", letterSpacing: 4, marginBottom: 14, fontFamily: "inherit" }}
               />
               <div style={{ display: "flex", gap: 10 }}>
