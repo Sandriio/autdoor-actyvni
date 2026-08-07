@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v10";
+const APP_VERSION = "v11";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -170,6 +170,7 @@ const T = {
   jpPlaceholder: { uk: "Наприклад: Augsburg Hbf", en: "e.g. Augsburg Hbf", de: "z.B. Augsburg Hbf", ru: "Например: Augsburg Hbf" },
   jpButton: { uk: "Показати розклад Deutsche Bahn", en: "Show Deutsche Bahn schedule", de: "Deutsche Bahn Fahrplan anzeigen", ru: "Показать расписание Deutsche Bahn" },
   jpButtonEmpty: { uk: "Введіть місто відправлення", en: "Enter departure city", de: "Abfahrtsort eingeben", ru: "Введите город отправления" },
+  jpRegionalOnly: { uk: "Лише регіональні (діє Deutschland-Ticket)", en: "Regional trains only (Deutschland-Ticket)", de: "Nur Nahverkehr (Deutschland-Ticket)", ru: "Только региональные (действует Deutschland-Ticket)" },
   jpSearch: { uk: "Знайти", en: "Search", de: "Suchen", ru: "Найти" },
   jpNoStation: { uk: "Станцію не знайдено. Спробуйте назву вокзалу, напр. «Augsburg Hbf».", en: "Station not found. Try a station name, e.g. \"Augsburg Hbf\".", de: "Bahnhof nicht gefunden.", ru: "Станция не найдена. Попробуйте название вокзала, напр. «Augsburg Hbf»." },
   jpNoTrips: { uk: "Немає рейсів на цей час.", en: "No connections for this time.", de: "Keine Verbindungen.", ru: "Нет рейсов на это время." },
@@ -833,9 +834,10 @@ async function dbLocations(query) {
   const j = await dbFetch("/locations", { query, results: "6", addresses: "false", poi: "false" });
   return (j || []).filter((x) => x && x.id && x.name).map((x) => ({ id: x.id, name: x.name }));
 }
-async function dbJourneys(fromId, toId, whenISO) {
+async function dbJourneys(fromId, toId, whenISO, regionalOnly) {
   const params = { from: fromId, to: toId, results: "4", stopovers: "false" };
   if (whenISO) params.departure = whenISO;
+  if (regionalOnly) params.regional = "1";
   const j = await dbFetch("/journeys", params);
   return (j && j.journeys) || [];
 }
@@ -854,6 +856,17 @@ function JourneyPlanner({ trip }) {
   const [journeys, setJourneys] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(false);
+  // Дата й час, на які шукати рейси. За замовчуванням — дата поїздки
+  // та час першого поїзда, але користувач може змінити.
+  const initialDate = (trip.date || "").trim();
+  const initialTime = (() => {
+    const src = (trip.legs && trip.legs.length > 0 ? trip.legs[0].fromTime : trip.from.time) || "08:00";
+    const m = String(src).match(/(\d{1,2}):(\d{2})/);
+    return m ? `${m[1].padStart(2, "0")}:${m[2]}` : "08:00";
+  })();
+  const [qDate, setQDate] = useState(initialDate);
+  const [qTime, setQTime] = useState(initialTime);
+  const [regionalOnly, setRegionalOnly] = useState(true);
 
   const legs = trip.legs && trip.legs.length > 0 ? trip.legs : null;
   const dest = (legs ? legs[legs.length - 1].to : trip.to.name) || "";
@@ -866,12 +879,10 @@ function JourneyPlanner({ trip }) {
 
   // Момент відправлення: дата поїздки + час першого поїзда (якщо задані).
   const departureISO = () => {
-    const d = (trip.date || "").trim();
-    if (!d) return null;
-    const timeSrc = (legs ? legs[0].fromTime : trip.from.time) || "08:00";
-    const m = String(timeSrc).match(/(\d{1,2}):(\d{2})/);
+    if (!qDate) return null;
+    const m = String(qTime || "").match(/(\d{1,2}):(\d{2})/);
     const hh = m ? m[1].padStart(2, "0") : "08", mm = m ? m[2] : "00";
-    return `${d}T${hh}:${mm}:00`;
+    return `${qDate}T${hh}:${mm}:00`;
   };
 
   const search = async () => {
@@ -892,7 +903,7 @@ function JourneyPlanner({ trip }) {
     try {
       const dl = await dbLocations(dest);
       if (dl.length === 0) { setErr(true); return; }
-      setJourneys(await dbJourneys(stop.id, dl[0].id, departureISO()));
+      setJourneys(await dbJourneys(stop.id, dl[0].id, departureISO(), regionalOnly));
     } catch { setErr(true); }
     finally { setBusy(false); }
   };
@@ -907,6 +918,17 @@ function JourneyPlanner({ trip }) {
       <div style={{ fontSize: 12, color: C.inkSoft, marginBottom: 10, lineHeight: 1.4 }}>
         {t("jpHint")} «{dest || t("destFallback")}».
       </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+        <input type="date" value={qDate} onChange={(e) => { setQDate(e.target.value); setJourneys(null); }}
+          style={{ boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 12px", fontSize: 13.5, fontFamily: "inherit", background: "#fff", color: C.ink }} />
+        <input type="time" value={qTime} onChange={(e) => { setQTime(e.target.value); setJourneys(null); }}
+          style={{ boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 12px", fontSize: 13.5, fontFamily: "inherit", background: "#fff", color: C.ink }} />
+      </div>
+      <button onClick={() => { setRegionalOnly((v) => !v); setJourneys(null); }}
+        style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", marginBottom: 8, border: `1.5px solid ${regionalOnly ? C.green : C.line}`, background: regionalOnly ? "rgba(80,104,60,0.10)" : "#fff", color: regionalOnly ? C.greenDark : C.muted, borderRadius: 10, padding: "9px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+        <span style={{ fontSize: 13 }}>{regionalOnly ? "✓" : "○"}</span>
+        {t("jpRegionalOnly")}
+      </button>
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         <input
           value={origin}
@@ -1563,6 +1585,7 @@ function TripForm({ initial, onSave, onCancel }) {
   const [dbBusy, setDbBusy] = useState(false);
   const [dbRes, setDbRes] = useState(null);
   const [dbErr, setDbErr] = useState("");
+  const [dbTime, setDbTime] = useState("07:00");
   const set = (patch) => setT((prev) => ({ ...prev, ...patch }));
   const setNested = (key, patch) => setT((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
@@ -1774,6 +1797,12 @@ function TripForm({ initial, onSave, onCancel }) {
               <input style={{ ...inp, marginBottom: 0 }} value={dbFrom} onChange={(e) => setDbFrom(e.target.value)} placeholder="Звідки (вокзал)" />
               <input style={{ ...inp, marginBottom: 0 }} value={dbTo} onChange={(e) => setDbTo(e.target.value)} placeholder="Куди (вокзал)" />
             </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 12, color: C.greenDark, fontWeight: 600 }}>Виїзд не раніше</span>
+              <input type="time" value={dbTime} onChange={(e) => setDbTime(e.target.value)}
+                style={{ ...inp, marginBottom: 0, width: 120, padding: "8px 10px" }} />
+              <span style={{ fontSize: 11.5, color: C.muted }}>лише регіональні</span>
+            </div>
             <button
               disabled={dbBusy || dbFrom.trim() === "" || dbTo.trim() === ""}
               onClick={async () => {
@@ -1782,8 +1811,8 @@ function TripForm({ initial, onSave, onCancel }) {
                   const [fl, tl] = await Promise.all([dbLocations(dbFrom.trim()), dbLocations(dbTo.trim())]);
                   if (fl.length === 0 || tl.length === 0) { setDbErr("Не знайдено вокзал. Спробуйте точнішу назву, напр. «Augsburg Hbf»."); return; }
                   const d = (t.date || "").trim();
-                  const when = d ? `${d}T07:00:00` : null;
-                  const js = await dbJourneys(fl[0].id, tl[0].id, when);
+                  const when = d ? `${d}T${(dbTime || "07:00")}:00` : null;
+                  const js = await dbJourneys(fl[0].id, tl[0].id, when, true);
                   if (js.length === 0) { setDbErr("Рейсів не знайдено на цю дату."); return; }
                   setDbRes(js);
                 } catch (e) {
