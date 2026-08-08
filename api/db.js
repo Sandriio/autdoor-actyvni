@@ -52,14 +52,23 @@ async function locationsDbRest(query) {
     .filter((x) => x && x.id && x.name)
     .map((x) => ({ id: String(x.id), name: x.name }));
 }
+// Запасний геокодер часом підмішує готелі, офіси тощо поруч зі станціями.
+// Прибираємо явно нестанційні збіги за типовими словами-маркерами —
+// груба, але надійна страховка на випадок, коли доводиться брати саме
+// це джерело (офіційне не відповіло вчасно).
+const NON_STATION_HINT = /\b(ibis|hotel|motel|hostel|mercure|novotel|nh\b|leonardo|kundencenter|reisezentrum|parkhaus|parking|gmbh|apotheke|restaurant|café|cafe)\b/i;
+function looksLikeStation(name) {
+  return !NON_STATION_HINT.test(name);
+}
 async function locationsTransitous(query) {
   const p = new URLSearchParams({ text: query, language: "de" });
   const j = await getJson(`${TRANSITOUS}/api/v1/geocode?${p}`, TRANSITOUS_TIMEOUT_MS);
   const arr = Array.isArray(j) ? j : (j && j.results) || [];
-  return arr
+  const items = arr
     .filter((x) => x && (x.id || x.stopId) && x.name)
-    .map((x) => ({ id: "T:" + String(x.id || x.stopId), name: x.name }))
-    .slice(0, 6);
+    .map((x) => ({ id: "T:" + String(x.id || x.stopId), name: x.name }));
+  const clean = items.filter((x) => looksLikeStation(x.name));
+  return (clean.length > 0 ? clean : items).slice(0, 6);
 }
 function mergeLocations(lists) {
   const seen = new Map();
@@ -206,23 +215,28 @@ export default async function handler(req, res) {
   try {
     if (path === "/locations") {
       if (!query) { res.status(400).json({ error: "no query" }); return; }
-      const results = await fetchAll([
-        ["dbrest", () => locationsDbRest(query)],
-        ["transitous", () => locationsTransitous(query)],
-      ]);
-      const good = results.filter((r) => r.ok && r.data && r.data.length > 0);
-      if (good.length === 0) {
-        res.status(502).json({ error: "no source available", errors: results.map((r) => r.name + ": " + (r.ok ? "empty" : (r.err && r.err.message) || r.err)) });
-        return;
+      // Спершу тільки офіційне джерело — воно чисте (лише вокзали) і
+      // зазвичай швидке для простого пошуку станції. Запасне підключаємо
+      // ЛИШЕ якщо перше не спрацювало, а не завжди — так і швидше
+      // (не чекаємо друге даремно), і чистіше (без готелів/POI).
+      let dbErr = null;
+      try {
+        const dbData = await locationsDbRest(query);
+        if (dbData.length > 0) {
+          res.status(200).json({ source: "dbrest", items: mergeLocations([dbData]) });
+          return;
+        }
+      } catch (e) { dbErr = (e && e.message) || String(e); }
+      try {
+        const tData = await locationsTransitous(query);
+        if (tData.length > 0) {
+          res.status(200).json({ source: "transitous", items: mergeLocations([tData]) });
+          return;
+        }
+        res.status(502).json({ error: "no source available", errors: [dbErr ? "dbrest: " + dbErr : "dbrest: empty", "transitous: empty"] });
+      } catch (e) {
+        res.status(502).json({ error: "no source available", errors: [dbErr ? "dbrest: " + dbErr : "dbrest: empty", "transitous: " + ((e && e.message) || e)] });
       }
-      // Станції DB чисті (лише вокзали). Геокодер запасного джерела мішає
-      // в результати готелі, офіси тощо — тому беремо його лише якщо
-      // офіційне джерело взагалі нічого не знайшло, а не домішуємо завжди.
-      const dbGood = good.find((r) => r.name === "dbrest");
-      const chosen = dbGood ? [dbGood] : good;
-      const merged = mergeLocations(chosen.map((r) => r.data));
-      const source = dbGood ? "dbrest" : good[0].name;
-      res.status(200).json({ source, items: merged });
       return;
     }
 
@@ -242,6 +256,34 @@ export default async function handler(req, res) {
             ["dbrest", () => journeysDbRest(from, to, departure)],
             ["transitous", () => journeysTransitous(from, to, departure, regionalOnly)],
           ];
+
+      // Швидкий шлях (не для debug): обидва джерела стартують ОДРАЗУ, але
+      // якщо офіційне вже саме дало достатньо варіантів — відповідаємо не
+      // чекаючи запасне (воно просто відкидається, коли завершиться).
+      // Значно скорочує типовий час очікування, коли DB відповідає добре.
+      const MIN_GOOD_ENOUGH = 6;
+      if (!debug && !useT) {
+        const dbPromise = journeysDbRest(from, to, departure).then(applyFilter).catch(() => null);
+        const tPromise = journeysTransitous(from, to, departure, regionalOnly).then(applyFilter).catch(() => null);
+        const dbEarly = await dbPromise;
+        if (dbEarly && dbEarly.length >= MIN_GOOD_ENOUGH) {
+          res.status(200).json({ source: "dbrest", journeys: mergeJourneys([dbEarly]).slice(0, 12) });
+          return;
+        }
+        const tEarly = await tPromise; // вже виконувався паралельно — просто забираємо
+        const goodEarly = [];
+        if (dbEarly && dbEarly.length > 0) goodEarly.push({ name: "dbrest", data: dbEarly });
+        if (tEarly && tEarly.length > 0) goodEarly.push({ name: "transitous", data: tEarly });
+        if (goodEarly.length === 0) {
+          res.status(502).json({ error: "no source available" });
+          return;
+        }
+        const mergedEarly = mergeJourneys(goodEarly.map((r) => r.data)).slice(0, 12);
+        const sourceEarly = goodEarly.length > 1 ? "both" : goodEarly[0].name;
+        res.status(200).json({ source: sourceEarly, journeys: mergedEarly });
+        return;
+      }
+
       const raw = await fetchAll(sources);
       // debug=1 показує сирі цифри від кожного джерела ДО фільтру й
       // об'єднання, ПЛЮС справжню необроблену відповідь Transitous —
