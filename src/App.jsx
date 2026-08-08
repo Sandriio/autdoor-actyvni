@@ -185,7 +185,9 @@ const T = {
   jpCancelled: { uk: "Рейс скасовано або є скасовані ділянки", en: "Cancelled or partly cancelled", de: "Fahrt entfällt teilweise", ru: "Рейс отменён или есть отменённые участки" },
   jpTrack: { uk: "кол.", en: "pl.", de: "Gl.", ru: "пут." },
   jpError: { uk: "Не вдалося отримати живий розклад. Скористайтеся кнопкою нижче — офіційний сайт DB.", en: "Couldn't load the live timetable. Use the DB website below.", de: "Live-Fahrplan nicht verfügbar. Bitte DB-Website nutzen.", ru: "Не удалось получить живое расписание. Воспользуйтесь сайтом DB ниже." },
-  jpLiveNote: { uk: "Дані з відкритих джерел. Список може відрізнятися від офіційного — перед виїздом звіряйте на сайті Deutsche Bahn.", en: "Open-data source. The list may differ from the official one — check on the Deutsche Bahn site before travelling.", de: "Open-Data-Quelle. Bitte vor der Fahrt auf bahn.de prüfen.", ru: "Данные из открытых источников. Список может отличаться от официального — перед выездом сверяйте на сайте Deutsche Bahn." },
+  jpLiveNote: { uk: "Джерело: відкриті дані (не Deutsche Bahn напряму). Список може відрізнятися — перед виїздом звіряйте на сайті DB.", en: "Source: open data (not directly from Deutsche Bahn). The list may differ — check on the DB site before travelling.", de: "Quelle: Open Data (nicht direkt von der DB). Bitte vor der Fahrt auf bahn.de prüfen.", ru: "Источник: открытые данные (не напрямую от Deutsche Bahn). Список может отличаться — перед выездом сверяйте на сайте DB." },
+  jpSourceDb: { uk: "Джерело: дані Deutsche Bahn (як у DB Navigator), включно з реальними затримками.", en: "Source: Deutsche Bahn data (same as DB Navigator), including live delays.", de: "Quelle: DB-Daten (wie DB Navigator), inkl. Echtzeitverspätungen.", ru: "Источник: данные Deutsche Bahn (как в DB Navigator), включая реальные задержки." },
+  jpNeutralNote: { uk: "Дані Deutsche Bahn у реальному часі, коли доступні — з відкритих даних як запасний варіант. Джерело показується після пошуку.", en: "Live Deutsche Bahn data when available, open data as a fallback. Source shown after you search.", de: "Echtzeitdaten der DB, sonst Open Data als Fallback.", ru: "Данные Deutsche Bahn в реальном времени, когда доступны, иначе открытые данные. Источник показывается после поиска." },
   jpNote: { uk: "Відкриває розклад на сайті Deutsche Bahn. Після публікації застосунку розклад показуватиметься прямо тут.", en: "Opens the schedule on Deutsche Bahn's site. Once the app is published, times will show right here.", de: "Öffnet den Fahrplan auf der Deutsche-Bahn-Website. Nach Veröffentlichung erscheinen die Zeiten direkt hier.", ru: "Открывает расписание на сайте Deutsche Bahn. После публикации приложения расписание будет показываться здесь." },
   destFallback: { uk: "місця призначення", en: "the destination", de: "dem Ziel", ru: "места назначения" },
   // meeting
@@ -834,15 +836,23 @@ async function dbFetch(path, params) {
   DB_LAST_ERROR = lastErr;
   throw new Error(lastErr);
 }
+// Джерело останнього успішного запиту — "dbrest" (офіційні дані DB,
+// практично те саме, що показує DB Navigator) або "transitous" (відкриті
+// дані, запасний варіант). Показуємо чесно, а не мовчки.
+let DB_LAST_SOURCE = "";
 async function dbLocations(query) {
   const j = await dbFetch("/locations", { query, results: "6", addresses: "false", poi: "false" });
-  return (j || []).filter((x) => x && x.id && x.name).map((x) => ({ id: x.id, name: x.name }));
+  // Проксі повертає {source, items}; старий прямий виклик у браузер — голий масив.
+  const items = Array.isArray(j) ? j : (j && j.items) || [];
+  DB_LAST_SOURCE = Array.isArray(j) ? "direct" : (j && j.source) || "";
+  return items.filter((x) => x && x.id && x.name).map((x) => ({ id: x.id, name: x.name }));
 }
 async function dbJourneys(fromId, toId, whenISO, regionalOnly) {
   const params = { from: fromId, to: toId, results: "4", stopovers: "false" };
   if (whenISO) params.departure = whenISO;
   if (regionalOnly) params.regional = "1";
   const j = await dbFetch("/journeys", params);
+  DB_LAST_SOURCE = (j && j.source) || "direct";
   return (j && j.journeys) || [];
 }
 
@@ -1097,7 +1107,7 @@ function JourneyPlanner({ trip }) {
         </a>
       )}
       <div style={{ marginTop: 8, fontSize: 10.5, color: C.muted, fontStyle: "italic", lineHeight: 1.4 }}>
-        {t("jpLiveNote")}
+        {journeys && DB_LAST_SOURCE === "dbrest" ? t("jpSourceDb") : journeys ? t("jpLiveNote") : t("jpNeutralNote")}
       </div>
     </div>
   );
