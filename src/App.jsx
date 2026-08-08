@@ -997,7 +997,7 @@ function JourneyPlanner({ trip }) {
       )}
       {journeys && journeys.length > 0 && (
         <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
-          {journeys.slice(0, 6).map((jr, i) => {
+          {journeys.slice(0, 10).map((jr, i) => {
             const ls = (jr.legs || []).filter((l) => !l.walking);
             if (ls.length === 0) return null;
             const first = ls[0], last = ls[ls.length - 1];
