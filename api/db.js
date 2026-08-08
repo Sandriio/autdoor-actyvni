@@ -73,23 +73,14 @@ function mergeLocations(lists) {
 }
 
 // ── Пошук рейсів ──────────────────────────────────────────────────────
-async function journeysDbRest(from, to, departure, regionalOnly) {
-  const p = new URLSearchParams({ from, to, results: "8", stopovers: "false" });
+async function journeysDbRest(from, to, departure) {
+  // Свідомо НЕ обмежуємо типи транспорту на боці HAFAS: якщо попросити
+  // систему шукати одразу «тільки регіональні», вона часто повертає МЕНШЕ
+  // варіантів — маршрутизатор не бачить проміжних комбінацій. Натомість
+  // просимо повний пошук без обмежень і фільтруємо далекобійні поїзди вже
+  // тут, на готовому списку (isRegionalJourney нижче).
+  const p = new URLSearchParams({ from, to, results: "10", stopovers: "false" });
   if (departure) p.set("departure", departure);
-  if (regionalOnly) {
-    // Вимикаємо далекобійні поїзди (ICE/IC/EC) — Deutschland-Ticket і
-    // Bayern-Ticket на них не діють.
-    p.set("nationalExpress", "false");
-    p.set("national", "false");
-    p.set("regionalExpress", "true");
-    p.set("regional", "true");
-    p.set("suburban", "true");
-    p.set("bus", "true");
-    p.set("subway", "true");
-    p.set("tram", "true");
-    p.set("ferry", "true");
-    p.set("taxi", "true");
-  }
   const j = await getJson(`${DBREST}/journeys?${p}`, DBREST_TIMEOUT_MS);
   return (j && j.journeys) || [];
 }
@@ -157,22 +148,29 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
   }));
 }
 
-// Ключ для порівняння рейсів між джерелами: час відправлення+прибуття з
-// точністю до хвилини. Той самий фізичний поїзд з різних джерел матиме
-// однаковий ключ і не продублюється.
+// Ключ для порівняння рейсів між джерелами: реальний момент часу
+// (з точністю до хвилини), а не сирий текст. Джерела форматують час
+// по-різному (одне зі зсувом +02:00, інше в UTC) — порівняння лише
+// рядків пропускало б однакові поїзди як різні.
 function journeyKey(jr) {
   const ls = (jr.legs || []).filter((l) => !l.walking);
   if (ls.length === 0) return null;
-  const dep = ls[0].plannedDeparture || ls[0].departure || "";
-  const arr = ls[ls.length - 1].plannedArrival || ls[ls.length - 1].arrival || "";
-  return String(dep).slice(0, 16) + "|" + String(arr).slice(0, 16);
+  const dep = ls[0].plannedDeparture || ls[0].departure;
+  const arr = ls[ls.length - 1].plannedArrival || ls[ls.length - 1].arrival;
+  const depMs = dep ? Math.round(new Date(dep).getTime() / 60000) : null;
+  const arrMs = arr ? Math.round(new Date(arr).getTime() / 60000) : null;
+  if (depMs == null || isNaN(depMs) || arrMs == null || isNaN(arrMs)) return null;
+  return depMs + "|" + arrMs;
 }
 function mergeJourneys(lists) {
   const seen = new Map();
+  let anon = 0;
   for (const list of lists) {
     for (const jr of list) {
-      const k = journeyKey(jr);
-      if (k && !seen.has(k)) seen.set(k, jr);
+      // Якщо для рейсу не вдалось побудувати ключ порівняння — не
+      // викидаємо його мовчки, а лишаємо під унікальним технічним ключем.
+      const k = journeyKey(jr) || ("anon:" + anon++);
+      if (!seen.has(k)) seen.set(k, jr);
     }
   }
   const merged = [...seen.values()];
@@ -186,10 +184,24 @@ function mergeJourneys(lists) {
   return merged;
 }
 
+// Сирий (без розбору) запит до Transitous — лише для діагностики: щоб
+// побачити РЕАЛЬНУ форму відповіді MOTIS, а не вже оброблену нами.
+async function rawJourneysTransitous(from, to, departure) {
+  const p = new URLSearchParams({
+    fromPlace: String(from).replace(/^T:/, ""),
+    toPlace: String(to).replace(/^T:/, ""),
+    numItineraries: "10",
+    timetableView: "true",
+    searchWindow: "21600",
+  });
+  if (departure) p.set("time", new Date(departure).toISOString());
+  return getJson(`${TRANSITOUS}/api/v1/plan?${p}`, TRANSITOUS_TIMEOUT_MS);
+}
+
 export default async function handler(req, res) {
   const { path, query, from, to, departure } = req.query || {};
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Cache-Control", "public, s-maxage=120, stale-while-revalidate=600");
+  res.setHeader("Cache-Control", "public, s-maxage=30, stale-while-revalidate=120");
 
   try {
     if (path === "/locations") {
@@ -213,24 +225,49 @@ export default async function handler(req, res) {
       if (!from || !to) { res.status(400).json({ error: "no from/to" }); return; }
       const useT = String(from).startsWith("T:") || String(to).startsWith("T:");
       const regionalOnly = String(req.query.regional || "") === "1";
+      const debug = String(req.query.debug || "") === "1";
       const applyFilter = (arr) => {
         if (!regionalOnly) return arr;
         const f = arr.filter(isRegionalJourney);
         return f.length > 0 ? f : arr;
       };
       const sources = useT
-        ? [["transitous", () => journeysTransitous(from, to, departure, regionalOnly).then(applyFilter)]]
+        ? [["transitous", () => journeysTransitous(from, to, departure, regionalOnly)]]
         : [
-            ["dbrest", () => journeysDbRest(from, to, departure, regionalOnly).then(applyFilter)],
-            ["transitous", () => journeysTransitous(from, to, departure, regionalOnly).then(applyFilter)],
+            ["dbrest", () => journeysDbRest(from, to, departure)],
+            ["transitous", () => journeysTransitous(from, to, departure, regionalOnly)],
           ];
-      const results = await fetchAll(sources);
+      const raw = await fetchAll(sources);
+      // debug=1 показує сирі цифри від кожного джерела ДО фільтру й
+      // об'єднання, ПЛЮС справжню необроблену відповідь Transitous —
+      // щоб бачити факт, а не мій розбір цього факту.
+      if (debug) {
+        let rawSample = null, rawErr = null;
+        try { rawSample = await rawJourneysTransitous(from, to, departure); }
+        catch (e) { rawErr = String((e && e.message) || e); }
+        res.status(200).json({
+          debug: true,
+          sources: raw.map((r) => ({
+            name: r.name,
+            ok: r.ok,
+            rawCount: r.ok ? r.data.length : 0,
+            afterRegionalFilter: r.ok ? applyFilter(r.data).length : 0,
+            error: r.ok ? null : String((r.err && r.err.message) || r.err),
+          })),
+          transitousRawSample: rawErr ? { error: rawErr } : {
+            firstItinerary: rawSample && (rawSample.itineraries || (rawSample.plan && rawSample.plan.itineraries)) ? (rawSample.itineraries || rawSample.plan.itineraries)[0] : null,
+            totalItineraries: rawSample && (rawSample.itineraries || (rawSample.plan && rawSample.plan.itineraries)) ? (rawSample.itineraries || rawSample.plan.itineraries).length : 0,
+          },
+        });
+        return;
+      }
+      const results = raw.map((r) => (r.ok ? { ...r, data: applyFilter(r.data) } : r));
       const good = results.filter((r) => r.ok && r.data && r.data.length > 0);
       if (good.length === 0) {
         res.status(502).json({ error: "no source available", errors: results.map((r) => r.name + ": " + (r.ok ? "empty" : (r.err && r.err.message) || r.err)) });
         return;
       }
-      const merged = mergeJourneys(good.map((r) => r.data)).slice(0, 8);
+      const merged = mergeJourneys(good.map((r) => r.data)).slice(0, 12);
       const source = good.length > 1 ? "both" : good[0].name;
       res.status(200).json({ source, journeys: merged });
       return;
