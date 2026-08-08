@@ -118,26 +118,25 @@ async function journeysDbRest(from, to, departure) {
 
 const iso = (v) => (v ? String(v) : null);
 
-// Далекобійні поїзди (за назвою — запасний варіант, якщо немає структурованого поля).
+// Далекобійні поїзди (за назвою).
 const LONG_DISTANCE = /^(ICE|IC|EC|ECE|RJX|RJ|TGV|FLX|NJ|EN|THA|WB)\b/i;
-// Дозволені види транспорту: регіональні поїзди, S-Bahn, автобуси
-// (Ersatzverkehr — заміна поїзда автобусом — теж рахується як bus).
-// Явно ВИКЛЮЧЕНІ: метро/U-Bahn, трамваї, пороми, таксі, далекобійні.
-const ALLOWED_PRODUCTS = new Set(["regionalexpress", "regional", "suburban", "bus"]);
-const ALLOWED_GTFS_MODES = new Set(["RAIL", "REGIONAL_RAIL", "REGIONAL_FAST_RAIL", "SUBURBAN", "BUS", "COACH"]);
+// ВАЖЛИВО: список того, що ТОЧНО виключаємо (метро, трамваї, пороми,
+// таксі, далекобійні) — а не список того, що дозволяємо. Якщо назва
+// поля від сервісу не збігається з жодним відомим значенням, поїздку
+// пропускаємо, а не відкидаємо. Це навмисно: одна помилка в назві поля
+// не повинна тихо ховати всі регіональні поїзди DB — це вже траплялось.
+const BLOCKED_PRODUCTS = new Set(["nationalexpress", "national", "subway", "tram", "ferry", "taxi"]);
+const BLOCKED_GTFS_MODES = new Set(["SUBWAY", "TRAM", "FERRY", "CABLE_TRAM", "FUNICULAR", "MONORAIL", "AIRPLANE"]);
 function isRegionalJourney(jr) {
   return (jr.legs || []).every((l) => {
     if (l.walking) return true;
-    // db-rest (HAFAS) віддає line.product — найточніше джерело.
     const product = l.line && l.line.product ? String(l.line.product).toLowerCase() : null;
-    if (product) return ALLOWED_PRODUCTS.has(product);
-    // Transitous (GTFS) віддає mode окремим полем.
+    if (product && BLOCKED_PRODUCTS.has(product)) return false;
     const mode = l.mode ? String(l.mode).toUpperCase() : null;
-    if (mode) return ALLOWED_GTFS_MODES.has(mode);
-    // Запасний варіант, якщо структурованих полів немає: за назвою лінії
-    // виключаємо хоча б явно далекобійні.
+    if (mode && BLOCKED_GTFS_MODES.has(mode)) return false;
     const name = (l.line && l.line.name) || "";
-    return !LONG_DISTANCE.test(String(name).trim());
+    if (LONG_DISTANCE.test(String(name).trim())) return false;
+    return true;
   });
 }
 const delaySec = (actual, planned) => {
