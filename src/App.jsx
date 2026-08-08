@@ -2268,7 +2268,7 @@ export default function App() {
   const [editing, setEditing] = useState(null); // trip object being edited, or "new"
   const [pinOpen, setPinOpen] = useState(false);
   const [pin, setPin] = useState("");
-  const ADMIN_PIN = "-/7391As"; // PIN організатора — 8 символів
+  const ADMIN_PIN = "73911305"; // PIN організатора — 8 символів
 
   // Group trips by their status group. "done"/"cancelled" → Минулі; the rest
   // (upcoming, recruiting, ongoing, postponed) → Найближчі. At the start of a
