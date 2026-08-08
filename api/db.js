@@ -1,63 +1,75 @@
 // Проксі до сервісів розкладу поїздів.
-// Джерело 1: v6.db.transport.rest (дані DB Navigator).
-// Джерело 2: api.transitous.org (MOTIS, відкриті дані GTFS) — якщо перше
-// не відповідає. Обидва безкоштовні й не потребують ключів.
+// Джерело 1: v6.db.transport.rest (дані Deutsche Bahn, як у DB Navigator).
+// Джерело 2: api.transitous.org (MOTIS, відкриті дані GTFS).
+// Обидва безкоштовні, без ключів. Запити йдуть із сервера Vercel.
 //
-// Запити йдуть із сервера Vercel, а не з телефона, і мають жорсткий
-// таймаут, щоб сторінка ніколи не «зависала».
+// Обидва джерела опитуються ОДНОЧАСНО (не по черзі), і результати
+// ОБ'ЄДНУЮТЬСЯ: унікальні рейси з обох списків складаються разом і
+// сортуються за часом. Так список повніший, ніж з одного джерела, а
+// час очікування обмежений найповільнішим окремим запитом, а не сумою.
 
 const DBREST = "https://v6.db.transport.rest";
 const TRANSITOUS = "https://api.transitous.org";
-const TIMEOUT_MS = 7000;
-// Скільки варіантів просити в сервісів (частину відсіє фільтр).
-const WANT = "8";
-// db-vendo-client офіційно обмежує запити з однієї IP і іноді відповідає
-// повільно — довший таймаут і одна повторна спроба помітно знижують
-// шанс марно провалитись у запасне джерело через тимчасову затримку.
-// (9с × 2 спроби + 7с на Transitous = 25с — вписується в 30-секундний
-// ліміт виконання функції на безкоштовному тарифі Vercel.)
 const DBREST_TIMEOUT_MS = 9000;
+const TRANSITOUS_TIMEOUT_MS = 8000;
 
-async function getJson(url, timeoutMs = TIMEOUT_MS, retries = 0) {
-  let lastErr;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), timeoutMs);
-    try {
-      const r = await fetch(url, {
-        signal: ctl.signal,
-        // User-Agent з посиланням на проєкт — так радить документація
-        // db-vendo-client, це знижує шанс потрапити під троттлінг.
-        headers: { Accept: "application/json", "User-Agent": "autdoor-actyvni.vercel.app (community trips app)" },
-      });
-      clearTimeout(timer);
-      if (r.status === 429) throw new Error("HTTP 429 (rate limit)");
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return await r.json();
-    } catch (e) {
-      clearTimeout(timer);
-      lastErr = e;
-    }
+async function getJson(url, timeoutMs) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, {
+      signal: ctl.signal,
+      // User-Agent з посиланням на проєкт — так радить документація
+      // db-vendo-client, це знижує шанс потрапити під троттлінг.
+      headers: { Accept: "application/json", "User-Agent": "autdoor-actyvni.vercel.app (community trips app)" },
+    });
+    if (r.status === 429) throw new Error("HTTP 429 (rate limit)");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  } finally {
+    clearTimeout(timer);
   }
-  throw lastErr;
+}
+
+// Запускає всі джерела ОДНОЧАСНО й чекає, поки кожне або дасть відповідь,
+// або впаде за власним таймаутом. Загальний час — це час найповільнішого
+// окремого запиту, а не сума послідовних спроб.
+async function fetchAll(sources) {
+  const settled = await Promise.allSettled(sources.map(([, fn]) => fn()));
+  return settled.map((s, i) => ({
+    name: sources[i][0],
+    ok: s.status === "fulfilled",
+    data: s.status === "fulfilled" ? s.value : null,
+    err: s.status === "rejected" ? s.reason : null,
+  }));
 }
 
 // ── Пошук станцій ─────────────────────────────────────────────────────
 async function locationsDbRest(query) {
   const p = new URLSearchParams({ query, results: "6", addresses: "false", poi: "false" });
-  const j = await getJson(`${DBREST}/locations?${p}`, DBREST_TIMEOUT_MS, 1);
+  const j = await getJson(`${DBREST}/locations?${p}`, DBREST_TIMEOUT_MS);
   return (j || [])
     .filter((x) => x && x.id && x.name)
     .map((x) => ({ id: String(x.id), name: x.name }));
 }
 async function locationsTransitous(query) {
   const p = new URLSearchParams({ text: query, language: "de" });
-  const j = await getJson(`${TRANSITOUS}/api/v1/geocode?${p}`);
+  const j = await getJson(`${TRANSITOUS}/api/v1/geocode?${p}`, TRANSITOUS_TIMEOUT_MS);
   const arr = Array.isArray(j) ? j : (j && j.results) || [];
   return arr
     .filter((x) => x && (x.id || x.stopId) && x.name)
     .map((x) => ({ id: "T:" + String(x.id || x.stopId), name: x.name }))
     .slice(0, 6);
+}
+function mergeLocations(lists) {
+  const seen = new Map();
+  for (const list of lists) {
+    for (const x of list) {
+      const key = x.name.trim().toLowerCase();
+      if (!seen.has(key)) seen.set(key, x);
+    }
+  }
+  return [...seen.values()].slice(0, 8);
 }
 
 // ── Пошук рейсів ──────────────────────────────────────────────────────
@@ -78,7 +90,7 @@ async function journeysDbRest(from, to, departure, regionalOnly) {
     p.set("ferry", "true");
     p.set("taxi", "true");
   }
-  const j = await getJson(`${DBREST}/journeys?${p}`, DBREST_TIMEOUT_MS, 1);
+  const j = await getJson(`${DBREST}/journeys?${p}`, DBREST_TIMEOUT_MS);
   return (j && j.journeys) || [];
 }
 
@@ -109,14 +121,14 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
   });
   if (departure) p.set("time", new Date(departure).toISOString());
   // Режим «розклад»: віддає рейси підряд у вікні часу, а не лише кілька
-  // найшвидших. Вікно 6 годин — щоб було з чого обирати.
+  // найшвидших.
   p.set("timetableView", "true");
   p.set("searchWindow", "21600");
   // Дозволяємо пішохідні пересадки між вокзалами — без цього губляться
-  // варіанти, які показує офіційний застосунок DB.
+  // варіанти на кшталт «поїзд + 5 хв пішки + інший поїзд».
   p.set("maxPreTransitTime", "900");
   p.set("maxPostTransitTime", "900");
-  const j = await getJson(`${TRANSITOUS}/api/v1/plan?${p}`);
+  const j = await getJson(`${TRANSITOUS}/api/v1/plan?${p}`, TRANSITOUS_TIMEOUT_MS);
   const its = (j && (j.itineraries || (j.plan && j.plan.itineraries))) || [];
   return its.map((it) => ({
     legs: (it.legs || []).map((l) => {
@@ -145,26 +157,55 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
   }));
 }
 
+// Ключ для порівняння рейсів між джерелами: час відправлення+прибуття з
+// точністю до хвилини. Той самий фізичний поїзд з різних джерел матиме
+// однаковий ключ і не продублюється.
+function journeyKey(jr) {
+  const ls = (jr.legs || []).filter((l) => !l.walking);
+  if (ls.length === 0) return null;
+  const dep = ls[0].plannedDeparture || ls[0].departure || "";
+  const arr = ls[ls.length - 1].plannedArrival || ls[ls.length - 1].arrival || "";
+  return String(dep).slice(0, 16) + "|" + String(arr).slice(0, 16);
+}
+function mergeJourneys(lists) {
+  const seen = new Map();
+  for (const list of lists) {
+    for (const jr of list) {
+      const k = journeyKey(jr);
+      if (k && !seen.has(k)) seen.set(k, jr);
+    }
+  }
+  const merged = [...seen.values()];
+  merged.sort((a, b) => {
+    const ga = (a.legs || []).find((l) => !l.walking);
+    const gb = (b.legs || []).find((l) => !l.walking);
+    const ta = ga ? new Date(ga.plannedDeparture || ga.departure).getTime() : 0;
+    const tb = gb ? new Date(gb.plannedDeparture || gb.departure).getTime() : 0;
+    return ta - tb;
+  });
+  return merged;
+}
+
 export default async function handler(req, res) {
   const { path, query, from, to, departure } = req.query || {};
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "public, s-maxage=120, stale-while-revalidate=600");
 
-  const errors = [];
   try {
     if (path === "/locations") {
       if (!query) { res.status(400).json({ error: "no query" }); return; }
-      // Джерело чесно позначається в полі source, щоб було видно, звідки
-      // саме взялись дані — а не лише декларативно.
-      const sources = [["dbrest", locationsDbRest], ["transitous", locationsTransitous]];
-      for (const [src, fn] of sources) {
-        try {
-          const out = await fn(query);
-          if (out.length > 0) { res.status(200).json({ source: src, items: out }); return; }
-          errors.push(src + ": empty");
-        } catch (e) { errors.push(src + ": " + ((e && e.message) || e)); }
+      const results = await fetchAll([
+        ["dbrest", () => locationsDbRest(query)],
+        ["transitous", () => locationsTransitous(query)],
+      ]);
+      const good = results.filter((r) => r.ok && r.data && r.data.length > 0);
+      if (good.length === 0) {
+        res.status(502).json({ error: "no source available", errors: results.map((r) => r.name + ": " + (r.ok ? "empty" : (r.err && r.err.message) || r.err)) });
+        return;
       }
-      res.status(502).json({ error: "no source available", errors });
+      const merged = mergeLocations(good.map((r) => r.data));
+      const source = good.length > 1 ? "both" : good[0].name;
+      res.status(200).json({ source, items: merged });
       return;
     }
 
@@ -172,26 +213,31 @@ export default async function handler(req, res) {
       if (!from || !to) { res.status(400).json({ error: "no from/to" }); return; }
       const useT = String(from).startsWith("T:") || String(to).startsWith("T:");
       const regionalOnly = String(req.query.regional || "") === "1";
-      const chain = useT ? [["transitous", journeysTransitous]] : [["dbrest", journeysDbRest], ["transitous", journeysTransitous]];
-      for (const [src, fn] of chain) {
-        try {
-          let out = await fn(from, to, departure, regionalOnly);
-          // Підстраховка: навіть якщо сервіс проігнорував фільтр, прибираємо
-          // варіанти з ICE/IC/EC вручну.
-          if (regionalOnly) {
-            const filtered = out.filter(isRegionalJourney);
-            if (filtered.length > 0) out = filtered;
-          }
-          if (out.length > 0) { res.status(200).json({ source: src, journeys: out }); return; }
-          errors.push(src + ": empty");
-        } catch (e) { errors.push(src + ": " + ((e && e.message) || e)); }
+      const applyFilter = (arr) => {
+        if (!regionalOnly) return arr;
+        const f = arr.filter(isRegionalJourney);
+        return f.length > 0 ? f : arr;
+      };
+      const sources = useT
+        ? [["transitous", () => journeysTransitous(from, to, departure, regionalOnly).then(applyFilter)]]
+        : [
+            ["dbrest", () => journeysDbRest(from, to, departure, regionalOnly).then(applyFilter)],
+            ["transitous", () => journeysTransitous(from, to, departure, regionalOnly).then(applyFilter)],
+          ];
+      const results = await fetchAll(sources);
+      const good = results.filter((r) => r.ok && r.data && r.data.length > 0);
+      if (good.length === 0) {
+        res.status(502).json({ error: "no source available", errors: results.map((r) => r.name + ": " + (r.ok ? "empty" : (r.err && r.err.message) || r.err)) });
+        return;
       }
-      res.status(502).json({ error: "no source available", errors });
+      const merged = mergeJourneys(good.map((r) => r.data)).slice(0, 8);
+      const source = good.length > 1 ? "both" : good[0].name;
+      res.status(200).json({ source, journeys: merged });
       return;
     }
 
     res.status(400).json({ error: "bad path" });
   } catch (e) {
-    res.status(500).json({ error: String((e && e.message) || e), errors });
+    res.status(500).json({ error: String((e && e.message) || e) });
   }
 }
