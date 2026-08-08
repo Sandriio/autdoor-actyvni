@@ -9,26 +9,43 @@
 const DBREST = "https://v6.db.transport.rest";
 const TRANSITOUS = "https://api.transitous.org";
 const TIMEOUT_MS = 7000;
+// Скільки варіантів просити в сервісів (частину відсіє фільтр).
+const WANT = "8";
+// db-vendo-client офіційно обмежує запити з однієї IP і іноді відповідає
+// повільно — довший таймаут і одна повторна спроба помітно знижують
+// шанс марно провалитись у запасне джерело через тимчасову затримку.
+// (9с × 2 спроби + 7с на Transitous = 25с — вписується в 30-секундний
+// ліміт виконання функції на безкоштовному тарифі Vercel.)
+const DBREST_TIMEOUT_MS = 9000;
 
-async function getJson(url) {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
-  try {
-    const r = await fetch(url, {
-      signal: ctl.signal,
-      headers: { Accept: "application/json", "User-Agent": "autdoor-actyvni community trips app" },
-    });
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return await r.json();
-  } finally {
-    clearTimeout(timer);
+async function getJson(url, timeoutMs = TIMEOUT_MS, retries = 0) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url, {
+        signal: ctl.signal,
+        // User-Agent з посиланням на проєкт — так радить документація
+        // db-vendo-client, це знижує шанс потрапити під троттлінг.
+        headers: { Accept: "application/json", "User-Agent": "autdoor-actyvni.vercel.app (community trips app)" },
+      });
+      clearTimeout(timer);
+      if (r.status === 429) throw new Error("HTTP 429 (rate limit)");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    } catch (e) {
+      clearTimeout(timer);
+      lastErr = e;
+    }
   }
+  throw lastErr;
 }
 
 // ── Пошук станцій ─────────────────────────────────────────────────────
 async function locationsDbRest(query) {
   const p = new URLSearchParams({ query, results: "6", addresses: "false", poi: "false" });
-  const j = await getJson(`${DBREST}/locations?${p}`);
+  const j = await getJson(`${DBREST}/locations?${p}`, DBREST_TIMEOUT_MS, 1);
   return (j || [])
     .filter((x) => x && x.id && x.name)
     .map((x) => ({ id: String(x.id), name: x.name }));
@@ -61,7 +78,7 @@ async function journeysDbRest(from, to, departure, regionalOnly) {
     p.set("ferry", "true");
     p.set("taxi", "true");
   }
-  const j = await getJson(`${DBREST}/journeys?${p}`);
+  const j = await getJson(`${DBREST}/journeys?${p}`, DBREST_TIMEOUT_MS, 1);
   return (j && j.journeys) || [];
 }
 
@@ -137,12 +154,15 @@ export default async function handler(req, res) {
   try {
     if (path === "/locations") {
       if (!query) { res.status(400).json({ error: "no query" }); return; }
-      for (const fn of [locationsDbRest, locationsTransitous]) {
+      // Джерело чесно позначається в полі source, щоб було видно, звідки
+      // саме взялись дані — а не лише декларативно.
+      const sources = [["dbrest", locationsDbRest], ["transitous", locationsTransitous]];
+      for (const [src, fn] of sources) {
         try {
           const out = await fn(query);
-          if (out.length > 0) { res.status(200).json(out); return; }
-          errors.push(fn.name + ": empty");
-        } catch (e) { errors.push(fn.name + ": " + ((e && e.message) || e)); }
+          if (out.length > 0) { res.status(200).json({ source: src, items: out }); return; }
+          errors.push(src + ": empty");
+        } catch (e) { errors.push(src + ": " + ((e && e.message) || e)); }
       }
       res.status(502).json({ error: "no source available", errors });
       return;
@@ -152,8 +172,8 @@ export default async function handler(req, res) {
       if (!from || !to) { res.status(400).json({ error: "no from/to" }); return; }
       const useT = String(from).startsWith("T:") || String(to).startsWith("T:");
       const regionalOnly = String(req.query.regional || "") === "1";
-      const chain = useT ? [journeysTransitous] : [journeysDbRest, journeysTransitous];
-      for (const fn of chain) {
+      const chain = useT ? [["transitous", journeysTransitous]] : [["dbrest", journeysDbRest], ["transitous", journeysTransitous]];
+      for (const [src, fn] of chain) {
         try {
           let out = await fn(from, to, departure, regionalOnly);
           // Підстраховка: навіть якщо сервіс проігнорував фільтр, прибираємо
@@ -162,9 +182,9 @@ export default async function handler(req, res) {
             const filtered = out.filter(isRegionalJourney);
             if (filtered.length > 0) out = filtered;
           }
-          if (out.length > 0) { res.status(200).json({ journeys: out }); return; }
-          errors.push(fn.name + ": empty");
-        } catch (e) { errors.push(fn.name + ": " + ((e && e.message) || e)); }
+          if (out.length > 0) { res.status(200).json({ source: src, journeys: out }); return; }
+          errors.push(src + ": empty");
+        } catch (e) { errors.push(src + ": " + ((e && e.message) || e)); }
       }
       res.status(502).json({ error: "no source available", errors });
       return;
