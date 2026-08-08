@@ -46,19 +46,38 @@ async function fetchAll(sources) {
 
 // ── Пошук станцій ─────────────────────────────────────────────────────
 async function locationsDbRest(query) {
-  const p = new URLSearchParams({ query, results: "6", addresses: "false", poi: "false" });
+  const p = new URLSearchParams({ query, results: "8", addresses: "false", poi: "false" });
   const j = await getJson(`${DBREST}/locations?${p}`, DBREST_TIMEOUT_MS);
-  return (j || [])
+  const items = (j || [])
     .filter((x) => x && x.id && x.name)
     .map((x) => ({ id: String(x.id), name: x.name }));
+  const relevant = items.filter((x) => relevantToQuery(x.name, query));
+  return relevant.length > 0 ? relevant : items;
 }
 // Запасний геокодер часом підмішує готелі, офіси тощо поруч зі станціями.
-// Прибираємо явно нестанційні збіги за типовими словами-маркерами —
-// груба, але надійна страховка на випадок, коли доводиться брати саме
-// це джерело (офіційне не відповіло вчасно).
 const NON_STATION_HINT = /\b(ibis|hotel|motel|hostel|mercure|novotel|nh\b|leonardo|kundencenter|reisezentrum|parkhaus|parking|gmbh|apotheke|restaurant|café|cafe)\b/i;
 function looksLikeStation(name) {
   return !NON_STATION_HINT.test(name);
+}
+// Головне слово запиту (зазвичай назва міста) має бути присутнє в назві
+// станції — без цього трапляються зовсім чужі міста (шукаємо "Augsburg",
+// а деякі геокодери повертають "Ulm Hauptbahnhof" лише тому, що обидва
+// містять слово "Hauptbahnhof").
+function relevantToQuery(name, query) {
+  const mainWord = String(query).toLowerCase().trim().split(/\s+/)[0];
+  if (!mainWord || mainWord.length < 3) return true;
+  return name.toLowerCase().includes(mainWord);
+}
+// "Hbf" і "Hauptbahnhof" — це ОДНА й та сама станція під різними назвами.
+// Нормалізуємо перед порівнянням, інакше дублюються в списку.
+function normalizeStationKey(name) {
+  return name
+    .toLowerCase()
+    .replace(/\bhbf\b/g, "hauptbahnhof")
+    .replace(/\bbf\b/g, "bahnhof")
+    .replace(/[.,]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 async function locationsTransitous(query) {
   const p = new URLSearchParams({ text: query, language: "de" });
@@ -67,14 +86,17 @@ async function locationsTransitous(query) {
   const items = arr
     .filter((x) => x && (x.id || x.stopId) && x.name)
     .map((x) => ({ id: "T:" + String(x.id || x.stopId), name: x.name }));
-  const clean = items.filter((x) => looksLikeStation(x.name));
-  return (clean.length > 0 ? clean : items).slice(0, 6);
+  const clean = items.filter((x) => looksLikeStation(x.name) && relevantToQuery(x.name, query));
+  return (clean.length > 0 ? clean : items).slice(0, 8);
 }
 function mergeLocations(lists) {
+  // Дедуплікуємо за нормалізованим ключем (Hbf ≡ Hauptbahnhof), а не за
+  // сирим текстом — інакше та сама станція з'являється двічі під різними
+  // назвами з різних джерел.
   const seen = new Map();
   for (const list of lists) {
     for (const x of list) {
-      const key = x.name.trim().toLowerCase();
+      const key = normalizeStationKey(x.name);
       if (!seen.has(key)) seen.set(key, x);
     }
   }
@@ -96,11 +118,24 @@ async function journeysDbRest(from, to, departure) {
 
 const iso = (v) => (v ? String(v) : null);
 
-// Далекобійні поїзди, на які не діють Deutschland-/Bayern-Ticket.
+// Далекобійні поїзди (за назвою — запасний варіант, якщо немає структурованого поля).
 const LONG_DISTANCE = /^(ICE|IC|EC|ECE|RJX|RJ|TGV|FLX|NJ|EN|THA|WB)\b/i;
+// Дозволені види транспорту: регіональні поїзди, S-Bahn, автобуси
+// (Ersatzverkehr — заміна поїзда автобусом — теж рахується як bus).
+// Явно ВИКЛЮЧЕНІ: метро/U-Bahn, трамваї, пороми, таксі, далекобійні.
+const ALLOWED_PRODUCTS = new Set(["regionalexpress", "regional", "suburban", "bus"]);
+const ALLOWED_GTFS_MODES = new Set(["RAIL", "REGIONAL_RAIL", "REGIONAL_FAST_RAIL", "SUBURBAN", "BUS", "COACH"]);
 function isRegionalJourney(jr) {
   return (jr.legs || []).every((l) => {
     if (l.walking) return true;
+    // db-rest (HAFAS) віддає line.product — найточніше джерело.
+    const product = l.line && l.line.product ? String(l.line.product).toLowerCase() : null;
+    if (product) return ALLOWED_PRODUCTS.has(product);
+    // Transitous (GTFS) віддає mode окремим полем.
+    const mode = l.mode ? String(l.mode).toUpperCase() : null;
+    if (mode) return ALLOWED_GTFS_MODES.has(mode);
+    // Запасний варіант, якщо структурованих полів немає: за назвою лінії
+    // виключаємо хоча б явно далекобійні.
     const name = (l.line && l.line.name) || "";
     return !LONG_DISTANCE.test(String(name).trim());
   });
@@ -151,6 +186,7 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
         arrival: arrActual,
         plannedArrival: arrPlanned,
         arrivalDelay: delaySec(arrActual, arrPlanned),
+        mode: l.mode || null,
         line: { name: l.routeShortName || l.routeLongName || l.displayName || l.mode || "" },
       };
     }),
