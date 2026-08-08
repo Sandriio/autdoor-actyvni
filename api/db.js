@@ -110,7 +110,7 @@ async function journeysDbRest(from, to, departure) {
   // варіантів — маршрутизатор не бачить проміжних комбінацій. Натомість
   // просимо повний пошук без обмежень і фільтруємо далекобійні поїзди вже
   // тут, на готовому списку (isRegionalJourney нижче).
-  const p = new URLSearchParams({ from, to, results: "10", stopovers: "false" });
+  const p = new URLSearchParams({ from, to, results: "7", stopovers: "false" });
   if (departure) p.set("departure", departure);
   const j = await getJson(`${DBREST}/journeys?${p}`, DBREST_TIMEOUT_MS);
   return (j && j.journeys) || [];
@@ -151,13 +151,14 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
   const p = new URLSearchParams({
     fromPlace: String(from).replace(/^T:/, ""),
     toPlace: String(to).replace(/^T:/, ""),
-    numItineraries: "10",
+    numItineraries: "7",
   });
   if (departure) p.set("time", new Date(departure).toISOString());
-  // Режим «розклад»: віддає рейси підряд у вікні часу, а не лише кілька
-  // найшвидших.
+  // Режим «розклад»: віддає рейси підряд у вікні часу. Вікно звужене до
+  // 3 годин — Transitous тепер лише запасне джерело, тож не потребує
+  // такого широкого пошуку, і відповідає швидше.
   p.set("timetableView", "true");
-  p.set("searchWindow", "21600");
+  p.set("searchWindow", "10800");
   // Дозволяємо пішохідні пересадки між вокзалами — без цього губляться
   // варіанти на кшталт «поїзд + 5 хв пішки + інший поїзд».
   p.set("maxPreTransitTime", "900");
@@ -276,8 +277,34 @@ export default async function handler(req, res) {
     }
 
     if (path === "/journeys") {
-      if (!from || !to) { res.status(400).json({ error: "no from/to" }); return; }
-      const useT = String(from).startsWith("T:") || String(to).startsWith("T:");
+      // Станцію відправлення можна передати вже готовим id (from) АБО
+      // сирим текстом (fromQuery) — тоді сервер сам її шукає в межах
+      // цього самого запиту. Це прибирає окремий похід клієнта за
+      // координатами станції перед пошуком розкладу: один мережевий
+      // раунд-тріп замість двох у типовому випадку (однозначна назва).
+      let resolvedFrom = from;
+      if (!resolvedFrom && req.query.fromQuery) {
+        const fq = String(req.query.fromQuery);
+        let originList = [];
+        try { originList = await locationsDbRest(fq); } catch {}
+        if (originList.length === 0) {
+          try { originList = await locationsTransitous(fq); } catch {}
+        }
+        if (originList.length === 1) {
+          resolvedFrom = originList[0].id;
+        } else if (originList.length > 1) {
+          // Кілька станцій підходять під назву — просимо клієнта уточнити,
+          // замість вгадувати. Той самий список, що показав би /locations.
+          res.status(200).json({ needsDisambiguation: true, options: mergeLocations([originList]) });
+          return;
+        } else {
+          res.status(404).json({ error: "origin not found" });
+          return;
+        }
+      }
+      if (!resolvedFrom || !to) { res.status(400).json({ error: "no from/to" }); return; }
+      const from2 = resolvedFrom;
+      const useT = String(from2).startsWith("T:") || String(to).startsWith("T:");
       const regionalOnly = String(req.query.regional || "") === "1";
       const debug = String(req.query.debug || "") === "1";
       const applyFilter = (arr) => {
@@ -286,20 +313,20 @@ export default async function handler(req, res) {
         return f.length > 0 ? f : arr;
       };
       const sources = useT
-        ? [["transitous", () => journeysTransitous(from, to, departure, regionalOnly)]]
+        ? [["transitous", () => journeysTransitous(from2, to, departure, regionalOnly)]]
         : [
-            ["dbrest", () => journeysDbRest(from, to, departure)],
-            ["transitous", () => journeysTransitous(from, to, departure, regionalOnly)],
+            ["dbrest", () => journeysDbRest(from2, to, departure)],
+            ["transitous", () => journeysTransitous(from2, to, departure, regionalOnly)],
           ];
 
       // Швидкий шлях (не для debug): обидва джерела стартують ОДРАЗУ, але
       // якщо офіційне вже саме дало достатньо варіантів — відповідаємо не
       // чекаючи запасне (воно просто відкидається, коли завершиться).
       // Значно скорочує типовий час очікування, коли DB відповідає добре.
-      const MIN_GOOD_ENOUGH = 6;
+      const MIN_GOOD_ENOUGH = 4;
       if (!debug && !useT) {
-        const dbPromise = journeysDbRest(from, to, departure).then(applyFilter).catch(() => null);
-        const tPromise = journeysTransitous(from, to, departure, regionalOnly).then(applyFilter).catch(() => null);
+        const dbPromise = journeysDbRest(from2, to, departure).then(applyFilter).catch(() => null);
+        const tPromise = journeysTransitous(from2, to, departure, regionalOnly).then(applyFilter).catch(() => null);
         const dbEarly = await dbPromise;
         if (dbEarly && dbEarly.length >= MIN_GOOD_ENOUGH) {
           res.status(200).json({ source: "dbrest", journeys: mergeJourneys([dbEarly]).slice(0, 12) });
@@ -325,7 +352,7 @@ export default async function handler(req, res) {
       // щоб бачити факт, а не мій розбір цього факту.
       if (debug) {
         let rawSample = null, rawErr = null;
-        try { rawSample = await rawJourneysTransitous(from, to, departure); }
+        try { rawSample = await rawJourneysTransitous(from2, to, departure); }
         catch (e) { rawErr = String((e && e.message) || e); }
         res.status(200).json({
           debug: true,
