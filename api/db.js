@@ -119,7 +119,7 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
   // варіанти на кшталт «поїзд + 5 хв пішки + інший поїзд».
   p.set("maxPreTransitTime", "900");
   p.set("maxPostTransitTime", "900");
-  const j = await getJson(`${TRANSITOUS}/api/v1/plan?${p}`, TRANSITOUS_TIMEOUT_MS);
+  const j = await getJson(`${TRANSITOUS}/api/v6/plan?${p}`, TRANSITOUS_TIMEOUT_MS);
   const its = (j && (j.itineraries || (j.plan && j.plan.itineraries))) || [];
   return its.map((it) => ({
     legs: (it.legs || []).map((l) => {
@@ -195,7 +195,7 @@ async function rawJourneysTransitous(from, to, departure) {
     searchWindow: "21600",
   });
   if (departure) p.set("time", new Date(departure).toISOString());
-  return getJson(`${TRANSITOUS}/api/v1/plan?${p}`, TRANSITOUS_TIMEOUT_MS);
+  return getJson(`${TRANSITOUS}/api/v6/plan?${p}`, TRANSITOUS_TIMEOUT_MS);
 }
 
 export default async function handler(req, res) {
@@ -215,8 +215,13 @@ export default async function handler(req, res) {
         res.status(502).json({ error: "no source available", errors: results.map((r) => r.name + ": " + (r.ok ? "empty" : (r.err && r.err.message) || r.err)) });
         return;
       }
-      const merged = mergeLocations(good.map((r) => r.data));
-      const source = good.length > 1 ? "both" : good[0].name;
+      // Станції DB чисті (лише вокзали). Геокодер запасного джерела мішає
+      // в результати готелі, офіси тощо — тому беремо його лише якщо
+      // офіційне джерело взагалі нічого не знайшло, а не домішуємо завжди.
+      const dbGood = good.find((r) => r.name === "dbrest");
+      const chosen = dbGood ? [dbGood] : good;
+      const merged = mergeLocations(chosen.map((r) => r.data));
+      const source = dbGood ? "dbrest" : good[0].name;
       res.status(200).json({ source, items: merged });
       return;
     }
