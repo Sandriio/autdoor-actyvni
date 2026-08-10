@@ -158,6 +158,7 @@ const T = {
   wNoCoords: { uk: "Це орієнтовні дані. Додайте координати точки збору — і тут з'явиться живий прогноз.", en: "Sample data. Add meeting point coordinates to see a live forecast.", de: "Beispieldaten. Koordinaten setzen für Live-Prognose.", ru: "Это ориентировочные данные. Добавьте координаты точки сбора — появится живой прогноз." },
   wClimate: { uk: "Типова погода для цієї дати за минулі роки. Справжній прогноз з'явиться за 16 днів до поїздки.", en: "Typical weather for this date based on past years. A real forecast appears 16 days before the trip.", de: "Typisches Wetter für dieses Datum.", ru: "Типичная погода для этой даты за прошлые годы. Настоящий прогноз появится за 16 дней до поездки." },
   wClimateCond: { uk: "Типово для цієї пори", en: "Typical for the season", de: "Saisontypisch", ru: "Типично для этого времени" },
+  bTicketTail: { uk: "— групою дешевше, по Баварії проїзд безкоштовний", en: "— cheaper in a group, free travel across Bavaria", de: "— günstiger in der Gruppe, freie Fahrt in Bayern", ru: "— группой дешевле, по Баварии проезд бесплатный" },
   jpWalk: { uk: "Перехід пішки", en: "Walk", de: "Fußweg", ru: "Переход пешком" },
   wFar: { uk: "Далі ніж за 60 днів прогнозу немає — показано орієнтовні дані.", en: "No forecast beyond 60 days — showing sample data.", de: "Keine Prognose über 60 Tage hinaus.", ru: "Дальше 60 дней прогноза нет — показаны ориентировочные данные." },
   wPast: { uk: "Дата поїздки вже минула — показано збережені дані.", en: "Trip date has passed — showing saved data.", de: "Datum liegt in der Vergangenheit — gespeicherte Daten.", ru: "Дата поездки уже прошла — показаны сохранённые данные." },
@@ -1098,14 +1099,9 @@ function JourneyPlanner({ trip }) {
                 {isOpen && (
                   <div style={{ borderTop: `1px solid ${C.line}`, padding: "11px 13px 13px", background: "rgba(80,104,60,0.04)" }}>
                     {(jr.legs || []).map((l, k, arr) => {
-                      if (l.walking) {
-                        return (
-                          <div key={"w" + k} style={{ display: "flex", alignItems: "center", gap: 7, margin: "8px 0", padding: "6px 10px", background: "rgba(0,0,0,0.05)", borderRadius: 9 }}>
-                            <span style={{ fontSize: 12 }}>🚶</span>
-                            <span style={{ fontSize: 11.5, fontWeight: 700, color: C.muted }}>{t("jpWalk")}</span>
-                          </div>
-                        );
-                      }
+                      // Пішохідні переходи не показуємо окремим рядком —
+                      // час на них уже врахований у «Пересадка · N хв».
+                      if (l.walking) return null;
                       const prevArr = arr.slice(0, k).filter((x) => !x.walking);
                       const prev = prevArr.length > 0 ? prevArr[prevArr.length - 1] : null;
                       const wait = prev ? mins(l.departure || l.plannedDeparture, prev.arrival || prev.plannedArrival) : null;
@@ -1469,6 +1465,10 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                   <div style={{ marginTop: 8, padding: 11, background: C.yellowSoft, borderRadius: 11, fontSize: 12.5, color: C.yellowInk, display: "flex", gap: 7, alignItems: "flex-start" }}>
                     <Train size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                     <span>{t("dTicket")} <b>Deutschland Ticket</b> <b>63 €</b> {t("dTicketTail")}</span>
+                  </div>
+                  <div style={{ marginTop: 8, padding: 11, background: C.yellowSoft, borderRadius: 11, fontSize: 12.5, color: C.yellowInk, display: "flex", gap: 7, alignItems: "flex-start" }}>
+                    <Train size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span><b>Bayern Ticket 34 €</b> {t("bTicketTail")}</span>
                   </div>
                   <JourneyPlanner trip={trip} />
                 </>
@@ -2208,6 +2208,38 @@ function TripForm({ initial, onSave, onCancel }) {
                   </div>
                 ))}
                 <button onClick={addContact} style={{ width: "100%", border: `1.5px dashed ${C.rasp}`, background: C.raspSoft, color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Додати контакт</button>
+              </>
+            );
+          })()}
+        </div>
+
+        {/* Cafes editor */}
+        <div style={card}>
+          <h3 style={cardTitle}><Coffee size={15} /> Кафе / їжа</h3>
+          <p style={{ fontSize: 12, color: C.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
+            Місця, де можна поїсти під час поїздки. Якщо не додати жодного — покажеться «Список уточнюється».
+          </p>
+          {(() => {
+            const list = t.cafes || [];
+            const upd = (next) => set({ cafes: next });
+            const updItem = (i, patch) => upd(list.map((c, j) => j === i ? { ...c, ...patch } : c));
+            const del = (i) => upd(list.filter((_, j) => j !== i));
+            const add = () => upd([...list, { name: "", note: "", tag: "" }]);
+            return (
+              <>
+                {list.map((c, i) => (
+                  <div key={i} style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 10, background: "#fff" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.green }}>Місце {i + 1}</span>
+                      <button onClick={() => del(i)} style={{ background: "none", border: "none", color: C.rasp, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Видалити</button>
+                    </div>
+                    <input style={{ ...inp, marginBottom: 8 }} value={c.name || ""} onChange={(e) => updItem(i, { name: e.target.value })} placeholder="Назва (напр. Gasthof Alpenblick)" />
+                    <input style={{ ...inp, marginBottom: 8 }} value={typeof c.note === "string" ? c.note : (c.note?.uk || "")} onChange={(e) => updItem(i, { note: e.target.value })} placeholder="Опис (напр. домашня кухня, є вегетаріанське)" />
+                    <input style={{ ...inp, marginBottom: 0 }} value={typeof c.tag === "string" ? c.tag : (c.tag?.uk || "")} onChange={(e) => updItem(i, { tag: e.target.value })} placeholder="Позначка (напр. €€ · біля станції)" />
+                  </div>
+                ))}
+                {list.length === 0 && <p style={{ fontSize: 13, color: C.muted, margin: "0 0 12px" }}>Поки нічого не додано.</p>}
+                <button onClick={add} style={{ width: "100%", border: `1.5px dashed ${C.rasp}`, background: C.raspSoft, color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Додати місце</button>
               </>
             );
           })()}
