@@ -314,8 +314,9 @@ export default async function handler(req, res) {
       const debug = String(req.query.debug || "") === "1";
       const applyFilter = (arr) => {
         if (!regionalOnly) return arr;
-        const f = arr.filter(isRegionalJourney);
-        return f.length > 0 ? f : arr;
+        // Строго: якщо користувач просив лише регіональні — краще
+        // показати менше варіантів, ніж підсунути ICE/IC.
+        return arr.filter(isRegionalJourney);
       };
       const sources = useT
         ? [["transitous", () => journeysTransitous(from2, to, departure, regionalOnly)]]
