@@ -181,11 +181,16 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
         departure: depActual,
         plannedDeparture: depPlanned,
         departureDelay: delaySec(depActual, depPlanned),
-        departurePlatform: f.track || f.scheduledTrack || null,
-        plannedDeparturePlatform: f.scheduledTrack || null,
+        // Платформи з відкритих даних ненадійні (траплялись неіснуючі
+        // номери, напр. «82» на Donnersbergerbrücke, де є лише 1-2).
+        // Тому не показуємо їх узагалі — краще без номера, ніж хибний.
+        departurePlatform: null,
+        plannedDeparturePlatform: null,
+        platformTrusted: false,
         arrival: arrActual,
         plannedArrival: arrPlanned,
         arrivalDelay: delaySec(arrActual, arrPlanned),
+        arrivalPlatform: null,
         mode: l.mode || null,
         line: { name: l.routeShortName || l.routeLongName || l.displayName || l.mode || "" },
       };
