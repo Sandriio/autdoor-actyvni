@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v14";
+const APP_VERSION = "v15";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -565,42 +565,30 @@ const diffColor = (d) =>
 // compatible: callers fall back to the old single from/to fields when a trip
 // has no legs array.
 function TrainLegs({ legs }) {
+  // Спрощений вигляд: один рядок на кожен поїзд — час, станція, платформа,
+  // номер поїзда. Мета — показати людині, звідки й коли виїжджати.
+  // Повний маршрут із пересадками вона знайде в пошуку нижче або на DB.
   return (
-    <div>
+    <div style={{ display: "grid", gap: 2 }}>
       {legs.map((leg, i) => (
-        <React.Fragment key={i}>
-          {/* transfer marker between legs */}
-          {i > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0", paddingLeft: 6 }}>
-              <div style={{ width: 26, height: 26, borderRadius: 26, background: C.yellowSoft, border: `1.5px solid ${C.yellow}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Footprints size={13} color={C.yellowInk} />
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", borderTop: i > 0 ? `1px solid ${C.line}` : "none" }}>
+          <div style={{ minWidth: 58 }}>
+            <div style={{ fontSize: 19, fontWeight: 800, color: C.ink, lineHeight: 1.1 }}>{leg.fromTime}</div>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>{leg.from}</div>
+            {leg.platform && (
+              <div style={{ fontSize: 11.5, color: C.rasp, fontWeight: 600, marginTop: 2 }}>
+                {t("jpTrack")} {leg.platform}
               </div>
-              <div style={{ fontSize: 12, color: C.yellowInk, fontWeight: 600 }}>
-                {t("transfer")} · {leg.from}
-              </div>
+            )}
+          </div>
+          {leg.train && (
+            <div style={{ fontSize: 11.5, fontWeight: 800, color: C.yellowInk, background: C.yellow, padding: "4px 11px", borderRadius: 20, flexShrink: 0 }}>
+              {leg.train}
             </div>
           )}
-          {/* leg row */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0" }}>
-            <div style={{ flex: 1, textAlign: "center" }}>
-              <div style={{ fontSize: 19, fontWeight: 800, color: C.ink }}>{leg.fromTime}</div>
-              <div style={{ fontSize: 12, color: C.inkSoft, marginTop: 2 }}>{leg.from}</div>
-              {leg.platform && <div style={{ fontSize: 11, color: C.rasp, fontWeight: 600, marginTop: 2 }}>{leg.platform}</div>}
-            </div>
-            <div style={{ flex: 1.15, textAlign: "center", color: C.faint }}>
-              <div style={{ display: "inline-block", fontSize: 11, fontWeight: 800, color: C.yellowInk, background: C.yellow, padding: "3px 10px", borderRadius: 20, marginBottom: 5 }}>{leg.train}</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 3, justifyContent: "center" }}>
-                <span style={{ height: 2, flex: 1, background: C.line }} />
-                <Train size={15} />
-                <span style={{ height: 2, flex: 1, background: C.line }} />
-              </div>
-            </div>
-            <div style={{ flex: 1, textAlign: "center" }}>
-              <div style={{ fontSize: 19, fontWeight: 800, color: C.ink }}>{leg.toTime}</div>
-              <div style={{ fontSize: 12, color: C.inkSoft, marginTop: 2 }}>{leg.to}</div>
-            </div>
-          </div>
-        </React.Fragment>
+        </div>
       ))}
     </div>
   );
@@ -893,6 +881,27 @@ const delayMin = (sec) => (typeof sec === "number" && sec !== 0 ? Math.round(sec
 
 // Маленька крутилка завантаження — використовується на кнопках пошуку
 // розкладу, щоб було видно, що застосунок працює, а не завис.
+// Екран завантаження при відкритті застосунку: логотип обертається за
+// годинниковою стрілкою, поки підвантажуються поїздки з бази.
+function SplashScreen() {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: C.green, zIndex: 9999,
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18,
+    }}>
+      <img src={LOGO} alt="" style={{
+        width: 92, height: 92, borderRadius: 22, objectFit: "cover",
+        border: "2px solid rgba(253,228,70,0.45)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)",
+        animation: "appSpin 1.4s linear infinite",
+      }} />
+      <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 13.5, fontWeight: 600, letterSpacing: 0.3 }}>
+        {t("appName")}
+      </div>
+      <style>{"@keyframes appSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }"}</style>
+    </div>
+  );
+}
+
 function Spinner({ size = 15, color = "#fff" }) {
   return (
     <>
@@ -1197,7 +1206,14 @@ const resolveSections = (trip) => {
   // If the trip carries its own sections (possibly renamed by the organizer),
   // use them as-is. Otherwise use the defaults, translated to current language.
   if (trip.sections && trip.sections.length > 0) {
-    return trip.sections.map((s) => ({ visible: true, ...s }));
+    // ВАЖЛИВО: збережені секції можуть містити лише технічний ключ (tkey)
+    // без назви — тоді заголовок треба взяти з перекладу, інакше секція
+    // рендериться без підпису (лишається сама іконка).
+    return trip.sections.map((s) => ({
+      visible: true,
+      ...s,
+      title: s.title || (s.tkey ? t(s.tkey) : ""),
+    }));
   }
   return DEFAULT_SECTIONS.map((s) => ({ visible: true, type: s.type, title: t(s.tkey) }));
 };
@@ -1459,9 +1475,6 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                       </div>
                     </div>
                   )}
-                  <div style={{ marginTop: 14, padding: 11, background: C.raspSoft, borderRadius: 11, fontSize: 12.5, color: "#8a1f3c", display: "flex", gap: 7, alignItems: "center" }}>
-                    <Info size={15} /> {trip.priceNote}
-                  </div>
                   <div style={{ marginTop: 8, padding: 11, background: C.yellowSoft, borderRadius: 11, fontSize: 12.5, color: C.yellowInk, display: "flex", gap: 7, alignItems: "flex-start" }}>
                     <Train size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                     <span>{t("dTicket")} <b>Deutschland Ticket</b> <b>63 €</b> {t("dTicketTail")}</span>
@@ -2026,6 +2039,7 @@ function TripForm({ initial, onSave, onCancel }) {
                   return (
                     <button key={i}
                       onClick={() => {
+                        // Нова структура: тільки станція, час, платформа, поїзд.
                         const newLegs = ls.map((l) => ({
                           from: (l.origin && l.origin.name) || "",
                           fromTime: hhmm(l.plannedDeparture || l.departure),
@@ -2061,12 +2075,10 @@ function TripForm({ initial, onSave, onCancel }) {
                 <button onClick={() => set({ legs: t.legs.filter((_, j) => j !== i) })} style={{ background: "none", border: "none", color: C.rasp, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Видалити</button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <input style={{ ...inp, marginBottom: 8 }} value={leg.from} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, from: e.target.value } : l) })} placeholder="Звідки (München Hbf)" />
+                <input style={{ ...inp, marginBottom: 8 }} value={leg.from} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, from: e.target.value } : l) })} placeholder="Станція (München Hbf)" />
                 <input style={{ ...inp, marginBottom: 8 }} value={leg.fromTime} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, fromTime: e.target.value } : l) })} placeholder="Відпр. 08:32" />
-                <input style={{ ...inp, marginBottom: 8 }} value={leg.train} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, train: e.target.value } : l) })} placeholder="Поїзд (RB 6)" />
-                <input style={{ ...inp, marginBottom: 8 }} value={leg.platform} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, platform: e.target.value } : l) })} placeholder="Платформа (Гл. 27)" />
-                <input style={{ ...inp, marginBottom: 0 }} value={leg.to} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, to: e.target.value } : l) })} placeholder="Куди (Garmisch)" />
-                <input style={{ ...inp, marginBottom: 0 }} value={leg.toTime} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, toTime: e.target.value } : l) })} placeholder="Приб. 09:53" />
+                <input style={{ ...inp, marginBottom: 0 }} value={leg.train} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, train: e.target.value } : l) })} placeholder="Поїзд (RB 6)" />
+                <input style={{ ...inp, marginBottom: 0 }} value={leg.platform} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, platform: e.target.value } : l) })} placeholder="Платформа (27)" />
               </div>
             </div>
           ))}
@@ -2169,6 +2181,53 @@ function TripForm({ initial, onSave, onCancel }) {
             </div>
           ))}
           <button onClick={addStop} style={{ width: "100%", border: `1.5px dashed ${C.green}`, background: C.greenSoft, color: C.greenDark, borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Додати точку маршруту</button>
+          <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: `1.5px dashed ${C.rasp}`, background: C.raspSoft, color: C.rasp, borderRadius: 10, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginTop: 8 }}>
+            <MapPin size={15} /> Завантажити GPX з Komoot / Bergfex
+            <input type="file" accept=".gpx,application/gpx+xml,text/xml" style={{ display: "none" }}
+              onChange={async (e) => {
+                const f = e.target.files && e.target.files[0];
+                e.target.value = "";
+                if (!f) return;
+                try {
+                  const text = await f.text();
+                  const doc = new DOMParser().parseFromString(text, "application/xml");
+                  if (doc.querySelector("parsererror")) throw new Error("Файл пошкоджений");
+                  // Спершу беремо іменовані точки (wpt) — це саме зупинки
+                  // й паузи, які позначив автор маршруту в Komoot/Bergfex.
+                  let pts = [...doc.querySelectorAll("wpt")].map((w) => ({
+                    name: (w.querySelector("name") && w.querySelector("name").textContent.trim()) || "",
+                    lat: parseFloat(w.getAttribute("lat")),
+                    lng: parseFloat(w.getAttribute("lon")),
+                  })).filter((p) => !isNaN(p.lat) && !isNaN(p.lng));
+                  // Якщо іменованих точок немає — беремо сам трек і рівномірно
+                  // розріджуємо його до 8 точок, щоб карта лишалась читабельною.
+                  if (pts.length === 0) {
+                    const trk = [...doc.querySelectorAll("trkpt, rtept")].map((w) => ({
+                      lat: parseFloat(w.getAttribute("lat")),
+                      lng: parseFloat(w.getAttribute("lon")),
+                    })).filter((p) => !isNaN(p.lat) && !isNaN(p.lng));
+                    if (trk.length === 0) throw new Error("У файлі немає точок");
+                    const want = Math.min(8, trk.length);
+                    const step = Math.max(1, Math.floor(trk.length / want));
+                    pts = trk.filter((_, i) => i % step === 0).slice(0, want)
+                      .map((p, i, a) => ({ ...p, name: i === 0 ? "Старт" : i === a.length - 1 ? "Фініш" : `Точка ${i}` }));
+                  }
+                  set({
+                    route: pts.map((p) => ({
+                      name: p.name || "Точка",
+                      note: "",
+                      coords: { lat: Number(p.lat.toFixed(6)), lng: Number(p.lng.toFixed(6)) },
+                    })),
+                  });
+                  alert(`Завантажено точок: ${pts.length}. Назви й примітки можна відредагувати нижче.`);
+                } catch (err) {
+                  alert("Не вдалося прочитати GPX.\n\n" + ((err && err.message) || err) + "\n\nУ Komoot: «Експорт туру» → GPX. У Bergfex: кнопка завантаження треку → GPX.");
+                }
+              }} />
+          </label>
+          <p style={{ fontSize: 11.5, color: C.muted, margin: "8px 0 0", lineHeight: 1.5 }}>
+            Експортуйте маршрут у файл GPX (Komoot: «Експорт туру»; Bergfex: завантаження треку) — точки з паузами підставляться автоматично. Пряме посилання на сторінку Komoot/Bergfex не спрацює: ці сервіси не дозволяють читати маршрут із чужих сайтів.
+          </p>
           <div style={{ marginTop: 12 }}>
             <label style={lbl}>Посилання на повний маршрут (Komoot / Bergfex, необов'язково)</label>
             <input style={inp} value={t.routeUrl || ""} onChange={(e) => set({ routeUrl: e.target.value })} placeholder="https://www.komoot.com/tour/..." />
@@ -2438,6 +2497,9 @@ export default function App() {
     else if (ok > 0) alert(`Перекладено: ${ok} з ${total}.\n\nЧастина не вдалася — можливо, тимчасово недоступний сервіс перекладу. Спробуйте натиснути ще раз через кілька хвилин.`);
     else alert("Не вдалося перекласти жодної поїздки.\n\nПеревірте інтернет-зʼєднання і спробуйте ще раз.");
   };
+
+  // Екран завантаження при відкритті (лише первинне, поки тягнемо базу).
+  if (loadingTrips) return <SplashScreen />;
 
   // ---- Editing form view ----
   if (editing) {
