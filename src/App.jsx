@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v16";
+const APP_VERSION = "v17";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -923,6 +923,8 @@ function JourneyPlanner({ trip }) {
   const [origin, setOrigin] = useState("");
   const [opts, setOpts] = useState(null);     // список станцій для вибору
   const [fromStop, setFromStop] = useState(null);
+  const [toStop, setToStop] = useState(null);
+  const [destOpts, setDestOpts] = useState(null);
   const [journeys, setJourneys] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(false);
@@ -974,28 +976,28 @@ function JourneyPlanner({ trip }) {
     return `${qDate}T${hh}:${mm}:00${berlinOffset(qDate)}`;
   };
 
-  const search = async () => {
-    const q = origin.trim();
-    if (q === "") return;
-    setBusy(true); setErr(false); setJourneys(null); setOpts(null); setFromStop(null);
+  // Пошук у два кроки з явним вибором станції — надійніше за спробу
+  // вгадати станцію на сервері: якщо назва неоднозначна, показуємо список.
+  const runJourneys = async (fromId, toId) => {
+    setBusy(true); setErr(false);
     try {
-      // Кінцева станція здебільшого вже готова — резолвилась у фоні. Якщо
-      // ще ні (рідкісний випадок дуже швидкого кліку) — чекаємо тут.
-      const d = destStop || (await dbLocations(dest))[0];
-      if (!d) { setErr(true); return; }
-      const result = await dbJourneysByOriginName(q, d.id, departureISO(), regionalOnly);
-      if (result.needsDisambiguation) { setOpts(result.options); return; }
-      setJourneys(result.journeys);
+      setJourneys(await dbJourneys(fromId, toId, departureISO(), regionalOnly));
     } catch { setErr(true); }
     finally { setBusy(false); }
   };
 
-  const loadFor = async (stop) => {
-    setBusy(true); setErr(false); setOpts(null); setFromStop(stop);
+  const search = async () => {
+    const q = origin.trim(), dq = destInput.trim();
+    if (q === "" || dq === "") return;
+    setBusy(true); setErr(false); setJourneys(null);
+    setOpts(null); setDestOpts(null); setFromStop(null); setToStop(null);
     try {
-      const d = destStop || (await dbLocations(dest))[0];
-      if (!d) { setErr(true); return; }
-      setJourneys(await dbJourneys(stop.id, d.id, departureISO(), regionalOnly));
+      const [ol, dl] = await Promise.all([dbLocations(q), dbLocations(dq)]);
+      if (ol.length === 0 || dl.length === 0) { setOpts([]); return; }
+      if (ol.length > 1) { setOpts(ol); setToStop(dl[0]); return; }
+      if (dl.length > 1) { setFromStop(ol[0]); setDestOpts(dl); return; }
+      setFromStop(ol[0]); setToStop(dl[0]);
+      await runJourneys(ol[0].id, dl[0].id);
     } catch { setErr(true); }
     finally { setBusy(false); }
   };
@@ -1055,7 +1057,29 @@ function JourneyPlanner({ trip }) {
       {opts && opts.length > 0 && (
         <div style={{ border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden", marginBottom: 10, background: "#fff" }}>
           {opts.map((o) => (
-            <button key={o.id} onClick={() => loadFor(o)}
+            <button key={o.id} onClick={async () => {
+                setOpts(null); setFromStop(o); setOrigin(o.name);
+                let d = toStop;
+                if (!d) { const dl = await dbLocations(destInput.trim()); d = dl[0]; }
+                if (!d) { setErr(true); return; }
+                setToStop(d);
+                await runJourneys(o.id, d.id);
+              }}
+              style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "none", borderBottom: `1px solid ${C.line}`, padding: "10px 12px", fontSize: 13, color: C.ink, cursor: "pointer", fontFamily: "inherit" }}>
+              🚉 {o.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {destOpts && destOpts.length > 0 && (
+        <div style={{ border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden", marginBottom: 10, background: "#fff" }}>
+          <div style={{ padding: "7px 12px", fontSize: 11.5, fontWeight: 700, color: C.muted, background: C.greenSoft }}>{t("jpDestPlaceholder")}</div>
+          {destOpts.map((o) => (
+            <button key={o.id} onClick={async () => {
+                setDestOpts(null); setToStop(o); setDestInput(o.name);
+                if (fromStop) await runJourneys(fromStop.id, o.id);
+              }}
               style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "none", borderBottom: `1px solid ${C.line}`, padding: "10px 12px", fontSize: 13, color: C.ink, cursor: "pointer", fontFamily: "inherit" }}>
               🚉 {o.name}
             </button>
@@ -1179,7 +1203,7 @@ function JourneyPlanner({ trip }) {
         </p>
       )}
 
-      {canSearch && (
+      {(
         <a href={buildDbUrl()} target="_blank" rel="noreferrer"
           style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: journeys ? "rgba(80,104,60,0.12)" : C.green, color: journeys ? C.greenDark : "#fff", borderRadius: 11, padding: "11px", fontSize: 13, fontWeight: 700, textDecoration: "none" }}>
           <Train size={16} /> {t("jpButton")}
@@ -1374,6 +1398,7 @@ function LiveWeather({ trip }) {
 
 // ── Detail view ────────────────────────────────────────────────────────
 function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSetPostponedDate }) {
+  const [routeSel, setRouteSel] = useState(null);
   const left = trip.spots - trip.spotsTaken;
   const Section = ({ icon, title, children, accent = C.green }) => (
     <div style={{ background: C.card, borderRadius: 18, padding: 18, marginBottom: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
@@ -1496,7 +1521,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                     <Train size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                     <span><b>Bayern Ticket 34 €</b> {t("bTicketTail")}</span>
                   </div>
-                  <JourneyPlanner trip={trip} />
+                  {!isAdmin && <JourneyPlanner trip={trip} />}
                 </>
               ),
             },
@@ -1512,7 +1537,6 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                       <div style={{ fontSize: 13, color: C.inkSoft, lineHeight: 1.45 }}>
                         {tc(trip.meetingPoint) && tc(trip.meetingPoint).trim() !== "" ? tc(trip.meetingPoint) : `${tc(trip.route[0]?.name) || trip.from.name}`}
                       </div>
-                      <div style={{ fontSize: 12, color: C.green, fontWeight: 600, marginTop: 5 }}>{trip.from.time} {t("departure")}</div>
                     </div>
                   </div>
                   {trip.coords && (
@@ -1542,22 +1566,41 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                       </div>
                     ) : null;
                   })()}
+                {(() => {
+                  // Карта обраної точки маршруту (якщо в неї є координати).
+                  const sel = routeSel != null ? trip.route[routeSel] : null;
+                  const la = parseFloat(sel && sel.lat), ln = parseFloat(sel && sel.lng);
+                  if (!sel || isNaN(la) || isNaN(ln)) return null;
+                  return (
+                    <div style={{ marginBottom: 14 }}>
+                      <MeetingMap lat={la} lng={ln} />
+                      <p style={{ fontSize: 11.5, color: C.muted, margin: "6px 0 0" }}>{tc(sel.name)}</p>
+                    </div>
+                  );
+                })()}
                 <div style={{ position: "relative", paddingLeft: 4 }}>
-                  {trip.route.map((step, i) => (
-                    <div key={i} style={{ display: "flex", gap: 13, paddingBottom: i === trip.route.length - 1 ? 0 : 18, position: "relative" }}>
+                  {trip.route.map((step, i) => {
+                    const hasGeo = !isNaN(parseFloat(step.lat)) && !isNaN(parseFloat(step.lng));
+                    const active = routeSel === i;
+                    return (
+                    <div key={i}
+                      onClick={() => { if (hasGeo) setRouteSel(active ? null : i); }}
+                      style={{ display: "flex", gap: 13, paddingBottom: i === trip.route.length - 1 ? 0 : 18, position: "relative", cursor: hasGeo ? "pointer" : "default" }}>
                       {i !== trip.route.length - 1 && <div style={{ position: "absolute", left: 9, top: 22, bottom: 0, width: 2, background: C.greenLine }} />}
-                      <div style={{ width: 20, height: 20, borderRadius: 20, background: i === 0 ? C.green : "#fff", border: `2px solid ${i === 0 ? C.green : C.greenLine}`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1, zIndex: 1 }}>
-                        {i === 0 && <span style={{ width: 6, height: 6, borderRadius: 6, background: "#fff" }} />}
+                      <div style={{ width: 20, height: 20, borderRadius: 20, background: active ? C.green : "#fff", border: `2px solid ${active ? C.green : C.greenLine}`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1, zIndex: 1 }}>
+                        {active && <span style={{ width: 6, height: 6, borderRadius: 6, background: "#fff" }} />}
                       </div>
                       <div style={{ flex: 1 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                          <span style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>{tc(step.name)}</span>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: active ? C.greenDark : C.ink }}>{tc(step.name)}</span>
                           <span style={{ fontSize: 12, color: C.rasp, fontWeight: 600 }}>{step.t}</span>
                         </div>
                         <div style={{ fontSize: 12.5, color: "#7a766a", marginTop: 2 }}>{tc(step.note)}</div>
+                        {hasGeo && !active && <div style={{ fontSize: 11, color: C.green, fontWeight: 600, marginTop: 3 }}>Натисніть, щоб показати на карті</div>}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   {trip.route.length === 0 && <p style={{ margin: 0, fontSize: 13, color: C.muted }}>{t("routeTbd")}</p>}
                 </div>
                 </>
