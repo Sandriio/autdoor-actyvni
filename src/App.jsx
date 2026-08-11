@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v15";
+const APP_VERSION = "v16";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -190,7 +190,7 @@ const T = {
   jpLiveNote: { uk: "Джерело: відкриті дані (не Deutsche Bahn напряму). Список може відрізнятися — перед виїздом звіряйте на сайті DB.", en: "Source: open data (not directly from Deutsche Bahn). The list may differ — check on the DB site before travelling.", de: "Quelle: Open Data (nicht direkt von der DB). Bitte vor der Fahrt auf bahn.de prüfen.", ru: "Источник: открытые данные (не напрямую от Deutsche Bahn). Список может отличаться — перед выездом сверяйте на сайте DB." },
   jpSourceDb: { uk: "Джерело: дані Deutsche Bahn (як у DB Navigator), включно з реальними затримками.", en: "Source: Deutsche Bahn data (same as DB Navigator), including live delays.", de: "Quelle: DB-Daten (wie DB Navigator), inkl. Echtzeitverspätungen.", ru: "Источник: данные Deutsche Bahn (как в DB Navigator), включая реальные задержки." },
   jpSourceBoth: { uk: "Джерело: дані Deutsche Bahn, доповнені відкритими даними для повнішого списку.", en: "Source: Deutsche Bahn data, supplemented with open data for a fuller list.", de: "Quelle: DB-Daten, ergänzt um Open Data.", ru: "Источник: данные Deutsche Bahn, дополненные открытыми данными для более полного списка." },
-  jpNeutralNote: { uk: "Дані Deutsche Bahn у реальному часі, коли доступні — з відкритих даних як запасний варіант. Джерело показується після пошуку.", en: "Live Deutsche Bahn data when available, open data as a fallback. Source shown after you search.", de: "Echtzeitdaten der DB, sonst Open Data als Fallback.", ru: "Данные Deutsche Bahn в реальном времени, когда доступны, иначе открытые данные. Источник показывается после поиска." },
+  jpNeutralNote: { uk: "Дані з сервісів-партнерів, можуть бути неточними. Для швидшої та точної інформації про поїзди використовуйте офіційний пошук Deutsche Bahn.", en: "Data from partner services and may be inaccurate. For faster, accurate train information use the official Deutsche Bahn search.", de: "Daten von Partnerdiensten, können ungenau sein. Für genaue Infos bitte die offizielle DB-Suche nutzen.", ru: "Данные от сервисов-партнёров, могут быть неточными. Для более быстрой и точной информации используйте официальный поиск Deutsche Bahn." },
   jpNote: { uk: "Відкриває розклад на сайті Deutsche Bahn. Після публікації застосунку розклад показуватиметься прямо тут.", en: "Opens the schedule on Deutsche Bahn's site. Once the app is published, times will show right here.", de: "Öffnet den Fahrplan auf der Deutsche-Bahn-Website. Nach Veröffentlichung erscheinen die Zeiten direkt hier.", ru: "Открывает расписание на сайте Deutsche Bahn. После публикации приложения расписание будет показываться здесь." },
   destFallback: { uk: "місця призначення", en: "the destination", de: "dem Ziel", ru: "места назначения" },
   // meeting
@@ -611,9 +611,12 @@ function MeetingMap({ lat, lng }) {
         <iframe
           title="meeting-map"
           src={mapSrc}
-          style={{ width: "100%", height: "100%", border: "none", display: "block", pointerEvents: "none" }}
+          style={{ width: "100%", height: "calc(100% + 26px)", border: "none", display: "block", pointerEvents: "none" }}
           loading="lazy"
         />
+        {/* Ліцензія OSM вимагає атрибуції — лишаємо її, але компактно
+            й у стилі застосунку, замість службової смуги від iframe. */}
+        <span style={{ position: "absolute", right: 6, bottom: 4, fontSize: 8.5, color: "rgba(0,0,0,0.42)", background: "rgba(255,255,255,0.72)", padding: "1px 5px", borderRadius: 6 }}>© OpenStreetMap</span>
         {/* Red location pin, centered */}
         <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", pointerEvents: "none" }}>
           <svg width="34" height="44" viewBox="0 0 34 44" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))" }}>
@@ -657,9 +660,10 @@ function OsmRoute({ points, fallback }) {
       <iframe
         title="route-map"
         src={src}
-        style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+        style={{ width: "100%", height: "calc(100% + 26px)", border: "none", display: "block" }}
         loading="lazy"
       />
+      <span style={{ position: "absolute", right: 6, bottom: 4, fontSize: 8.5, color: "rgba(0,0,0,0.42)", background: "rgba(255,255,255,0.72)", padding: "1px 5px", borderRadius: 6, zIndex: 2 }}>© OpenStreetMap</span>
     </div>
   );
 }
@@ -996,7 +1000,9 @@ function JourneyPlanner({ trip }) {
     finally { setBusy(false); }
   };
 
-  const canSearch = origin.trim() !== "";
+  // Кнопка активна лише коли заповнені ОБИДВА поля — інакше пошук
+  // гарантовано провалюється, а користувач бачить незрозумілу помилку.
+  const canSearch = origin.trim() !== "" && destInput.trim() !== "";
 
   return (
     <div style={{ marginTop: 14, padding: 13, background: C.greenSoft, borderRadius: 12 }}>
@@ -1020,11 +1026,18 @@ function JourneyPlanner({ trip }) {
       <input
         value={origin}
         onChange={(e) => { setOrigin(e.target.value); setJourneys(null); setOpts(null); }}
-        onKeyDown={(e) => { if (e.key === "Enter" && canSearch) search(); }}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          // Спершу веде до поля «куди»; шукає лише коли заповнені обидва.
+          if (destInput.trim() === "") { const el = document.getElementById("jp-dest-input"); if (el) el.focus(); }
+          else if (canSearch) search();
+        }}
         placeholder={t("jpPlaceholder")}
         style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 8 }}
       />
       <input
+        id="jp-dest-input"
         value={destInput}
         onChange={(e) => { setDestInput(e.target.value); setJourneys(null); }}
         onKeyDown={(e) => { if (e.key === "Enter" && canSearch) search(); }}
@@ -1793,6 +1806,7 @@ function TripForm({ initial, onSave, onCancel }) {
   const [dbRes, setDbRes] = useState(null);
   const [dbErr, setDbErr] = useState("");
   const [dbTime, setDbTime] = useState("07:00");
+  const [selStop, setSelStop] = useState(null);
   const set = (patch) => setT((prev) => ({ ...prev, ...patch }));
   const setNested = (key, patch) => setT((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
@@ -1995,79 +2009,6 @@ function TripForm({ initial, onSave, onCancel }) {
             Додайте один або кілька поїздів. Між поїздами автоматично показується пересадка.
           </p>
 
-          {/* Автопідбір розкладу з Deutsche Bahn */}
-          <div style={{ border: `1.5px dashed ${C.green}`, background: C.greenSoft, borderRadius: 12, padding: 12, marginBottom: 12 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 700, color: C.greenDark, marginBottom: 8 }}>
-              🚆 Підтягнути розклад з Deutsche Bahn
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
-              <input style={{ ...inp, marginBottom: 0 }} value={dbFrom} onChange={(e) => setDbFrom(e.target.value)} placeholder="Звідки (вокзал)" />
-              <input style={{ ...inp, marginBottom: 0 }} value={dbTo} onChange={(e) => setDbTo(e.target.value)} placeholder="Куди (вокзал)" />
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <span style={{ fontSize: 12, color: C.greenDark, fontWeight: 600 }}>Виїзд не раніше</span>
-              <input type="time" value={dbTime} onChange={(e) => setDbTime(e.target.value)}
-                style={{ ...inp, marginBottom: 0, width: 120, padding: "8px 10px" }} />
-              <span style={{ fontSize: 11.5, color: C.muted }}>лише регіональні</span>
-            </div>
-            <button
-              disabled={dbBusy || dbFrom.trim() === "" || dbTo.trim() === ""}
-              onClick={async () => {
-                setDbBusy(true); setDbErr(""); setDbRes(null);
-                try {
-                  const [fl, tl] = await Promise.all([dbLocations(dbFrom.trim()), dbLocations(dbTo.trim())]);
-                  if (fl.length === 0 || tl.length === 0) { setDbErr("Не знайдено вокзал. Спробуйте точнішу назву, напр. «Augsburg Hbf»."); return; }
-                  const d = (t.date || "").trim();
-                  const when = d ? `${d}T${(dbTime || "07:00")}:00` : null;
-                  const js = await dbJourneys(fl[0].id, tl[0].id, when, true);
-                  if (js.length === 0) { setDbErr("Рейсів не знайдено на цю дату."); return; }
-                  setDbRes(js);
-                } catch (e) {
-                  setDbErr("Сервіс розкладу зараз недоступний (" + ((e && e.message) || "?") + "). Спробуйте пізніше або впишіть поїзди вручну.");
-                } finally { setDbBusy(false); }
-              }}
-              style={{ width: "100%", border: "none", background: dbBusy || dbFrom.trim() === "" || dbTo.trim() === "" ? "rgba(80,104,60,0.25)" : C.green, color: "#fff", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: dbBusy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-              {dbBusy ? <><Spinner /> Шукаю…</> : "Знайти рейси"}
-            </button>
-            {dbErr !== "" && <p style={{ fontSize: 12, color: C.rasp, margin: "8px 0 0", lineHeight: 1.4 }}>{dbErr}</p>}
-            {dbRes && (
-              <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-                {dbRes.slice(0, 4).map((jr, i) => {
-                  const ls = (jr.legs || []).filter((l) => !l.walking);
-                  if (ls.length === 0) return null;
-                  const f0 = ls[0], l0 = ls[ls.length - 1];
-                  return (
-                    <button key={i}
-                      onClick={() => {
-                        // Нова структура: тільки станція, час, платформа, поїзд.
-                        const newLegs = ls.map((l) => ({
-                          from: (l.origin && l.origin.name) || "",
-                          fromTime: hhmm(l.plannedDeparture || l.departure),
-                          platform: l.departurePlatform || l.plannedDeparturePlatform || "",
-                          train: (l.line && (l.line.name || l.line.product)) || "",
-                          to: (l.destination && l.destination.name) || "",
-                          toTime: hhmm(l.plannedArrival || l.arrival),
-                        }));
-                        const last = newLegs[newLegs.length - 1];
-                        set({
-                          legs: newLegs,
-                          from: { name: newLegs[0].from, time: newLegs[0].fromTime, platform: newLegs[0].platform },
-                          to: { name: last.to, time: last.toTime },
-                          trainLine: newLegs[0].train,
-                        });
-                        setDbRes(null);
-                      }}
-                      style={{ textAlign: "left", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 11px", fontSize: 12.5, cursor: "pointer", fontFamily: "inherit", color: C.ink }}>
-                      <b>{hhmm(f0.plannedDeparture || f0.departure)} → {hhmm(l0.plannedArrival || l0.arrival)}</b>
-                      {"  "}· {ls.map((l) => (l.line && (l.line.name || l.line.product)) || "?").join(" → ")}
-                      {"  "}· {ls.length === 1 ? "без пересадок" : `${ls.length - 1} пересадка(и)`}
-                    </button>
-                  );
-                })}
-                <p style={{ fontSize: 11, color: C.muted, margin: 0 }}>Натисніть варіант — поїзди підставляться в поля нижче.</p>
-              </div>
-            )}
-          </div>
           {(t.legs || []).map((leg, i) => (
             <div key={i} style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 10, background: "#fff" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -2163,14 +2104,28 @@ function TripForm({ initial, onSave, onCancel }) {
         <div style={card}>
           <h3 style={cardTitle}><Mountain size={15} /> Маршрут</h3>
           {t.route.length === 0 && <p style={{ fontSize: 13, color: C.muted, margin: "0 0 12px" }}>Поки немає точок. Додайте першу нижче.</p>}
+          {(() => {
+            // Карта показує ту точку, яку обрали в списку нижче.
+            const sel = selStop != null ? t.route[selStop] : null;
+            const la = parseFloat(sel && sel.lat), ln = parseFloat(sel && sel.lng);
+            if (!sel || isNaN(la) || isNaN(ln)) return null;
+            return (
+              <div style={{ marginBottom: 12 }}>
+                <MeetingMap lat={la} lng={ln} />
+                <p style={{ fontSize: 11.5, color: C.muted, margin: "6px 0 0" }}>На карті: {sel.name || `Точка ${selStop + 1}`}</p>
+              </div>
+            );
+          })()}
           {t.route.map((s, i) => (
-            <div key={i} style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 10, background: "#fff" }}>
+            <div key={i}
+              onClick={() => setSelStop(selStop === i ? null : i)}
+              style={{ border: `1.5px solid ${selStop === i ? C.green : C.line}`, borderRadius: 12, padding: 12, marginBottom: 10, background: selStop === i ? C.greenSoft : "#fff", cursor: "pointer" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: C.green }}>Точка {i + 1}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.green }}>Точка {i + 1}{selStop === i ? " · на карті" : ""}</span>
                 <button onClick={() => delStop(i)} style={{ background: "none", border: "none", color: C.rasp, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Видалити</button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8 }}>
-                <input style={{ ...inp, marginBottom: 8 }} value={s.name} onChange={(e) => updStop(i, { name: e.target.value })} placeholder="Назва точки" />
+                <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 8 }} value={s.name} onChange={(e) => updStop(i, { name: e.target.value })} placeholder="Назва точки" />
                 <input style={{ ...inp, marginBottom: 8 }} value={s.t} onChange={(e) => updStop(i, { t: e.target.value })} placeholder="10:30" />
               </div>
               <input style={{ ...inp, marginBottom: 8 }} value={s.note} onChange={(e) => updStop(i, { note: e.target.value })} placeholder="Примітка (необов'язково)" />
@@ -2216,7 +2171,9 @@ function TripForm({ initial, onSave, onCancel }) {
                     route: pts.map((p) => ({
                       name: p.name || "Точка",
                       note: "",
-                      coords: { lat: Number(p.lat.toFixed(6)), lng: Number(p.lng.toFixed(6)) },
+                      t: "",
+                      lat: Number(p.lat.toFixed(6)),
+                      lng: Number(p.lng.toFixed(6)),
                     })),
                   });
                   alert(`Завантажено точок: ${pts.length}. Назви й примітки можна відредагувати нижче.`);
