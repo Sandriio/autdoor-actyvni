@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v19";
+const APP_VERSION = "v20";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -190,7 +190,7 @@ const T = {
   jpCancelled: { uk: "Рейс скасовано або є скасовані ділянки", en: "Cancelled or partly cancelled", de: "Fahrt entfällt teilweise", ru: "Рейс отменён или есть отменённые участки" },
   jpTrack: { uk: "кол.", en: "pl.", de: "Gl.", ru: "пут." },
   jpError: { uk: "Не вдалося отримати живий розклад. Скористайтеся кнопкою нижче — офіційний сайт DB.", en: "Couldn't load the live timetable. Use the DB website below.", de: "Live-Fahrplan nicht verfügbar. Bitte DB-Website nutzen.", ru: "Не удалось получить живое расписание. Воспользуйтесь сайтом DB ниже." },
-  jpLiveNote: { uk: "Джерело: відкриті дані (не Deutsche Bahn напряму). Список може відрізнятися — перед виїздом звіряйте на сайті DB.", en: "Source: open data (not directly from Deutsche Bahn). The list may differ — check on the DB site before travelling.", de: "Quelle: Open Data (nicht direkt von der DB). Bitte vor der Fahrt auf bahn.de prüfen.", ru: "Источник: открытые данные (не напрямую от Deutsche Bahn). Список может отличаться — перед выездом сверяйте на сайте DB." },
+  jpLiveNote: { uk: "Джерело: відкриті дані. Для точнішої інформації перевіряйте офіційний DB.", en: "Source: open data. For more accurate information, check the official DB.", de: "Quelle: Open Data. Für genauere Informationen bitte die offizielle DB prüfen.", ru: "Источник: открытые данные. Для более точной информации проверяйте официальный DB." },
   jpSourceDb: { uk: "Джерело: дані Deutsche Bahn (як у DB Navigator), включно з реальними затримками.", en: "Source: Deutsche Bahn data (same as DB Navigator), including live delays.", de: "Quelle: DB-Daten (wie DB Navigator), inkl. Echtzeitverspätungen.", ru: "Источник: данные Deutsche Bahn (как в DB Navigator), включая реальные задержки." },
   jpSourceBoth: { uk: "Джерело: дані Deutsche Bahn, доповнені відкритими даними для повнішого списку.", en: "Source: Deutsche Bahn data, supplemented with open data for a fuller list.", de: "Quelle: DB-Daten, ergänzt um Open Data.", ru: "Источник: данные Deutsche Bahn, дополненные открытыми данными для более полного списка." },
   jpNeutralNote: { uk: "Дані з сервісів-партнерів, можуть бути неточними. Для швидшої та точної інформації про поїзди використовуйте офіційний пошук Deutsche Bahn.", en: "Data from partner services and may be inaccurate. For faster, accurate train information use the official Deutsche Bahn search.", de: "Daten von Partnerdiensten, können ungenau sein. Für genaue Infos bitte die offizielle DB-Suche nutzen.", ru: "Данные от сервисов-партнёров, могут быть неточными. Для более быстрой и точной информации используйте официальный поиск Deutsche Bahn." },
@@ -2542,7 +2542,24 @@ function TripForm({ initial, onSave, onCancel }) {
 }
 
 // ── Root ───────────────────────────────────────────────────────────────
+// Масштабування двома пальцями. Заборона зуму сидить у метатезі viewport
+// у index.html; там її теж треба виправити. Але метатег легко проґавити
+// під час правок, тому застосунок перезаписує його сам при завантаженні —
+// так зум працює навіть зі старим index.html. Мінімальний масштаб лишаємо
+// рівним 1, щоб не можна було випадково «здути» сторінку менше за екран.
+function enablePinchZoom() {
+  if (typeof document === "undefined") return;
+  let m = document.querySelector('meta[name="viewport"]');
+  if (!m) {
+    m = document.createElement("meta");
+    m.setAttribute("name", "viewport");
+    document.head.appendChild(m);
+  }
+  m.setAttribute("content", "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=5, user-scalable=yes, viewport-fit=cover");
+}
+
 export default function App() {
+  useEffect(() => { enablePinchZoom(); }, []);
   const [trips, setTrips] = useState(() => (sbConfigured() ? [] : TRIPS));
   const [loadingTrips, setLoadingTrips] = useState(() => sbConfigured());
   const [loadError, setLoadError] = useState(false);
