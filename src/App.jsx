@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v20";
+const APP_VERSION = "v21";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -189,6 +189,7 @@ const T = {
   jpChanges: { uk: "пересадка(и)", en: "changes", de: "Umstiege", ru: "пересадка(и)" },
   jpCancelled: { uk: "Рейс скасовано або є скасовані ділянки", en: "Cancelled or partly cancelled", de: "Fahrt entfällt teilweise", ru: "Рейс отменён или есть отменённые участки" },
   jpTrack: { uk: "кол.", en: "pl.", de: "Gl.", ru: "пут." },
+  jpTrackNote: { uk: "Номери колій сірим — з розкладу відкритих даних, без підтвердження в реальному часі. Звіряйте з табло на вокзалі.", en: "Grey platform numbers come from the open-data timetable and are not confirmed in real time. Check the station board.", de: "Grau markierte Gleisnummern stammen aus dem Open-Data-Fahrplan und sind nicht in Echtzeit bestätigt. Bitte Anzeigetafel prüfen.", ru: "Номера путей серым — из расписания открытых данных, без подтверждения в реальном времени. Сверяйте с табло на вокзале." },
   jpError: { uk: "Не вдалося отримати живий розклад. Скористайтеся кнопкою нижче — офіційний сайт DB.", en: "Couldn't load the live timetable. Use the DB website below.", de: "Live-Fahrplan nicht verfügbar. Bitte DB-Website nutzen.", ru: "Не удалось получить живое расписание. Воспользуйтесь сайтом DB ниже." },
   jpLiveNote: { uk: "Джерело: відкриті дані. Для точнішої інформації перевіряйте офіційний DB.", en: "Source: open data. For more accurate information, check the official DB.", de: "Quelle: Open Data. Für genauere Informationen bitte die offizielle DB prüfen.", ru: "Источник: открытые данные. Для более точной информации проверяйте официальный DB." },
   jpSourceDb: { uk: "Джерело: дані Deutsche Bahn (як у DB Navigator), включно з реальними затримками.", en: "Source: Deutsche Bahn data (same as DB Navigator), including live delays.", de: "Quelle: DB-Daten (wie DB Navigator), inkl. Echtzeitverspätungen.", ru: "Источник: данные Deutsche Bahn (как в DB Navigator), включая реальные задержки." },
@@ -1328,7 +1329,7 @@ function JourneyPlanner({ trip }) {
                             </div>
                             <div style={{ flex: 1 }}>
                               <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{(l.origin && l.origin.name) || ""}</div>
-                              {l.departurePlatform && <div style={{ fontSize: 11, color: C.rasp, fontWeight: 600 }}>{t("jpTrack")} {l.departurePlatform}</div>}
+                              {l.departurePlatform && <div style={{ fontSize: 11, color: l.platformTrusted === false ? C.muted : C.rasp, fontWeight: 600 }}>{t("jpTrack")} {l.departurePlatform}</div>}
                               <div style={{ display: "inline-block", margin: "5px 0", fontSize: 11, fontWeight: 800, background: l.cancelled ? C.raspSoft : C.yellow, color: l.cancelled ? C.rasp : C.yellowInk, padding: "3px 9px", borderRadius: 20 }}>
                                 {(l.line && (l.line.name || l.line.product)) || "?"}
                               </div>
@@ -1341,12 +1342,18 @@ function JourneyPlanner({ trip }) {
                             </div>
                             <div style={{ flex: 1 }}>
                               <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{(l.destination && l.destination.name) || ""}</div>
-                              {l.arrivalPlatform && <div style={{ fontSize: 11, color: C.rasp, fontWeight: 600 }}>{t("jpTrack")} {l.arrivalPlatform}</div>}
+                              {l.arrivalPlatform && <div style={{ fontSize: 11, color: l.platformTrusted === false ? C.muted : C.rasp, fontWeight: 600 }}>{t("jpTrack")} {l.arrivalPlatform}</div>}
                             </div>
                           </div>
                         </div>
                       );
                     })}
+                    {/* Застереження показуємо тільки тоді, коли в цьому
+                        рейсі справді є непідтверджені номери колій — щоб
+                        не лякати текстом там, де дані надійні. */}
+                    {(jr.legs || []).some((l) => !l.walking && (l.departurePlatform || l.arrivalPlatform) && l.platformTrusted === false) && (
+                      <div style={{ fontSize: 10.5, color: C.muted, marginTop: 9, lineHeight: 1.45 }}>{t("jpTrackNote")}</div>
+                    )}
                   </div>
                 )}
               </div>
