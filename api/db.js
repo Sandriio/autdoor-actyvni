@@ -151,10 +151,25 @@ const LONG_DISTANCE = /^(ICE|IC|EC|ECE|RJX|RJ|TGV|FLX|NJ|EN|THA|WB)\b/i;
 // пропускаємо, а не відкидаємо. Це навмисно: одна помилка в назві поля
 // не повинна тихо ховати всі регіональні поїзди DB — це вже траплялось.
 const BLOCKED_PRODUCTS = new Set(["nationalexpress", "national", "subway", "tram", "ferry", "taxi"]);
-const BLOCKED_GTFS_MODES = new Set(["SUBWAY", "TRAM", "FERRY", "CABLE_TRAM", "FUNICULAR", "MONORAIL", "AIRPLANE"]);
+// Додано HIGHSPEED_RAIL / LONG_DISTANCE / NIGHT_RAIL: раніше далекобійні
+// поїзди відсіювались ЛИШЕ за назвою (ICE, IC, EC...), а у відкритих даних
+// назвою буває голий номер лінії DB — «11», «42». Такий рейс проходив
+// фільтр і потрапляв у список як «регіональний», хоча Deutschland-Ticket
+// на нього не діє. Тепер вид транспорту перевіряється незалежно від назви.
+const BLOCKED_GTFS_MODES = new Set(["SUBWAY", "TRAM", "FERRY", "CABLE_TRAM", "FUNICULAR", "MONORAIL", "AIRPLANE", "HIGHSPEED_RAIL", "LONG_DISTANCE", "NIGHT_RAIL"]);
+// Види транспорту, на які Deutschland-Ticket не діє. Це найнадійніша
+// ознака: сервіс повідомляє її окремим полем, і вона не залежить від
+// того, як перевізник назвав маршрут у своєму фіді.
+const LD_MODES = new Set(["HIGHSPEED_RAIL", "LONG_DISTANCE", "NIGHT_RAIL", "AIRPLANE"]);
 function isRegionalJourney(jr) {
   return (jr.legs || []).every((l) => {
     if (l.walking) return true;
+    // Готова ознака, порахована при розборі відповіді з сирих полів.
+    // Так фільтр більше не залежить від тексту на бейджі: раніше це було
+    // одне й те саме поле, і зміна оформлення напису мовчки змінювала
+    // склад списку.
+    if (l.longDistance === true) return false;
+    if (l.longDistance === false) return true;
     const product = l.line && l.line.product ? String(l.line.product).toLowerCase() : null;
     if (product && BLOCKED_PRODUCTS.has(product)) return false;
     const mode = l.mode ? String(l.mode).toUpperCase() : null;
@@ -186,7 +201,10 @@ function lineLabel(l) {
   const first = [l.displayName, l.routeShortName, l.tripShortName, l.routeLongName]
     .map((x) => (x == null ? "" : String(x).trim()))
     .find((x) => x !== "");
-  const name = first || "";
+  // MOTIS дописує до назви службовий номер рейсу — «RE89 (57037)».
+  // Для табло він зайвий: на бейджі має бути видно лінію, а не номер
+  // конкретного потяга.
+  const name = (first || "").replace(/\s*\(\d+\)\s*$/, "").trim();
   // Уже містить літери (RB55, S8, RE9) — це готова позначка, не чіпаємо.
   if (/[A-Za-z]/.test(name)) return name;
   const tag = MODE_TAG[String(l.mode || "").toUpperCase()];
@@ -210,18 +228,37 @@ function cleanTrack(place) {
 
 // Приводимо відповідь Transitous до вигляду DB, щоб застосунок не
 // помічав різниці між джерелами.
-async function journeysTransitous(from, to, departure, regionalOnly) {
+// Види транспорту, які має сенс просити в режимі «лише регіональні».
+// Це рівно те, що переживає фільтр isRegionalJourney нижче: далекобійні
+// поїзди, метро, трамваї й пороми там усе одно відкидаються.
+// Перелік МУСИТЬ збігатися з тим, що пропускає isRegionalJourney нижче.
+// Якщо тут якогось виду транспорту бракує, маршрутизатор просто не зможе
+// його використати — і варіантів у списку стане менше без жодної помилки.
+// Саме так і сталося: бракувало REGIONAL_FAST_RAIL (це швидкі RE) та
+// OTHER (усе, що перевізник не типізував), тож частина рейсів ставала
+// для пошуку невидимою.
+const REGIONAL_TRANSIT_MODES = "REGIONAL_RAIL,REGIONAL_FAST_RAIL,SUBURBAN,BUS,COACH,OTHER";
+
+async function journeysTransitous(from, to, departure, regionalOnly, allModes) {
   const p = new URLSearchParams({
     fromPlace: String(from).replace(/^T:/, ""),
     toPlace: String(to).replace(/^T:/, ""),
-    numItineraries: "7",
+    numItineraries: regionalOnly ? "10" : "8",
   });
+  // КЛЮЧОВЕ: обмеження задаємо В ЗАПИТІ, а не відсіюємо готовий список.
+  // Сервіс віддає фіксовану кількість варіантів; якщо їх зайняли ICE та
+  // IC, після відсіювання лишаються одиниці. Саме через це список
+  // ставав коротким. Просимо одразу потрібні види транспорту — і всі
+  // отримані варіанти виявляються придатними.
+  if (regionalOnly && !allModes) p.set("transitModes", REGIONAL_TRANSIT_MODES);
   if (departure) p.set("time", new Date(departure).toISOString());
   // Режим «розклад»: віддає рейси підряд у вікні часу. Вікно звужене до
   // 3 годин — Transitous тепер лише запасне джерело, тож не потребує
   // такого широкого пошуку, і відповідає швидше.
   p.set("timetableView", "true");
-  p.set("searchWindow", "10800");
+  // Ширше вікно, коли шукаємо лише регіональні: без далекобійних поїздів
+  // рейсів у ту саму годину менше, тож за 3 години їх набирається замало.
+  p.set("searchWindow", regionalOnly ? "18000" : "10800");
   // Дозволяємо пішохідні пересадки між вокзалами — без цього губляться
   // варіанти на кшталт «поїзд + 5 хв пішки + інший поїзд».
   p.set("maxPreTransitTime", "900");
@@ -242,8 +279,14 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
       // Раніше вони не показувались узагалі через випадки хибних номерів.
       const depTrack = walking ? null : cleanTrack(f);
       const arrTrack = walking ? null : cleanTrack(tt);
+      const modeUp = String(l.mode || "").toUpperCase();
+      const rawNames = [l.routeShortName, l.displayName, l.routeLongName]
+        .map((x) => String(x == null ? "" : x).trim())
+        .filter((x) => x !== "");
       return {
         walking,
+        // Рахуємо тут, де доступні всі сирі поля від сервісу.
+        longDistance: !walking && (LD_MODES.has(modeUp) || rawNames.some((n) => LONG_DISTANCE.test(n))),
         cancelled: Boolean(l.cancelled),
         origin: { name: f.name || "" },
         destination: { name: tt.name || "" },
@@ -380,11 +423,21 @@ export default async function handler(req, res) {
         // показати менше варіантів, ніж підсунути ICE/IC.
         return arr.filter(isRegionalJourney);
       };
+      // Страхувальна спроба. Обмеження видів транспорту задається в запиті,
+      // і якщо сервіс колись перестане його розуміти або перевізник змінить
+      // типізацію, пошук поверне порожньо. Тому на порожній результат
+      // повторюємо запит без обмеження й відсіюємо далекобійні по-старому,
+      // на готовому списку. Порожнього екрана бути не може.
+      const transitousJourneys = async () => {
+        const first = await journeysTransitous(from2, to, departure, regionalOnly);
+        if (!regionalOnly || (first && first.length > 0)) return first;
+        return journeysTransitous(from2, to, departure, regionalOnly, true);
+      };
       const sources = useT
-        ? [["transitous", () => journeysTransitous(from2, to, departure, regionalOnly)]]
+        ? [["transitous", transitousJourneys]]
         : [
             ["dbrest", () => journeysDbRest(from2, to, departure)],
-            ["transitous", () => journeysTransitous(from2, to, departure, regionalOnly)],
+            ["transitous", transitousJourneys],
           ];
 
       // Швидкий шлях (не для debug): обидва джерела стартують ОДРАЗУ, але
@@ -396,7 +449,7 @@ export default async function handler(req, res) {
       const MIN_GOOD_ENOUGH = 3;
       if (!debug && !useT) {
         const dbPromise = journeysDbRest(from2, to, departure).then(applyFilter).catch(() => null);
-        const tPromise = journeysTransitous(from2, to, departure, regionalOnly).then(applyFilter).catch(() => null);
+        const tPromise = transitousJourneys().then(applyFilter).catch(() => null);
         const dbEarly = await dbPromise;
         if (dbEarly && dbEarly.length >= MIN_GOOD_ENOUGH) {
           res.status(200).json({ source: "dbrest", journeys: mergeJourneys([dbEarly]).slice(0, 12) });
