@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v17";
+const APP_VERSION = "v18";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -179,6 +179,9 @@ const T = {
   jpSearch: { uk: "Знайти", en: "Search", de: "Suchen", ru: "Найти" },
   jpSearching: { uk: "Шукаю рейси…", en: "Searching for connections…", de: "Verbindungen suchen…", ru: "Ищу рейсы…" },
   jpNoStation: { uk: "Станцію не знайдено. Спробуйте назву вокзалу, напр. «Augsburg Hbf».", en: "Station not found. Try a station name, e.g. \"Augsburg Hbf\".", de: "Bahnhof nicht gefunden.", ru: "Станция не найдена. Попробуйте название вокзала, напр. «Augsburg Hbf»." },
+  jpLookingUp: { uk: "Шукаю станції…", en: "Looking up stations…", de: "Bahnhöfe werden gesucht…", ru: "Ищу станции…" },
+  jpSugError: { uk: "Довідник станцій зараз не відповідає. Спробуйте ще раз за хвилину або скористайтеся кнопкою сайту DB нижче.", en: "The station directory is not responding. Try again in a minute or use the DB website button below.", de: "Die Bahnhofssuche antwortet gerade nicht. Bitte in einer Minute erneut versuchen oder die DB-Website unten nutzen.", ru: "Справочник станций сейчас не отвечает. Попробуйте через минуту или воспользуйтесь кнопкой сайта DB ниже." },
+  jpPickHint: { uk: "Почніть вводити назву — оберіть станцію зі списку.", en: "Start typing — then pick a station from the list.", de: "Tippen Sie los und wählen Sie einen Bahnhof aus der Liste.", ru: "Начните вводить название — выберите станцию из списка." },
   jpNoTrips: { uk: "Немає рейсів на цей час.", en: "No connections for this time.", de: "Keine Verbindungen.", ru: "Нет рейсов на это время." },
   jpMin: { uk: "хв", en: "min", de: "Min", ru: "мин" },
   jpOnTime: { uk: "за розкладом", en: "on time", de: "pünktlich", ru: "по расписанию" },
@@ -634,40 +637,6 @@ function MeetingMap({ lat, lng }) {
 }
 
 // ── Map (lightweight SVG, no external tiles) ───────────────────────────
-// ── OpenStreetMap route embed (live, no app required) ──────────────────
-// A route map: fits all route points and draws the path between them, using
-// the OSM embed centered on the bounding box of the coordinates.
-function OsmRoute({ points, fallback }) {
-  // points: [{lat, lng, name}]. If none have coords, show nothing (caller
-  // decides). Compute bbox covering all points with padding.
-  const valid = (points || []).filter((p) => typeof p.lat === "number" && typeof p.lng === "number");
-  if (valid.length === 0) return null;
-  const lats = valid.map((p) => p.lat), lngs = valid.map((p) => p.lng);
-  let minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  let minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-  // padding so markers aren't on the very edge
-  const padLat = Math.max((maxLat - minLat) * 0.25, 0.006);
-  const padLng = Math.max((maxLng - minLng) * 0.25, 0.006);
-  minLat -= padLat; maxLat += padLat; minLng -= padLng; maxLng += padLng;
-  const bbox = `${minLng},${minLat},${maxLng},${maxLat}`;
-  // OSM embed shows a single marker param; for multiple points we center the
-  // bbox and rely on the map view (full route lines come from the external
-  // route link). We mark the start point.
-  const start = valid[0];
-  const src = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${start.lat},${start.lng}`;
-  return (
-    <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
-      <iframe
-        title="route-map"
-        src={src}
-        style={{ width: "100%", height: "calc(100% + 26px)", border: "none", display: "block" }}
-        loading="lazy"
-      />
-      <span style={{ position: "absolute", right: 6, bottom: 4, fontSize: 8.5, color: "rgba(0,0,0,0.42)", background: "rgba(255,255,255,0.72)", padding: "1px 5px", borderRadius: 6, zIndex: 2 }}>© OpenStreetMap</span>
-    </div>
-  );
-}
-
 // ── Trip card (list view) ──────────────────────────────────────────────
 function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onEdit }) {
   const left = trip.spots - trip.spotsTaken;
@@ -842,6 +811,18 @@ async function dbLocations(query) {
   DB_LAST_SOURCE = Array.isArray(j) ? "direct" : (j && j.source) || "";
   return items.filter((x) => x && x.id && x.name).map((x) => ({ id: x.id, name: x.name }));
 }
+// Кеш підказок станцій. Сервіс DB має ліміт близько 100 запитів на хвилину,
+// а підказки під час набору тексту легко його вичерпують. Кеш плюс пауза
+// перед запитом тримають нас усередині ліміту.
+const STATION_CACHE = new Map();
+async function dbLocationsCached(query) {
+  const key = String(query || "").trim().toLowerCase();
+  if (key.length < 2) return [];
+  if (STATION_CACHE.has(key)) return STATION_CACHE.get(key);
+  const list = await dbLocations(String(query).trim());
+  STATION_CACHE.set(key, list);
+  return list;
+}
 async function dbJourneys(fromId, toId, whenISO, regionalOnly) {
   const params = { from: fromId, to: toId, results: "4", stopovers: "false" };
   if (whenISO) params.departure = whenISO;
@@ -928,6 +909,20 @@ function JourneyPlanner({ trip }) {
   const [journeys, setJourneys] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(false);
+  // На якому кроці зламалося: "stations" — не відповів довідник станцій,
+  // "journeys" — не відповів розклад. Раніше обидва випадки давали одне
+  // повідомлення, і причину доводилось вгадувати.
+  const [errStage, setErrStage] = useState("");
+  // Живі підказки станцій під полями «звідки» і «куди».
+  // null = ще не шукали, [] = нічого не знайдено, [..] = варіанти.
+  const [oSug, setOSug] = useState(null);
+  const [oSugBusy, setOSugBusy] = useState(false);
+  const [oSugErr, setOSugErr] = useState(false);
+  const [oPicked, setOPicked] = useState(false);
+  const [dSug, setDSug] = useState(null);
+  const [dSugBusy, setDSugBusy] = useState(false);
+  const [dSugErr, setDSugErr] = useState(false);
+  const [dPicked, setDPicked] = useState(true);
   // Дата й час, на які шукати рейси. За замовчуванням — дата поїздки
   // та час першого поїзда, але користувач може змінити.
   const initialDate = (trip.date || "").trim();
@@ -956,11 +951,46 @@ function JourneyPlanner({ trip }) {
     let cancelled = false;
     setDestStop(null);
     if (!dest) return undefined;
-    dbLocations(dest)
+    dbLocationsCached(dest)
       .then((list) => { if (!cancelled) setDestStop(list[0] || null); })
       .catch(() => { if (!cancelled) setDestStop(null); });
     return () => { cancelled = true; };
   }, [dest]);
+
+  // Живі підказки станцій. Раніше список станцій зʼявлявся ЛИШЕ після
+  // натискання «Знайти» і тільки якщо назва виявлялась неоднозначною —
+  // тобто в більшості випадків обрати станцію було нічим, а пошук падав
+  // з незрозумілою помилкою. Тепер список підвантажується під час набору
+  // тексту, з паузою 350 мс, щоб не смикати сервер на кожну літеру.
+  useEffect(() => {
+    if (oPicked) return undefined;
+    const q = origin.trim();
+    if (q.length < 2) { setOSug(null); setOSugErr(false); setOSugBusy(false); return undefined; }
+    let cancelled = false;
+    setOSugBusy(true); setOSugErr(false);
+    const timer = setTimeout(() => {
+      dbLocationsCached(q)
+        .then((list) => { if (!cancelled) setOSug(list); })
+        .catch(() => { if (!cancelled) { setOSug(null); setOSugErr(true); } })
+        .finally(() => { if (!cancelled) setOSugBusy(false); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [origin, oPicked]);
+
+  useEffect(() => {
+    if (dPicked) return undefined;
+    const q = destInput.trim();
+    if (q.length < 2) { setDSug(null); setDSugErr(false); setDSugBusy(false); return undefined; }
+    let cancelled = false;
+    setDSugBusy(true); setDSugErr(false);
+    const timer = setTimeout(() => {
+      dbLocationsCached(q)
+        .then((list) => { if (!cancelled) setDSug(list); })
+        .catch(() => { if (!cancelled) { setDSug(null); setDSugErr(true); } })
+        .finally(() => { if (!cancelled) setDSugBusy(false); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [destInput, dPicked]);
 
   const buildDbUrl = () => {
     const o = origin.trim().replace(/\s+/g, "+");
@@ -979,27 +1009,59 @@ function JourneyPlanner({ trip }) {
   // Пошук у два кроки з явним вибором станції — надійніше за спробу
   // вгадати станцію на сервері: якщо назва неоднозначна, показуємо список.
   const runJourneys = async (fromId, toId) => {
-    setBusy(true); setErr(false);
+    setBusy(true); setErr(false); setErrStage("");
     try {
       setJourneys(await dbJourneys(fromId, toId, departureISO(), regionalOnly));
-    } catch { setErr(true); }
+    } catch { setErr(true); setErrStage("journeys"); }
     finally { setBusy(false); }
   };
 
   const search = async () => {
     const q = origin.trim(), dq = destInput.trim();
     if (q === "" || dq === "") return;
-    setBusy(true); setErr(false); setJourneys(null);
-    setOpts(null); setDestOpts(null); setFromStop(null); setToStop(null);
+    setBusy(true); setErr(false); setErrStage(""); setJourneys(null);
+    setOpts(null); setDestOpts(null); setOSug(null); setDSug(null);
+    // Якщо станцію вже обрано зі списку підказок, її ідентифікатор відомий —
+    // повторно шукати не треба. Це і швидше, і прибирає найчастішу причину
+    // помилки: пошук за неточним текстом, який сервіс не впізнає.
+    const fPicked = fromStop && fromStop.name === q ? fromStop : null;
+    const dPickedStop = toStop && toStop.name === dq ? toStop
+      : (destStop && destStop.name === dq ? destStop : null);
+    let ol, dl;
     try {
-      const [ol, dl] = await Promise.all([dbLocations(q), dbLocations(dq)]);
+      [ol, dl] = await Promise.all([
+        fPicked ? [fPicked] : dbLocationsCached(q),
+        dPickedStop ? [dPickedStop] : dbLocationsCached(dq),
+      ]);
+    } catch {
+      setErr(true); setErrStage("stations"); setBusy(false); return;
+    }
+    try {
       if (ol.length === 0 || dl.length === 0) { setOpts([]); return; }
-      if (ol.length > 1) { setOpts(ol); setToStop(dl[0]); return; }
-      if (dl.length > 1) { setFromStop(ol[0]); setDestOpts(dl); return; }
+      if (ol.length > 1 && !fPicked) { setOpts(ol); setToStop(dl[0]); return; }
+      if (dl.length > 1 && !dPickedStop) { setFromStop(ol[0]); setDestOpts(dl); return; }
       setFromStop(ol[0]); setToStop(dl[0]);
       await runJourneys(ol[0].id, dl[0].id);
-    } catch { setErr(true); }
+    } catch { setErr(true); setErrStage("journeys"); }
     finally { setBusy(false); }
+  };
+
+  // Випадний список станцій під полем вводу.
+  const stationList = (items, isBusy, isErr, onPick) => {
+    if (!isBusy && !isErr && items == null) return null;
+    return (
+      <div style={{ border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden", background: "#fff", margin: "-2px 0 8px" }}>
+        {isBusy && <div style={{ padding: "9px 12px", fontSize: 12, color: C.muted }}>{t("jpLookingUp")}</div>}
+        {!isBusy && isErr && <div style={{ padding: "9px 12px", fontSize: 12, color: C.rasp, lineHeight: 1.45 }}>{t("jpSugError")}</div>}
+        {!isBusy && !isErr && items && items.length === 0 && <div style={{ padding: "9px 12px", fontSize: 12, color: C.muted }}>{t("jpNoStation")}</div>}
+        {!isBusy && !isErr && (items || []).map((o, i, a) => (
+          <button key={o.id} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick(o)}
+            style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "none", borderBottom: i === a.length - 1 ? "none" : `1px solid ${C.line}`, padding: "10px 12px", fontSize: 13, color: C.ink, cursor: "pointer", fontFamily: "inherit" }}>
+            🚉 {o.name}
+          </button>
+        ))}
+      </div>
+    );
   };
 
   // Кнопка активна лише коли заповнені ОБИДВА поля — інакше пошук
@@ -1027,7 +1089,7 @@ function JourneyPlanner({ trip }) {
       </button>
       <input
         value={origin}
-        onChange={(e) => { setOrigin(e.target.value); setJourneys(null); setOpts(null); }}
+        onChange={(e) => { setOrigin(e.target.value); setJourneys(null); setOpts(null); setErr(false); setFromStop(null); setOPicked(false); }}
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           e.preventDefault();
@@ -1036,16 +1098,23 @@ function JourneyPlanner({ trip }) {
           else if (canSearch) search();
         }}
         placeholder={t("jpPlaceholder")}
-        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 8 }}
+        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${fromStop ? C.green : C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 8 }}
       />
+      {stationList(oSug, oSugBusy, oSugErr, (o) => {
+        setOrigin(o.name); setFromStop(o); setOPicked(true); setOSug(null); setOpts(null);
+      })}
       <input
         id="jp-dest-input"
         value={destInput}
-        onChange={(e) => { setDestInput(e.target.value); setJourneys(null); }}
+        onChange={(e) => { setDestInput(e.target.value); setJourneys(null); setErr(false); setToStop(null); setDPicked(false); }}
         onKeyDown={(e) => { if (e.key === "Enter" && canSearch) search(); }}
         placeholder={t("jpDestPlaceholder")}
-        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 10 }}
+        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${(toStop || destStop) ? C.green : C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 8 }}
       />
+      {stationList(dSug, dSugBusy, dSugErr, (o) => {
+        setDestInput(o.name); setToStop(o); setDPicked(true); setDSug(null); setDestOpts(null);
+      })}
+      <div style={{ fontSize: 11, color: C.muted, margin: "0 0 10px", lineHeight: 1.4 }}>{t("jpPickHint")}</div>
       <button onClick={search} disabled={!canSearch || busy}
         style={{ width: "100%", border: "none", background: canSearch ? C.green : "rgba(80,104,60,0.25)", color: "#fff", borderRadius: 12, padding: "14px", fontSize: 15, fontWeight: 800, cursor: canSearch && !busy ? "pointer" : "default", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
         {busy ? <Spinner /> : <Train size={17} />} {busy ? t("jpSearching") : t("jpSearch")}
@@ -1060,7 +1129,7 @@ function JourneyPlanner({ trip }) {
             <button key={o.id} onClick={async () => {
                 setOpts(null); setFromStop(o); setOrigin(o.name);
                 let d = toStop;
-                if (!d) { const dl = await dbLocations(destInput.trim()); d = dl[0]; }
+                if (!d) { const dl = await dbLocationsCached(destInput.trim()); d = dl[0]; }
                 if (!d) { setErr(true); return; }
                 setToStop(d);
                 await runJourneys(o.id, d.id);
@@ -1198,7 +1267,7 @@ function JourneyPlanner({ trip }) {
 
       {err && (
         <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>
-          {t("jpError")}
+          {errStage === "stations" ? t("jpSugError") : t("jpError")}
           {DB_LAST_ERROR ? <span style={{ display: "block", fontSize: 10.5, color: C.muted, marginTop: 3 }}>({DB_LAST_ERROR})</span> : null}
         </p>
       )}
@@ -1398,7 +1467,13 @@ function LiveWeather({ trip }) {
 
 // ── Detail view ────────────────────────────────────────────────────────
 function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSetPostponedDate }) {
-  const [routeSel, setRouteSel] = useState(null);
+  // Одразу показуємо першу точку з координатами, щоб у розділі «Маршрут»
+  // карта була видна без зайвого натискання (цю роль раніше виконувала
+  // верхня оглядова карта, яку прибрано).
+  const [routeSel, setRouteSel] = useState(() => {
+    const i = (trip.route || []).findIndex((s) => !isNaN(parseFloat(s.lat)) && !isNaN(parseFloat(s.lng)));
+    return i >= 0 ? i : null;
+  });
   const left = trip.spots - trip.spotsTaken;
   const Section = ({ icon, title, children, accent = C.green }) => (
     <div style={{ background: C.card, borderRadius: 18, padding: 18, marginBottom: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
@@ -1552,20 +1627,15 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
               icon: <Mountain size={17} />, accent: C.green,
               body: (
                 <>
-                  {(() => {
-                    const pts = (trip.route || []).filter((s) => typeof s.lat === "number" && typeof s.lng === "number");
-                    return pts.length > 0 ? (
-                      <div style={{ marginBottom: 16 }}>
-                        <OsmRoute points={pts} />
-                        {trip.routeUrl && trip.routeUrl.trim() !== "" && (
-                          <a href={trip.routeUrl} target="_blank" rel="noreferrer"
-                            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 10, background: C.green, color: "#fff", borderRadius: 11, padding: "12px", fontSize: 13.5, fontWeight: 700, textDecoration: "none" }}>
-                            <Navigation size={16} /> {t("openFullRoute")}
-                          </a>
-                        )}
-                      </div>
-                    ) : null;
-                  })()}
+                  {/* Верхню оглядову карту прибрано: вона не реагувала на вибір
+                      точки в списку нижче і дублювала робочу карту. Лишилась
+                      тільки кнопка на повний маршрут у Komoot/Bergfex. */}
+                  {trip.routeUrl && trip.routeUrl.trim() !== "" && (
+                    <a href={trip.routeUrl} target="_blank" rel="noreferrer"
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginBottom: 14, background: C.green, color: "#fff", borderRadius: 11, padding: "12px", fontSize: 13.5, fontWeight: 700, textDecoration: "none" }}>
+                      <Navigation size={16} /> {t("openFullRoute")}
+                    </a>
+                  )}
                 {(() => {
                   // Карта обраної точки маршруту (якщо в неї є координати).
                   const sel = routeSel != null ? trip.route[routeSel] : null;
