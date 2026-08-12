@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v18";
+const APP_VERSION = "v19";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -769,43 +769,90 @@ function PlacePhoto({ trip }) {
 // недоступний — показуємо кнопку на офіційний сайт DB.
 const DB_API = "https://v6.db.transport.rest";
 
-// Сервіс має кілька «профілів» доступу до даних DB. Якщо основний
-// відмовляє (буває через ліміти чи блокування), пробуємо наступні.
-const DB_PROFILES = ["", "db", "dbweb"];
+// Скільки чекаємо на відповідь, перш ніж вважати спробу невдалою.
+// Без цього браузер міг висіти на запиті хвилинами — саме звідси бралося
+// «дуже довго завантажується».
+const DB_TIMEOUT_MS = 9000;
 let DB_LAST_ERROR = "";
-async function dbFetch(path, params) {
-  let lastErr = "";
-  // 1) Через власний сервер (/api/db) — надійніше: немає блокувань браузера.
-  try {
-    const p = new URLSearchParams(params);
-    p.set("path", path);
-    const r = await fetch(`/api/db?${p.toString()}`);
-    if (r.ok) { DB_LAST_ERROR = ""; return await r.json(); }
-    lastErr = `проксі HTTP ${r.status}`;
-  } catch (e) {
-    lastErr = "проксі: " + ((e && e.message) || "network");
+
+// Обгортка з таймаутом і можливістю скасування ззовні (коли користувач
+// продовжив набирати текст і попередній запит уже не потрібен).
+function timedSignal(ms, outer) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  if (outer) {
+    if (outer.aborted) ctl.abort();
+    else outer.addEventListener("abort", () => ctl.abort(), { once: true });
   }
-  // 2) Якщо сервер недоступний — пробуємо напряму з браузера.
-  for (const prof of DB_PROFILES) {
-    const p = new URLSearchParams(params);
-    if (prof) p.set("profile", prof);
+  return { signal: ctl.signal, clear: () => clearTimeout(timer) };
+}
+
+// Перший, хто відповів успішно, — той і виграв; решта скасовуються.
+// Якщо впали всі — повертаємо зведену причину, а не одну випадкову.
+function firstSuccess(makers) {
+  return new Promise((resolve, reject) => {
+    const ctl = new AbortController();
+    let pending = makers.length;
+    const errs = [];
+    let done = false;
+    makers.forEach((make) => {
+      make(ctl.signal).then(
+        (v) => { if (!done) { done = true; ctl.abort(); resolve(v); } },
+        (e) => {
+          errs.push((e && e.message) || String(e));
+          if (--pending === 0 && !done) reject(new Error(errs.join(" · ")));
+        }
+      );
+    });
+  });
+}
+
+// Два шляхи до даних працюють ОДНОЧАСНО, а не по черзі:
+//   1) власний сервер /api/db — обходить блокування браузера;
+//   2) прямий запит із телефона — часто швидший, бо серверні IP Vercel
+//      частіше потрапляють під ліміти чужого сервісу.
+// Раніше вони йшли послідовно, та ще й прямий запит повторювався тричі
+// з параметром profile, якого цей сервіс узагалі не розуміє. Виходило до
+// чотирьох однакових запитів підряд без таймауту: повільно й прямою
+// дорогою в ліміт 100 запитів на хвилину.
+async function dbFetch(path, params, directParams, outerSignal) {
+  const proxyQ = new URLSearchParams(params); proxyQ.set("path", path);
+  const directQ = new URLSearchParams(directParams || params);
+  const get = (url, tag) => async (raceSignal) => {
+    const outer = outerSignal || null;
+    const merged = new AbortController();
+    const link = (sig) => { if (!sig) return; if (sig.aborted) merged.abort(); else sig.addEventListener("abort", () => merged.abort(), { once: true }); };
+    link(outer); link(raceSignal);
+    const g = timedSignal(DB_TIMEOUT_MS, merged.signal);
     try {
-      const r = await fetch(`${DB_API}${path}?${p.toString()}`);
-      if (r.ok) { DB_LAST_ERROR = ""; return await r.json(); }
-      lastErr = `HTTP ${r.status}${prof ? " (" + prof + ")" : ""}`;
+      const r = await fetch(url, { signal: g.signal });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.json();
     } catch (e) {
-      lastErr = (e && e.message) || "network";
-    }
+      const m = (e && e.name) === "AbortError" ? "таймаут" : ((e && e.message) || "мережа");
+      throw new Error(`${tag}: ${m}`);
+    } finally { g.clear(); }
+  };
+  try {
+    const j = await firstSuccess([
+      get(`/api/db?${proxyQ.toString()}`, "проксі"),
+      get(`${DB_API}${path}?${directQ.toString()}`, "DB"),
+    ]);
+    DB_LAST_ERROR = "";
+    return j;
+  } catch (e) {
+    // Запит, який ми самі обірвали (користувач продовжив набирати), —
+    // це не збій сервісу, тож причину не переписуємо.
+    if (!(outerSignal && outerSignal.aborted)) DB_LAST_ERROR = (e && e.message) || "мережа";
+    throw e;
   }
-  DB_LAST_ERROR = lastErr;
-  throw new Error(lastErr);
 }
 // Джерело останнього успішного запиту — "dbrest" (офіційні дані DB,
 // практично те саме, що показує DB Navigator) або "transitous" (відкриті
 // дані, запасний варіант). Показуємо чесно, а не мовчки.
 let DB_LAST_SOURCE = "";
-async function dbLocations(query) {
-  const j = await dbFetch("/locations", { query, results: "6", addresses: "false", poi: "false" });
+async function dbLocations(query, signal) {
+  const j = await dbFetch("/locations", { query, results: "6", addresses: "false", poi: "false" }, null, signal);
   // Проксі повертає {source, items}; старий прямий виклик у браузер — голий масив.
   const items = Array.isArray(j) ? j : (j && j.items) || [];
   DB_LAST_SOURCE = Array.isArray(j) ? "direct" : (j && j.source) || "";
@@ -815,19 +862,40 @@ async function dbLocations(query) {
 // а підказки під час набору тексту легко його вичерпують. Кеш плюс пауза
 // перед запитом тримають нас усередині ліміту.
 const STATION_CACHE = new Map();
-async function dbLocationsCached(query) {
+// Якщо коротший початок назви вже шукали, довший варіант відсіюємо
+// на місці, без нового запиту: «Augsb» уже містить усе, що потрібно
+// для «Augsburg». Це прибирає більшість запитів під час набору тексту.
+function stationsFromPrefix(key) {
+  for (let n = key.length - 1; n >= 3; n--) {
+    const short = key.slice(0, n);
+    if (!STATION_CACHE.has(short)) continue;
+    const hit = (STATION_CACHE.get(short) || []).filter((x) => String(x.name).toLowerCase().includes(key));
+    return hit.length > 0 ? hit : null;
+  }
+  return null;
+}
+async function dbLocationsCached(query, signal) {
   const key = String(query || "").trim().toLowerCase();
   if (key.length < 2) return [];
   if (STATION_CACHE.has(key)) return STATION_CACHE.get(key);
-  const list = await dbLocations(String(query).trim());
+  const local = stationsFromPrefix(key);
+  if (local) return local;
+  const list = await dbLocations(String(query).trim(), signal);
   STATION_CACHE.set(key, list);
   return list;
 }
-async function dbJourneys(fromId, toId, whenISO, regionalOnly) {
+async function dbJourneys(fromId, toId, whenISO, regionalOnly, signal) {
   const params = { from: fromId, to: toId, results: "4", stopovers: "false" };
   if (whenISO) params.departure = whenISO;
   if (regionalOnly) params.regional = "1";
-  const j = await dbFetch("/journeys", params);
+  // Прямий сервіс розуміє фільтр інакше: там regional=1 означає
+  // «включити регіональні», а не «лише регіональні». Тому далекі поїзди
+  // вимикаємо явно — інакше в списку зʼявлялися б ICE та IC, на які
+  // Deutschland-Ticket не діє.
+  const direct = { ...params };
+  delete direct.regional;
+  if (regionalOnly) { direct.nationalExpress = "false"; direct.national = "false"; }
+  const j = await dbFetch("/journeys", params, direct, signal);
   DB_LAST_SOURCE = (j && j.source) || "direct";
   return (j && j.journeys) || [];
 }
@@ -835,6 +903,8 @@ async function dbJourneys(fromId, toId, whenISO, regionalOnly) {
 // відправлення за текстом і одразу шукає розклад — швидше за окремий
 // похід за координатами станції перед пошуком рейсів. Якщо назва
 // виявляється неоднозначною, сервер повертає варіанти для уточнення.
+// Параметр fromQuery розуміє лише наш власний сервер, тож прямий запит
+// тут не має сенсу — передаємо ті самі параметри й покладаємось на проксі.
 async function dbJourneysByOriginName(fromQuery, toId, whenISO, regionalOnly) {
   const params = { fromQuery, to: toId, results: "4", stopovers: "false" };
   if (whenISO) params.departure = whenISO;
@@ -923,6 +993,10 @@ function JourneyPlanner({ trip }) {
   const [dSugBusy, setDSugBusy] = useState(false);
   const [dSugErr, setDSugErr] = useState(false);
   const [dPicked, setDPicked] = useState(true);
+  // Мережу чіпаємо лише тоді, коли користувач справді відкрив планувальник
+  // (торкнувся поля). Раніше кінцева станція шукалася на кожному відкритті
+  // поїздки — марний запит, який ще й з'їдав ліміт сервісу.
+  const [armed, setArmed] = useState(false);
   // Дата й час, на які шукати рейси. За замовчуванням — дата поїздки
   // та час першого поїзда, але користувач може змінити.
   const initialDate = (trip.date || "").trim();
@@ -937,7 +1011,9 @@ function JourneyPlanner({ trip }) {
   const [expanded, setExpanded] = useState(null);
 
   const legs = trip.legs && trip.legs.length > 0 ? trip.legs : null;
-  const defaultDest = (legs ? legs[legs.length - 1].to : trip.to.name) || "";
+  // Якщо в останньому відрізку не заповнена станція прибуття, беремо
+  // загальну кінцеву точку поїздки — раніше поле просто лишалось порожнім.
+  const defaultDest = (legs && legs[legs.length - 1].to) || (trip.to && trip.to.name) || "";
   const [destInput, setDestInput] = useState(defaultDest);
   const dest = destInput.trim() || defaultDest;
 
@@ -950,46 +1026,52 @@ function JourneyPlanner({ trip }) {
   useEffect(() => {
     let cancelled = false;
     setDestStop(null);
-    if (!dest) return undefined;
-    dbLocationsCached(dest)
+    if (!armed || !dest) return undefined;
+    const ctl = new AbortController();
+    dbLocationsCached(dest, ctl.signal)
       .then((list) => { if (!cancelled) setDestStop(list[0] || null); })
       .catch(() => { if (!cancelled) setDestStop(null); });
-    return () => { cancelled = true; };
-  }, [dest]);
+    return () => { cancelled = true; ctl.abort(); };
+  }, [dest, armed]);
 
   // Живі підказки станцій. Раніше список станцій зʼявлявся ЛИШЕ після
   // натискання «Знайти» і тільки якщо назва виявлялась неоднозначною —
   // тобто в більшості випадків обрати станцію було нічим, а пошук падав
   // з незрозумілою помилкою. Тепер список підвантажується під час набору
   // тексту, з паузою 350 мс, щоб не смикати сервер на кожну літеру.
+  // Пауза 550 мс і мінімум 3 літери: за час набору «Augsburg Hbf» це
+  // один-два запити замість дюжини. Запит, який уже не потрібен,
+  // ОБРИВАЄТЬСЯ — інакше він і далі займав би ліміт сервісу.
   useEffect(() => {
     if (oPicked) return undefined;
     const q = origin.trim();
-    if (q.length < 2) { setOSug(null); setOSugErr(false); setOSugBusy(false); return undefined; }
+    if (q.length < 3) { setOSug(null); setOSugErr(false); setOSugBusy(false); return undefined; }
     let cancelled = false;
+    const ctl = new AbortController();
     setOSugBusy(true); setOSugErr(false);
     const timer = setTimeout(() => {
-      dbLocationsCached(q)
+      dbLocationsCached(q, ctl.signal)
         .then((list) => { if (!cancelled) setOSug(list); })
         .catch(() => { if (!cancelled) { setOSug(null); setOSugErr(true); } })
         .finally(() => { if (!cancelled) setOSugBusy(false); });
-    }, 350);
-    return () => { cancelled = true; clearTimeout(timer); };
+    }, 550);
+    return () => { cancelled = true; clearTimeout(timer); ctl.abort(); };
   }, [origin, oPicked]);
 
   useEffect(() => {
     if (dPicked) return undefined;
     const q = destInput.trim();
-    if (q.length < 2) { setDSug(null); setDSugErr(false); setDSugBusy(false); return undefined; }
+    if (q.length < 3) { setDSug(null); setDSugErr(false); setDSugBusy(false); return undefined; }
     let cancelled = false;
+    const ctl = new AbortController();
     setDSugBusy(true); setDSugErr(false);
     const timer = setTimeout(() => {
-      dbLocationsCached(q)
+      dbLocationsCached(q, ctl.signal)
         .then((list) => { if (!cancelled) setDSug(list); })
         .catch(() => { if (!cancelled) { setDSug(null); setDSugErr(true); } })
         .finally(() => { if (!cancelled) setDSugBusy(false); });
-    }, 350);
-    return () => { cancelled = true; clearTimeout(timer); };
+    }, 550);
+    return () => { cancelled = true; clearTimeout(timer); ctl.abort(); };
   }, [destInput, dPicked]);
 
   const buildDbUrl = () => {
@@ -1019,6 +1101,7 @@ function JourneyPlanner({ trip }) {
   const search = async () => {
     const q = origin.trim(), dq = destInput.trim();
     if (q === "" || dq === "") return;
+    setArmed(true);
     setBusy(true); setErr(false); setErrStage(""); setJourneys(null);
     setOpts(null); setDestOpts(null); setOSug(null); setDSug(null);
     // Якщо станцію вже обрано зі списку підказок, її ідентифікатор відомий —
@@ -1052,7 +1135,12 @@ function JourneyPlanner({ trip }) {
     return (
       <div style={{ border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden", background: "#fff", margin: "-2px 0 8px" }}>
         {isBusy && <div style={{ padding: "9px 12px", fontSize: 12, color: C.muted }}>{t("jpLookingUp")}</div>}
-        {!isBusy && isErr && <div style={{ padding: "9px 12px", fontSize: 12, color: C.rasp, lineHeight: 1.45 }}>{t("jpSugError")}</div>}
+        {!isBusy && isErr && (
+          <div style={{ padding: "9px 12px", fontSize: 12, color: C.rasp, lineHeight: 1.45 }}>
+            {t("jpSugError")}
+            {DB_LAST_ERROR ? <span style={{ display: "block", fontSize: 10.5, color: C.muted, marginTop: 3 }}>({DB_LAST_ERROR})</span> : null}
+          </div>
+        )}
         {!isBusy && !isErr && items && items.length === 0 && <div style={{ padding: "9px 12px", fontSize: 12, color: C.muted }}>{t("jpNoStation")}</div>}
         {!isBusy && !isErr && (items || []).map((o, i, a) => (
           <button key={o.id} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick(o)}
@@ -1089,6 +1177,7 @@ function JourneyPlanner({ trip }) {
       </button>
       <input
         value={origin}
+        onFocus={() => setArmed(true)}
         onChange={(e) => { setOrigin(e.target.value); setJourneys(null); setOpts(null); setErr(false); setFromStop(null); setOPicked(false); }}
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
@@ -1106,6 +1195,7 @@ function JourneyPlanner({ trip }) {
       <input
         id="jp-dest-input"
         value={destInput}
+        onFocus={() => setArmed(true)}
         onChange={(e) => { setDestInput(e.target.value); setJourneys(null); setErr(false); setToStop(null); setDPicked(false); }}
         onKeyDown={(e) => { if (e.key === "Enter" && canSearch) search(); }}
         placeholder={t("jpDestPlaceholder")}
