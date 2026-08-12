@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v21";
+const APP_VERSION = "v23";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -189,6 +189,7 @@ const T = {
   jpChanges: { uk: "пересадка(и)", en: "changes", de: "Umstiege", ru: "пересадка(и)" },
   jpCancelled: { uk: "Рейс скасовано або є скасовані ділянки", en: "Cancelled or partly cancelled", de: "Fahrt entfällt teilweise", ru: "Рейс отменён или есть отменённые участки" },
   jpTrack: { uk: "кол.", en: "pl.", de: "Gl.", ru: "пут." },
+  jpShowMore: { uk: "Показати ще", en: "Show more", de: "Mehr anzeigen", ru: "Показать ещё" },
   jpTrackNote: { uk: "Номери колій сірим — з розкладу відкритих даних, без підтвердження в реальному часі. Звіряйте з табло на вокзалі.", en: "Grey platform numbers come from the open-data timetable and are not confirmed in real time. Check the station board.", de: "Grau markierte Gleisnummern stammen aus dem Open-Data-Fahrplan und sind nicht in Echtzeit bestätigt. Bitte Anzeigetafel prüfen.", ru: "Номера путей серым — из расписания открытых данных, без подтверждения в реальном времени. Сверяйте с табло на вокзале." },
   jpError: { uk: "Не вдалося отримати живий розклад. Скористайтеся кнопкою нижче — офіційний сайт DB.", en: "Couldn't load the live timetable. Use the DB website below.", de: "Live-Fahrplan nicht verfügbar. Bitte DB-Website nutzen.", ru: "Не удалось получить живое расписание. Воспользуйтесь сайтом DB ниже." },
   jpLiveNote: { uk: "Джерело: відкриті дані. Для точнішої інформації перевіряйте офіційний DB.", en: "Source: open data. For more accurate information, check the official DB.", de: "Quelle: Open Data. Für genauere Informationen bitte die offizielle DB prüfen.", ru: "Источник: открытые данные. Для более точной информации проверяйте официальный DB." },
@@ -998,6 +999,11 @@ function JourneyPlanner({ trip }) {
   // (торкнувся поля). Раніше кінцева станція шукалася на кожному відкритті
   // поїздки — марний запит, який ще й з'їдав ліміт сервісу.
   const [armed, setArmed] = useState(false);
+  // Скільки рейсів показано. Раніше тут стояло жорстке `slice(0, 10)`:
+  // скільки б варіантів не прийшло з сервера, у списку лишалось рівно
+  // десять, і решта зникала мовчки. Саме через це список виглядав
+  // неповним навіть тоді, коли дані приходили повні.
+  const [shown, setShown] = useState(10);
   // Дата й час, на які шукати рейси. За замовчуванням — дата поїздки
   // та час першого поїзда, але користувач може змінити.
   const initialDate = (trip.date || "").trim();
@@ -1104,7 +1110,7 @@ function JourneyPlanner({ trip }) {
     if (q === "" || dq === "") return;
     setArmed(true);
     setBusy(true); setErr(false); setErrStage(""); setJourneys(null);
-    setOpts(null); setDestOpts(null); setOSug(null); setDSug(null);
+    setOpts(null); setDestOpts(null); setOSug(null); setDSug(null); setShown(10);
     // Якщо станцію вже обрано зі списку підказок, її ідентифікатор відомий —
     // повторно шукати не треба. Це і швидше, і прибирає найчастішу причину
     // помилки: пошук за неточним текстом, який сервіс не впізнає.
@@ -1264,7 +1270,7 @@ function JourneyPlanner({ trip }) {
       )}
       {journeys && journeys.length > 0 && (
         <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
-          {journeys.slice(0, 10).map((jr, i) => {
+          {journeys.slice(0, shown).map((jr, i) => {
             const ls = (jr.legs || []).filter((l) => !l.walking);
             if (ls.length === 0) return null;
             const first = ls[0], last = ls[ls.length - 1];
@@ -1359,6 +1365,12 @@ function JourneyPlanner({ trip }) {
               </div>
             );
           })}
+          {journeys.length > shown && (
+            <button onClick={() => setShown((n) => n + 10)}
+              style={{ width: "100%", border: `1px solid ${C.green}`, background: "transparent", color: C.green, borderRadius: 11, padding: "11px", fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+              {t("jpShowMore")} ({journeys.length - shown})
+            </button>
+          )}
         </div>
       )}
 
