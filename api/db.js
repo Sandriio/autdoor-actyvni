@@ -135,7 +135,7 @@ async function journeysDbRest(from, to, departure) {
   // варіантів — маршрутизатор не бачить проміжних комбінацій. Натомість
   // просимо повний пошук без обмежень і фільтруємо далекобійні поїзди вже
   // тут, на готовому списку (isRegionalJourney нижче).
-  const p = new URLSearchParams({ from, to, results: "7", stopovers: "false" });
+  const p = new URLSearchParams({ from, to, results: "20", stopovers: "false" });
   if (departure) p.set("departure", departure);
   const j = await getJson(`${DBREST}/journeys?${p}`, DBREST_TIMEOUT_MS);
   return (j && j.journeys) || [];
@@ -243,7 +243,10 @@ async function journeysTransitous(from, to, departure, regionalOnly, allModes) {
   const p = new URLSearchParams({
     fromPlace: String(from).replace(/^T:/, ""),
     toPlace: String(to).replace(/^T:/, ""),
-    numItineraries: regionalOnly ? "10" : "8",
+    // Скільки варіантів просити. Застосунок показує їх по десять із
+    // кнопкою «Показати ще», тож більший запас тут дає повніший розклад,
+    // а не просто довшу стрічку.
+    numItineraries: regionalOnly ? "30" : "20",
   });
   // КЛЮЧОВЕ: обмеження задаємо В ЗАПИТІ, а не відсіюємо готовий список.
   // Сервіс віддає фіксовану кількість варіантів; якщо їх зайняли ICE та
@@ -258,7 +261,9 @@ async function journeysTransitous(from, to, departure, regionalOnly, allModes) {
   p.set("timetableView", "true");
   // Ширше вікно, коли шукаємо лише регіональні: без далекобійних поїздів
   // рейсів у ту саму годину менше, тож за 3 години їх набирається замало.
-  p.set("searchWindow", regionalOnly ? "18000" : "10800");
+  // Вікно на цілий робочий день, а не на кілька годин: людина планує
+  // поїздку заздалегідь і хоче бачити весь розклад, а не найближчі рейси.
+  p.set("searchWindow", "57600");
   // Дозволяємо пішохідні пересадки між вокзалами — без цього губляться
   // варіанти на кшталт «поїзд + 5 хв пішки + інший поїзд».
   p.set("maxPreTransitTime", "900");
@@ -446,7 +451,10 @@ export default async function handler(req, res) {
       // Значно скорочує типовий час очікування, коли DB відповідає добре.
       // Досить 3 варіантів від офіційного джерела, щоб відповісти одразу
       // й не чекати друге — типовий пошук стає помітно швидшим.
-      const MIN_GOOD_ENOUGH = 3;
+      // Планка піднята разом із запасом варіантів: трьох рейсів мало,
+      // щоб вважати розклад повним, і швидка відповідь від офіційного
+      // джерела обривала б добірку від запасного.
+      const MIN_GOOD_ENOUGH = 12;
       if (!debug && !useT) {
         const dbPromise = journeysDbRest(from2, to, departure).then(applyFilter).catch(() => null);
         const tPromise = transitousJourneys().then(applyFilter).catch(() => null);
