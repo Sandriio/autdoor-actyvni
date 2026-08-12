@@ -239,14 +239,14 @@ function cleanTrack(place) {
 // для пошуку невидимою.
 const REGIONAL_TRANSIT_MODES = "REGIONAL_RAIL,REGIONAL_FAST_RAIL,SUBURBAN,BUS,COACH,OTHER";
 
-async function journeysTransitous(from, to, departure, regionalOnly, allModes) {
+async function journeysTransitous(from, to, departure, regionalOnly, allModes, windowSec, itinCount) {
   const p = new URLSearchParams({
     fromPlace: String(from).replace(/^T:/, ""),
     toPlace: String(to).replace(/^T:/, ""),
     // Скільки варіантів просити. Застосунок показує їх по десять із
     // кнопкою «Показати ще», тож більший запас тут дає повніший розклад,
     // а не просто довшу стрічку.
-    numItineraries: regionalOnly ? "30" : "20",
+    numItineraries: String(itinCount || (regionalOnly ? 30 : 20)),
   });
   // КЛЮЧОВЕ: обмеження задаємо В ЗАПИТІ, а не відсіюємо готовий список.
   // Сервіс віддає фіксовану кількість варіантів; якщо їх зайняли ICE та
@@ -263,7 +263,7 @@ async function journeysTransitous(from, to, departure, regionalOnly, allModes) {
   // рейсів у ту саму годину менше, тож за 3 години їх набирається замало.
   // Вікно на цілий робочий день, а не на кілька годин: людина планує
   // поїздку заздалегідь і хоче бачити весь розклад, а не найближчі рейси.
-  p.set("searchWindow", "57600");
+  p.set("searchWindow", String(windowSec || 57600));
   // Дозволяємо пішохідні пересадки між вокзалами — без цього губляться
   // варіанти на кшталт «поїзд + 5 хв пішки + інший поїзд».
   p.set("maxPreTransitTime", "900");
@@ -310,6 +310,39 @@ async function journeysTransitous(from, to, departure, regionalOnly, allModes) {
       };
     }),
   }));
+}
+
+// ── Повне табло замість лише оптимальних рейсів ──────────────────────
+// Маршрутизатор Transitous за задумом віддає ЛИШЕ оптимальні варіанти:
+// з двох рейсів із однаковим часом прибуття він лишає той, що виїжджає
+// пізніше, а ранішій відкидає як гірший. Формально це правильно, але
+// на практиці саме через це в списку зникав один рейс на кожну годину:
+// напр. 08:08→10:56 програвав рейсу 08:38→10:56 і не показувався.
+//
+// Обійти це можна лише одним способом: зробити кілька додаткових пошуків
+// з ВУЗЬКИМИ вікнами. У вікні 08:00–08:30 рейс 08:08 уже не має з чим
+// програвати й повертається. Ці пошуки йдуть паралельно з основним,
+// а результати зливаються в одне табло.
+const FILL_PROBES = 6;          // скільки додаткових пошуків
+const FILL_STEP_MIN = 60;       // крок між ними
+const FILL_WINDOW_SEC = 1800;   // ширина вузького вікна
+async function journeysTransitousBoard(from, to, departure, regionalOnly, allModes) {
+  const base = departure ? new Date(departure) : new Date();
+  const attempts = [journeysTransitous(from, to, departure, regionalOnly, allModes)];
+  if (!isNaN(base.getTime())) {
+    for (let i = 0; i < FILL_PROBES; i++) {
+      const t = new Date(base.getTime() + i * FILL_STEP_MIN * 60000).toISOString();
+      attempts.push(journeysTransitous(from, to, t, regionalOnly, allModes, FILL_WINDOW_SEC, 4));
+    }
+  }
+  const settled = await Promise.allSettled(attempts);
+  const lists = settled
+    .filter((r) => r.status === "fulfilled" && Array.isArray(r.value))
+    .map((r) => r.value);
+  // Основний пошук — перший у списку. Якщо не вдався жоден запит,
+  // піднімаємо помилку, щоб спрацював звичайний запасний шлях.
+  if (lists.length === 0) throw new Error("transitous: усі спроби невдалі");
+  return mergeJourneys(lists);
 }
 
 // Ключ для порівняння рейсів між джерелами: реальний момент часу
@@ -434,9 +467,9 @@ export default async function handler(req, res) {
       // повторюємо запит без обмеження й відсіюємо далекобійні по-старому,
       // на готовому списку. Порожнього екрана бути не може.
       const transitousJourneys = async () => {
-        const first = await journeysTransitous(from2, to, departure, regionalOnly);
+        const first = await journeysTransitousBoard(from2, to, departure, regionalOnly);
         if (!regionalOnly || (first && first.length > 0)) return first;
-        return journeysTransitous(from2, to, departure, regionalOnly, true);
+        return journeysTransitousBoard(from2, to, departure, regionalOnly, true);
       };
       const sources = useT
         ? [["transitous", transitousJourneys]]
