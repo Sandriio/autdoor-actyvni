@@ -170,6 +170,44 @@ const delaySec = (actual, planned) => {
   return isNaN(d) ? 0 : d;
 };
 
+// Позначка лінії. У фідах відкритих даних `routeShortName` — це сирий
+// route_short_name із GTFS, і для німецьких регіональних перевізників він
+// часто буває голим номером маршруту («11», «42»), який пасажирові нічого
+// не каже. MOTIS спеціально віддає для показу окреме поле `displayName`
+// (зʼявилось у версії API v4) — саме його треба брати першим. Раніше воно
+// стояло третім у черзі й тому не використовувалось майже ніколи.
+const MODE_TAG = {
+  BUS: "Bus", COACH: "Bus", TRAM: "Tram", SUBWAY: "U", METRO: "U",
+  SUBURBAN: "S", RAIL: "Zug", REGIONAL_RAIL: "Zug", REGIONAL_FAST_RAIL: "Zug",
+  HIGHSPEED_RAIL: "Zug", LONG_DISTANCE: "Zug", NIGHT_RAIL: "Zug",
+  FERRY: "Fähre", FUNICULAR: "Bahn", AERIAL_LIFT: "Bahn",
+};
+function lineLabel(l) {
+  const first = [l.displayName, l.routeShortName, l.tripShortName, l.routeLongName]
+    .map((x) => (x == null ? "" : String(x).trim()))
+    .find((x) => x !== "");
+  const name = first || "";
+  // Уже містить літери (RB55, S8, RE9) — це готова позначка, не чіпаємо.
+  if (/[A-Za-z]/.test(name)) return name;
+  const tag = MODE_TAG[String(l.mode || "").toUpperCase()];
+  if (name && tag) return `${tag} ${name}`;
+  return name || tag || "";
+}
+
+// Номер колії. Беремо реальний (`track`, оновлюється даними реального
+// часу), інакше плановий із розкладу. Пропускаємо через перевірку на
+// правдоподібність: німецька колія — це число, іноді з літерою. Усе
+// довше й химерніше майже напевно сміття у фіді, і краще не показати
+// нічого, ніж показати хибний номер.
+function cleanTrack(place) {
+  const raw = (place && (place.track || place.scheduledTrack)) || "";
+  const v = String(raw)
+    .replace(/^(Gleis|Gl\.?|Bahnsteig|Bstg\.?|Platform|Plattform|Pl\.?|Track)\s*/i, "")
+    .trim();
+  if (!v) return null;
+  return /^\d{1,3}[A-Za-z]?$/.test(v) || /^[A-Za-z]$/.test(v) ? v : null;
+}
+
 // Приводимо відповідь Transitous до вигляду DB, щоб застосунок не
 // помічав різниці між джерелами.
 async function journeysTransitous(from, to, departure, regionalOnly) {
@@ -198,6 +236,12 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
       const depActual = iso(l.startTime || f.departure);
       const arrPlanned = iso(l.scheduledEndTime || tt.scheduledArrival || l.endTime);
       const arrActual = iso(l.endTime || tt.arrival);
+      // Колії показуємо, але чесно позначаємо їхнє походження: підтверджені
+      // даними реального часу вважаємо надійними, взяті лише з розкладу —
+      // ні. Застосунок показує другі приглушено й додає застереження.
+      // Раніше вони не показувались узагалі через випадки хибних номерів.
+      const depTrack = walking ? null : cleanTrack(f);
+      const arrTrack = walking ? null : cleanTrack(tt);
       return {
         walking,
         cancelled: Boolean(l.cancelled),
@@ -206,18 +250,15 @@ async function journeysTransitous(from, to, departure, regionalOnly) {
         departure: depActual,
         plannedDeparture: depPlanned,
         departureDelay: delaySec(depActual, depPlanned),
-        // Платформи з відкритих даних ненадійні (траплялись неіснуючі
-        // номери, напр. «82» на Donnersbergerbrücke, де є лише 1-2).
-        // Тому не показуємо їх узагалі — краще без номера, ніж хибний.
-        departurePlatform: null,
-        plannedDeparturePlatform: null,
-        platformTrusted: false,
+        departurePlatform: depTrack,
+        plannedDeparturePlatform: depTrack,
+        platformTrusted: Boolean(l.realTime),
         arrival: arrActual,
         plannedArrival: arrPlanned,
         arrivalDelay: delaySec(arrActual, arrPlanned),
-        arrivalPlatform: null,
+        arrivalPlatform: arrTrack,
         mode: l.mode || null,
-        line: { name: l.routeShortName || l.routeLongName || l.displayName || l.mode || "" },
+        line: { name: lineLabel(l) },
       };
     }),
   }));
