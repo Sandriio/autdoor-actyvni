@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v24";
+const APP_VERSION = "v31";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -172,7 +172,7 @@ const T = {
   jpTitle: { uk: "Звідки ви їдете?", en: "Where are you coming from?", de: "Woher reisen Sie an?", ru: "Откуда вы едете?" },
   jpHint: { uk: "Введіть своє місто чи вокзал — покажемо розклад поїздів до кінцевого пункту", en: "Enter your city or station — we'll show train times to the destination", de: "Stadt oder Bahnhof eingeben — wir zeigen Verbindungen zum Ziel", ru: "Введите свой город или вокзал — покажем расписание поездов до конечного пункта" },
   jpPlaceholder: { uk: "Звідки їдете (напр. Augsburg Hbf)", en: "From (e.g. Augsburg Hbf)", de: "Von (z.B. Augsburg Hbf)", ru: "Откуда едете (напр. Augsburg Hbf)" },
-  jpButton: { uk: "Показати розклад Deutsche Bahn", en: "Show Deutsche Bahn schedule", de: "Deutsche Bahn Fahrplan anzeigen", ru: "Показать расписание Deutsche Bahn" },
+  jpButton: { uk: "Знайти розклад на Deutsche Bahn", en: "Find your schedule on Deutsche Bahn", de: "Fahrplan bei der Deutschen Bahn suchen", ru: "Найти расписание на Deutsche Bahn" },
   jpButtonEmpty: { uk: "Введіть місто відправлення", en: "Enter departure city", de: "Abfahrtsort eingeben", ru: "Введите город отправления" },
   jpDestPlaceholder: { uk: "Куди їдете (кінцева станція)", en: "To (destination station)", de: "Nach (Zielbahnhof)", ru: "Куда едете (конечная станция)" },
   jpRegionalOnly: { uk: "Лише регіональні (діє Deutschland-Ticket)", en: "Regional trains only (Deutschland-Ticket)", de: "Nur Nahverkehr (Deutschland-Ticket)", ru: "Только региональные (действует Deutschland-Ticket)" },
@@ -189,6 +189,14 @@ const T = {
   jpChanges: { uk: "пересадка(и)", en: "changes", de: "Umstiege", ru: "пересадка(и)" },
   jpCancelled: { uk: "Рейс скасовано або є скасовані ділянки", en: "Cancelled or partly cancelled", de: "Fahrt entfällt teilweise", ru: "Рейс отменён или есть отменённые участки" },
   jpTrack: { uk: "кол.", en: "pl.", de: "Gl.", ru: "пут." },
+  travelCityNote: { uk: "Якщо вашого міста немає у цьому списку — повідомте організатора. Він оновить список.", en: "If your city is not on this list, let the organiser know. They will update it.", de: "Wenn Ihre Stadt nicht in dieser Liste steht, sagen Sie der Organisation Bescheid. Die Liste wird dann ergänzt.", ru: "Если вашего города нет в этом списке — сообщите организатору. Он обновит список." },
+  legsAskOrganizer: { uk: "Якщо вашого міста немає у цьому списку — повідомте організатора. Він оновить список.", en: "If your city is not on this list, let the organizer know — they will update it.", de: "Wenn Ihre Stadt nicht in dieser Liste steht, sagen Sie der Organisation Bescheid — die Liste wird ergänzt.", ru: "Если вашего города нет в этом списке — сообщите организатору. Он обновит список." },
+  bonusTitle: { uk: "Додатково поруч", en: "Also nearby", de: "Auch in der Nähe", ru: "Дополнительно рядом" },
+  bonusHint: { uk: "Не входить у маршрут — заходьте, якщо буде час і бажання.", en: "Not part of the route — visit if you have time.", de: "Nicht Teil der Route — bei Zeit und Lust einen Abstecher wert.", ru: "Не входит в маршрут — загляните, если будет время." },
+  tapToMap: { uk: "Натисніть, щоб показати на карті", en: "Tap to show on the map", de: "Antippen, um auf der Karte zu zeigen", ru: "Нажмите, чтобы показать на карте" },
+  legTransfer: { uk: "Пересадка", en: "Transfer", de: "Umstieg", ru: "Пересадка" },
+  legMin: { uk: "хв", en: "min", de: "Min", ru: "мин" },
+  legDetails: { uk: "Деталі поїздки", en: "Journey details", de: "Reisedetails", ru: "Детали поездки" },
   jpShowMore: { uk: "Показати ще", en: "Show more", de: "Mehr anzeigen", ru: "Показать ещё" },
   jpTrackNote: { uk: "Номери колій сірим — з розкладу відкритих даних, без підтвердження в реальному часі. Звіряйте з табло на вокзалі.", en: "Grey platform numbers come from the open-data timetable and are not confirmed in real time. Check the station board.", de: "Grau markierte Gleisnummern stammen aus dem Open-Data-Fahrplan und sind nicht in Echtzeit bestätigt. Bitte Anzeigetafel prüfen.", ru: "Номера путей серым — из расписания открытых данных, без подтверждения в реальном времени. Сверяйте с табло на вокзале." },
   jpError: { uk: "Не вдалося отримати живий розклад. Скористайтеся кнопкою нижче — офіційний сайт DB.", en: "Couldn't load the live timetable. Use the DB website below.", de: "Live-Fahrplan nicht verfügbar. Bitte DB-Website nutzen.", ru: "Не удалось получить живое расписание. Воспользуйтесь сайтом DB ниже." },
@@ -267,7 +275,8 @@ const TRANSLATABLE = (trip) => {
   push(() => trip.about, (v) => (trip.about = v));
   push(() => trip.difficultyNote, (v) => (trip.difficultyNote = v));
   push(() => trip.meetingPoint, (v) => (trip.meetingPoint = v));
-  (trip.route || []).forEach((st) => { push(() => st.name, (v) => (st.name = v)); push(() => st.note, (v) => (st.note = v)); });
+  (trip.route || []).forEach((st) => { push(() => st.name, (v) => (st.name = v)); push(() => st.note, (v) => (st.note = v)); push(() => st.info, (v) => (st.info = v)); });
+  (trip.bonus || []).forEach((b) => { push(() => b.name, (v) => (b.name = v)); push(() => b.note, (v) => (b.note = v)); });
   (trip.cafes || []).forEach((c) => { push(() => c.note, (v) => (c.note = v)); push(() => c.tag, (v) => (c.tag = v)); });
   (trip.packing || []).forEach((_, i) => push(() => trip.packing[i], (v) => (trip.packing[i] = v)));
   const cl = (trip.contacts && trip.contacts.length ? trip.contacts : (trip.contact ? [trip.contact] : []));
@@ -569,76 +578,210 @@ const diffColor = (d) =>
 // legs: [{ from, fromTime, platform, train, to, toTime }]. Backward
 // compatible: callers fall back to the old single from/to fields when a trip
 // has no legs array.
-function TrainLegs({ legs }) {
-  // Спрощений вигляд: один рядок на кожен поїзд — час, станція, платформа,
-  // номер поїзда. Мета — показати людині, звідки й коли виїжджати.
-  // Повний маршрут із пересадками вона знайде в пошуку нижче або на DB.
+// Скільки хвилин між двома часами у форматі «10:56». Потрібно, щоб
+// показати тривалість пересадки, коли організатор не вписав її вручну.
+function minutesBetween(a, b) {
+  const pa = String(a || "").match(/(\d{1,2}):(\d{2})/);
+  const pb = String(b || "").match(/(\d{1,2}):(\d{2})/);
+  if (!pa || !pb) return null;
+  let d = (Number(pb[1]) * 60 + Number(pb[2])) - (Number(pa[1]) * 60 + Number(pa[2]));
+  if (d < 0) d += 24 * 60;
+  return d;
+}
+
+// Один рядок ланцюжка: точка на лінії, час, станція, платформа.
+function LegStop({ time, name, platform, last }) {
   return (
-    <div style={{ display: "grid", gap: 2 }}>
-      {legs.map((leg, i) => (
-        <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 4px", borderTop: i > 0 ? `1px solid ${C.line}` : "none" }}>
-          <div style={{ minWidth: 58 }}>
-            <div style={{ fontSize: 19, fontWeight: 800, color: C.ink, lineHeight: 1.1 }}>{leg.fromTime}</div>
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>{leg.from}</div>
-            {leg.platform && (
-              <div style={{ fontSize: 11.5, color: C.rasp, fontWeight: 600, marginTop: 2 }}>
-                {t("jpTrack")} {leg.platform}
-              </div>
-            )}
-          </div>
-          {leg.train && (
-            <div style={{ fontSize: 11.5, fontWeight: 800, color: C.yellowInk, background: C.yellow, padding: "4px 11px", borderRadius: 20, flexShrink: 0 }}>
-              {leg.train}
-            </div>
-          )}
-        </div>
-      ))}
+    <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 14, flexShrink: 0 }}>
+        <span style={{ width: 11, height: 11, borderRadius: "50%", border: `2.5px solid ${C.green}`, background: "#fff", marginTop: 4 }} />
+        {!last && <span style={{ width: 2, flex: 1, minHeight: 26, background: C.greenLine }} />}
+      </div>
+      <div style={{ minWidth: 50, flexShrink: 0 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, lineHeight: 1.2 }}>{time || "—"}</div>
+      </div>
+      <div style={{ flex: 1, minWidth: 0, paddingBottom: last ? 0 : 12 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>{name || "—"}</div>
+        {platform && platform.trim() !== "" && (
+          <div style={{ fontSize: 11.5, color: C.rasp, fontWeight: 700, marginTop: 2 }}>{t("jpTrack")} {platform}</div>
+        )}
+      </div>
     </div>
   );
 }
 
-// ── Meeting point map ──────────────────────────────────────────────────
-// A clickable map preview with a red location pin centered on the meeting
-// point. Tapping it opens Google Maps at that exact location. The preview
-// tile is rendered via the OSM static tile service (works without an API
-// key); on a hosted deployment this can be swapped for Google Static Maps.
-function MeetingMap({ lat, lng }) {
-  const gmaps = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
-  // OSM embed centered tightly on the point — shows a real street map.
-  const d = 0.008;
-  const bbox = `${lng - d},${lat - d},${lng + d},${lat + d}`;
-  const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik`;
+// ── Ланцюжок поїздів із пересадками ─────────────────────────────────
+// Згорнута картка показує головне: коли й звідки виїжджати, коли й куди
+// приїде, якими поїздами. Натиск розкриває повний ланцюжок, де кожна
+// пересадка стоїть МІЖ двома поїздами — щоб було видно, на якій станції
+// і скільки часу на неї є.
+function TrainLegs({ legs }) {
+  const [open, setOpen] = useState(false);
+  const first = legs[0] || {};
+  const last = legs[legs.length - 1] || {};
+  const trains = legs.map((l) => l.train).filter((x) => x && x.trim() !== "");
+
   return (
-    <a href={gmaps} target="_blank" rel="noreferrer" style={{ display: "block", textDecoration: "none" }}>
-      <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
-        <iframe
-          title="meeting-map"
-          src={mapSrc}
-          style={{ width: "100%", height: "calc(100% + 26px)", border: "none", display: "block", pointerEvents: "none" }}
-          loading="lazy"
-        />
-        {/* Ліцензія OSM вимагає атрибуції — лишаємо її, але компактно
-            й у стилі застосунку, замість службової смуги від iframe. */}
-        <span style={{ position: "absolute", right: 6, bottom: 4, fontSize: 8.5, color: "rgba(0,0,0,0.42)", background: "rgba(255,255,255,0.72)", padding: "1px 5px", borderRadius: 6 }}>© OpenStreetMap</span>
-        {/* Red location pin, centered */}
-        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", pointerEvents: "none" }}>
-          <svg width="34" height="44" viewBox="0 0 34 44" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))" }}>
-            <path d="M17 0C7.6 0 0 7.6 0 17c0 12 17 27 17 27s17-15 17-27C34 7.6 26.4 0 17 0z" fill="#e8332f"/>
-            <circle cx="17" cy="17" r="6.5" fill="#fff"/>
-          </svg>
+    <div style={{ border: `1px solid ${C.greenLine}`, borderRadius: 14, overflow: "hidden", background: "#fff" }}>
+      <button onClick={() => setOpen(!open)}
+        style={{ width: "100%", display: "block", textAlign: "left", background: "none", border: "none", padding: "13px 14px", cursor: "pointer", fontFamily: "inherit" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 19, fontWeight: 800, color: C.ink }}>{first.fromTime || "—"}</span>
+              <span style={{ fontSize: 13, color: C.faint }}>→</span>
+              <span style={{ fontSize: 19, fontWeight: 800, color: C.ink }}>{last.toTime || "—"}</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: C.inkSoft, marginTop: 3, lineHeight: 1.35 }}>
+              {first.from || "—"} → {last.to || "—"}
+            </div>
+          </div>
+          <span style={{ color: C.green, flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }}>
+            <ChevronRight size={19} />
+          </span>
         </div>
-        {/* "Open in Google Maps" chip */}
-        <div style={{ position: "absolute", right: 10, bottom: 10, background: "#fff", borderRadius: 10, padding: "7px 11px", fontSize: 12, fontWeight: 700, color: C.green, display: "flex", alignItems: "center", gap: 5, boxShadow: "0 1px 5px rgba(0,0,0,0.18)" }}>
-          <Navigation size={14} /> Google Maps
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 9 }}>
+          {trains.map((tr, i) => (
+            <span key={i} style={{ fontSize: 11.5, fontWeight: 800, color: C.yellowInk, background: C.yellow, padding: "4px 11px", borderRadius: 20 }}>{tr}</span>
+          ))}
+          {legs.length > 1 && (
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: C.yellowInk, background: C.yellowSoft, padding: "4px 11px", borderRadius: 20, display: "flex", alignItems: "center", gap: 5 }}>
+              <Footprints size={13} /> {legs.length - 1}
+            </span>
+          )}
         </div>
+      </button>
+
+      {open && (
+        <div style={{ padding: "4px 14px 14px", borderTop: `1px solid ${C.line}` }}>
+          {legs.map((leg, i) => {
+            const prev = i > 0 ? legs[i - 1] : null;
+            // Час пересадки: вписаний організатором має перевагу, інакше
+            // рахуємо з часів прибуття попереднього і відправлення цього.
+            const manual = String(leg.transfer || "").trim();
+            const autoMin = prev ? minutesBetween(prev.toTime, leg.fromTime) : null;
+            const wait = manual !== "" ? manual : (autoMin != null ? `${autoMin} ${t("legMin")}` : "");
+            return (
+              <div key={i}>
+                {prev && (
+                  <div style={{ display: "flex", gap: 11, alignItems: "stretch" }}>
+                    <div style={{ width: 14, display: "flex", justifyContent: "center", flexShrink: 0 }}>
+                      <span style={{ width: 2, background: C.yellow }} />
+                    </div>
+                    <div style={{ flex: 1, background: C.yellowSoft, borderRadius: 10, padding: "8px 11px", margin: "2px 0 12px", display: "flex", alignItems: "center", gap: 8 }}>
+                      <Footprints size={15} style={{ color: C.yellowInk, flexShrink: 0 }} />
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: C.yellowInk }}>
+                        {t("legTransfer")}{wait ? ` · ${wait}` : ""}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                <LegStop time={leg.fromTime} name={leg.from} platform={leg.platform} />
+                {leg.train && leg.train.trim() !== "" && (
+                  <div style={{ display: "flex", gap: 11, alignItems: "center", margin: "-6px 0 6px" }}>
+                    <div style={{ width: 14, display: "flex", justifyContent: "center", flexShrink: 0 }}>
+                      <span style={{ width: 2, height: 26, background: C.greenLine }} />
+                    </div>
+                    <span style={{ minWidth: 50, flexShrink: 0 }} />
+                    <span style={{ fontSize: 11.5, fontWeight: 800, color: C.yellowInk, background: C.yellow, padding: "4px 11px", borderRadius: 20 }}>{leg.train}</span>
+                  </div>
+                )}
+                <LegStop time={leg.toTime} name={leg.to} platform={leg.toPlatform} last={i === legs.length - 1} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Карта точки на OpenStreetMap ────────────────────────────────────
+// Керування масштабом власними кнопками, а не тими, що малює сам OSM.
+// Причина: вбудована карта лишається несприйнятливою до дотиків
+// (pointerEvents: none), інакше палець на карті тягав би її замість
+// того, щоб гортати сторінку. Тому «+» і «−» просто перебудовують
+// адресу карти з іншим охопленням — гортання сторінки не страждає.
+const MAP_SPAN_MIN = 0.0006;   // найближче
+const MAP_SPAN_MAX = 0.25;     // найдалі
+const MAP_SPAN_DEFAULT = 0.008;
+function MeetingMap({ lat, lng, accent }) {
+  // Жовта шпилька для бонусних точок, червона для звичайних — щоб на
+  // карті було одразу видно, дивишся ти на точку маршруту чи на
+  // необов'язкове місце поруч.
+  const pinFill = accent === "bonus" ? "#f2c200" : "#e8332f";
+  const pinDot = accent === "bonus" ? "#4a3f00" : "#fff";
+  const [span, setSpan] = useState(MAP_SPAN_DEFAULT);
+  const gmaps = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  const bbox = `${lng - span},${lat - span},${lng + span},${lat + span}`;
+  const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik`;
+  const canIn = span > MAP_SPAN_MIN * 1.01;
+  const canOut = span < MAP_SPAN_MAX * 0.99;
+  const zoom = (factor) => setSpan((v) => Math.min(MAP_SPAN_MAX, Math.max(MAP_SPAN_MIN, v * factor)));
+  const zoomBtn = (label, onClick, enabled, radius) => (
+    <button
+      onClick={onClick}
+      disabled={!enabled}
+      aria-label={label === "+" ? "Наблизити" : "Віддалити"}
+      style={{
+        width: 34, height: 34, border: "none", background: "#fff", color: enabled ? C.green : C.faint,
+        fontSize: 20, fontWeight: 700, lineHeight: 1, cursor: enabled ? "pointer" : "default",
+        fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center",
+        borderRadius: radius, padding: 0,
+      }}>{label}</button>
+  );
+  return (
+    <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
+      <iframe
+        title="meeting-map"
+        src={mapSrc}
+        style={{ width: "100%", height: "calc(100% + 26px)", border: "none", display: "block", pointerEvents: "none" }}
+        loading="lazy"
+      />
+      {/* Ліцензія OSM вимагає атрибуції — лишаємо її, але компактно
+          й у стилі застосунку, замість службової смуги від iframe. */}
+      <span style={{ position: "absolute", right: 6, bottom: 4, fontSize: 8.5, color: "rgba(0,0,0,0.42)", background: "rgba(255,255,255,0.72)", padding: "1px 5px", borderRadius: 6 }}>© OpenStreetMap</span>
+      {/* Червона шпилька в центрі */}
+      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", pointerEvents: "none" }}>
+        <svg width="34" height="44" viewBox="0 0 34 44" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))" }}>
+          <path d="M17 0C7.6 0 0 7.6 0 17c0 12 17 27 17 27s17-15 17-27C34 7.6 26.4 0 17 0z" fill={pinFill}/>
+          <circle cx="17" cy="17" r="6.5" fill={pinDot}/>
+        </svg>
       </div>
+      {/* Масштаб */}
+      <div style={{ position: "absolute", right: 10, top: 10, display: "flex", flexDirection: "column", borderRadius: 10, overflow: "hidden", boxShadow: "0 1px 5px rgba(0,0,0,0.22)" }}>
+        {zoomBtn("+", () => zoom(0.5), canIn, "10px 10px 0 0")}
+        <span style={{ height: 1, background: C.line }} />
+        {zoomBtn("\u2212", () => zoom(2), canOut, "0 0 10px 10px")}
+      </div>
+      {/* Перехід у Google Maps — окремим значком, а не всією картою:
+          інакше натиск на «+» відкривав би карти замість наближення. */}
+      <a href={gmaps} target="_blank" rel="noreferrer"
+        style={{ position: "absolute", right: 10, bottom: 10, background: "#fff", borderRadius: 10, padding: "7px 11px", fontSize: 12, fontWeight: 700, color: C.green, display: "flex", alignItems: "center", gap: 5, boxShadow: "0 1px 5px rgba(0,0,0,0.18)", textDecoration: "none" }}>
+        <Navigation size={14} /> Google Maps
+      </a>
+    </div>
+  );
+}
+
+// Кнопка на повний розклад Deutsche Bahn. Замінила вбудований пошук
+// поїздів: розклад тепер вводить організатор, а хто хоче інші варіанти —
+// відкриває сайт перевізника, де список завжди повний і актуальний.
+function DbScheduleLink({ trip }) {
+  const legs = trip.legs && trip.legs.length > 0 ? trip.legs : null;
+  const from = (legs ? legs[0].from : trip.from && trip.from.name) || "";
+  const to = (legs ? legs[legs.length - 1].to : trip.to && trip.to.name) || "";
+  if (from.trim() === "" || to.trim() === "") return null;
+  const enc = (v) => encodeURIComponent(v.trim().replace(/\s+/g, "+")).replace(/%2B/g, "+");
+  const url = `https://mobile.bahn.de/bin/query.exe/dox?S=${enc(from)}&Z=${enc(to)}&timeSel=depart&start=1`;
+  return (
+    <a href={url} target="_blank" rel="noreferrer"
+      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 8, background: C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 13.5, fontWeight: 700, textDecoration: "none" }}>
+      <Train size={16} /> {t("jpButton")}
     </a>
   );
 }
 
-// ── Map (lightweight SVG, no external tiles) ───────────────────────────
 // ── Trip card (list view) ──────────────────────────────────────────────
 function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onEdit }) {
   const left = trip.spots - trip.spotsTaken;
@@ -762,179 +905,11 @@ function PlacePhoto({ trip }) {
   );
 }
 
-// ── Journey planner: enter your origin city → DB schedule ──────────────
-// ── Живий розклад Deutsche Bahn ────────────────────────────────────────
-// Використовує публічний сервіс v6.db.transport.rest (обгортка навколо
-// офіційних даних DB Navigator): реальні часи, затримки, скасування,
-// платформи. Без ключів, з підтримкою запитів прямо з браузера.
-// ВАЖЛИВО: сервіс community-проєкт, не офіційний DB. Якщо він тимчасово
-// недоступний — показуємо кнопку на офіційний сайт DB.
-const DB_API = "https://v6.db.transport.rest";
-
-// Скільки чекаємо на відповідь, перш ніж вважати спробу невдалою.
-// Без цього браузер міг висіти на запиті хвилинами — саме звідси бралося
-// «дуже довго завантажується».
-const DB_TIMEOUT_MS = 9000;
-let DB_LAST_ERROR = "";
-
-// Обгортка з таймаутом і можливістю скасування ззовні (коли користувач
-// продовжив набирати текст і попередній запит уже не потрібен).
-function timedSignal(ms, outer) {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), ms);
-  if (outer) {
-    if (outer.aborted) ctl.abort();
-    else outer.addEventListener("abort", () => ctl.abort(), { once: true });
-  }
-  return { signal: ctl.signal, clear: () => clearTimeout(timer) };
-}
-
-// Перший, хто відповів успішно, — той і виграв; решта скасовуються.
-// Якщо впали всі — повертаємо зведену причину, а не одну випадкову.
-function firstSuccess(makers) {
-  return new Promise((resolve, reject) => {
-    const ctl = new AbortController();
-    let pending = makers.length;
-    const errs = [];
-    let done = false;
-    makers.forEach((make) => {
-      make(ctl.signal).then(
-        (v) => { if (!done) { done = true; ctl.abort(); resolve(v); } },
-        (e) => {
-          errs.push((e && e.message) || String(e));
-          if (--pending === 0 && !done) reject(new Error(errs.join(" · ")));
-        }
-      );
-    });
-  });
-}
-
-// Два шляхи до даних працюють ОДНОЧАСНО, а не по черзі:
-//   1) власний сервер /api/db — обходить блокування браузера;
-//   2) прямий запит із телефона — часто швидший, бо серверні IP Vercel
-//      частіше потрапляють під ліміти чужого сервісу.
-// Раніше вони йшли послідовно, та ще й прямий запит повторювався тричі
-// з параметром profile, якого цей сервіс узагалі не розуміє. Виходило до
-// чотирьох однакових запитів підряд без таймауту: повільно й прямою
-// дорогою в ліміт 100 запитів на хвилину.
-async function dbFetch(path, params, directParams, outerSignal) {
-  const proxyQ = new URLSearchParams(params); proxyQ.set("path", path);
-  const directQ = new URLSearchParams(directParams || params);
-  const get = (url, tag) => async (raceSignal) => {
-    const outer = outerSignal || null;
-    const merged = new AbortController();
-    const link = (sig) => { if (!sig) return; if (sig.aborted) merged.abort(); else sig.addEventListener("abort", () => merged.abort(), { once: true }); };
-    link(outer); link(raceSignal);
-    const g = timedSignal(DB_TIMEOUT_MS, merged.signal);
-    try {
-      const r = await fetch(url, { signal: g.signal });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return await r.json();
-    } catch (e) {
-      const m = (e && e.name) === "AbortError" ? "таймаут" : ((e && e.message) || "мережа");
-      throw new Error(`${tag}: ${m}`);
-    } finally { g.clear(); }
-  };
-  try {
-    const j = await firstSuccess([
-      get(`/api/db?${proxyQ.toString()}`, "проксі"),
-      get(`${DB_API}${path}?${directQ.toString()}`, "DB"),
-    ]);
-    DB_LAST_ERROR = "";
-    return j;
-  } catch (e) {
-    // Запит, який ми самі обірвали (користувач продовжив набирати), —
-    // це не збій сервісу, тож причину не переписуємо.
-    if (!(outerSignal && outerSignal.aborted)) DB_LAST_ERROR = (e && e.message) || "мережа";
-    throw e;
-  }
-}
-// Джерело останнього успішного запиту — "dbrest" (офіційні дані DB,
-// практично те саме, що показує DB Navigator) або "transitous" (відкриті
-// дані, запасний варіант). Показуємо чесно, а не мовчки.
-let DB_LAST_SOURCE = "";
-async function dbLocations(query, signal) {
-  const j = await dbFetch("/locations", { query, results: "6", addresses: "false", poi: "false" }, null, signal);
-  // Проксі повертає {source, items}; старий прямий виклик у браузер — голий масив.
-  const items = Array.isArray(j) ? j : (j && j.items) || [];
-  DB_LAST_SOURCE = Array.isArray(j) ? "direct" : (j && j.source) || "";
-  return items.filter((x) => x && x.id && x.name).map((x) => ({ id: x.id, name: x.name }));
-}
-// Кеш підказок станцій. Сервіс DB має ліміт близько 100 запитів на хвилину,
-// а підказки під час набору тексту легко його вичерпують. Кеш плюс пауза
-// перед запитом тримають нас усередині ліміту.
-const STATION_CACHE = new Map();
-// Якщо коротший початок назви вже шукали, довший варіант відсіюємо
-// на місці, без нового запиту: «Augsb» уже містить усе, що потрібно
-// для «Augsburg». Це прибирає більшість запитів під час набору тексту.
-function stationsFromPrefix(key) {
-  for (let n = key.length - 1; n >= 3; n--) {
-    const short = key.slice(0, n);
-    if (!STATION_CACHE.has(short)) continue;
-    const hit = (STATION_CACHE.get(short) || []).filter((x) => String(x.name).toLowerCase().includes(key));
-    return hit.length > 0 ? hit : null;
-  }
-  return null;
-}
-async function dbLocationsCached(query, signal) {
-  const key = String(query || "").trim().toLowerCase();
-  if (key.length < 2) return [];
-  if (STATION_CACHE.has(key)) return STATION_CACHE.get(key);
-  const local = stationsFromPrefix(key);
-  if (local) return local;
-  const list = await dbLocations(String(query).trim(), signal);
-  STATION_CACHE.set(key, list);
-  return list;
-}
-async function dbJourneys(fromId, toId, whenISO, regionalOnly, signal) {
-  const params = { from: fromId, to: toId, results: "4", stopovers: "false" };
-  if (whenISO) params.departure = whenISO;
-  if (regionalOnly) params.regional = "1";
-  // Прямий сервіс розуміє фільтр інакше: там regional=1 означає
-  // «включити регіональні», а не «лише регіональні». Тому далекі поїзди
-  // вимикаємо явно — інакше в списку зʼявлялися б ICE та IC, на які
-  // Deutschland-Ticket не діє.
-  const direct = { ...params };
-  delete direct.regional;
-  if (regionalOnly) { direct.nationalExpress = "false"; direct.national = "false"; }
-  const j = await dbFetch("/journeys", params, direct, signal);
-  DB_LAST_SOURCE = (j && j.source) || "direct";
-  return (j && j.journeys) || [];
-}
-// Один мережевий запит замість двох: сервер сам знаходить станцію
-// відправлення за текстом і одразу шукає розклад — швидше за окремий
-// похід за координатами станції перед пошуком рейсів. Якщо назва
-// виявляється неоднозначною, сервер повертає варіанти для уточнення.
-// Параметр fromQuery розуміє лише наш власний сервер, тож прямий запит
-// тут не має сенсу — передаємо ті самі параметри й покладаємось на проксі.
-async function dbJourneysByOriginName(fromQuery, toId, whenISO, regionalOnly) {
-  const params = { fromQuery, to: toId, results: "4", stopovers: "false" };
-  if (whenISO) params.departure = whenISO;
-  if (regionalOnly) params.regional = "1";
-  const j = await dbFetch("/journeys", params);
-  if (j && j.needsDisambiguation) return { needsDisambiguation: true, options: j.options || [] };
-  DB_LAST_SOURCE = (j && j.source) || "direct";
-  return { journeys: (j && j.journeys) || [] };
-}
-
-// Зсув німецького часу відносно всесвітнього для конкретної дати
-// (+02:00 влітку, +01:00 взимку). Без цього пошук зміщувався на 1-2 години.
-function berlinOffset(dateStr) {
-  try {
-    const d = new Date(`${dateStr}T12:00:00Z`);
-    const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Berlin", timeZoneName: "longOffset" }).formatToParts(d);
-    const tz = (parts.find((p) => p.type === "timeZoneName") || {}).value || "GMT+02:00";
-    const off = tz.replace("GMT", "").trim();
-    return /^[+-]\d{2}:\d{2}$/.test(off) ? off : "+02:00";
-  } catch { return "+02:00"; }
-}
-
-const hhmm = (iso) => {
-  if (!iso) return "--:--";
-  try { return new Date(iso).toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" }); }
-  catch { return "--:--"; }
-};
-const delayMin = (sec) => (typeof sec === "number" && sec !== 0 ? Math.round(sec / 60) : 0);
+// ── Пошук поїздів у режимі користувача прибрано ──────────────────────
+// Розклад тепер вводить організатор вручну (розділ «Поїзди» в редакторі),
+// а для повного розкладу лишилась кнопка на сайт Deutsche Bahn. Разом із
+// планувальником прибрано і весь мережевий шар до сервісів розкладу:
+// він більше нікуди не викликався.
 
 // Маленька крутилка завантаження — використовується на кнопках пошуку
 // розкладу, щоб було видно, що застосунок працює, а не завис.
@@ -969,431 +944,6 @@ function Spinner({ size = 15, color = "#fff" }) {
       }} />
       <style>{"@keyframes jpSpin { to { transform: rotate(360deg); } }"}</style>
     </>
-  );
-}
-
-function JourneyPlanner({ trip }) {
-  const [origin, setOrigin] = useState("");
-  const [opts, setOpts] = useState(null);     // список станцій для вибору
-  const [fromStop, setFromStop] = useState(null);
-  const [toStop, setToStop] = useState(null);
-  const [destOpts, setDestOpts] = useState(null);
-  const [journeys, setJourneys] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(false);
-  // На якому кроці зламалося: "stations" — не відповів довідник станцій,
-  // "journeys" — не відповів розклад. Раніше обидва випадки давали одне
-  // повідомлення, і причину доводилось вгадувати.
-  const [errStage, setErrStage] = useState("");
-  // Живі підказки станцій під полями «звідки» і «куди».
-  // null = ще не шукали, [] = нічого не знайдено, [..] = варіанти.
-  const [oSug, setOSug] = useState(null);
-  const [oSugBusy, setOSugBusy] = useState(false);
-  const [oSugErr, setOSugErr] = useState(false);
-  const [oPicked, setOPicked] = useState(false);
-  const [dSug, setDSug] = useState(null);
-  const [dSugBusy, setDSugBusy] = useState(false);
-  const [dSugErr, setDSugErr] = useState(false);
-  const [dPicked, setDPicked] = useState(true);
-  // Мережу чіпаємо лише тоді, коли користувач справді відкрив планувальник
-  // (торкнувся поля). Раніше кінцева станція шукалася на кожному відкритті
-  // поїздки — марний запит, який ще й з'їдав ліміт сервісу.
-  const [armed, setArmed] = useState(false);
-  // Скільки рейсів показано. Раніше тут стояло жорстке `slice(0, 10)`:
-  // скільки б варіантів не прийшло з сервера, у списку лишалось рівно
-  // десять, і решта зникала мовчки. Саме через це список виглядав
-  // неповним навіть тоді, коли дані приходили повні.
-  const [shown, setShown] = useState(10);
-  // Дата й час, на які шукати рейси. За замовчуванням — дата поїздки
-  // та час першого поїзда, але користувач може змінити.
-  const initialDate = (trip.date || "").trim();
-  const initialTime = (() => {
-    const src = (trip.legs && trip.legs.length > 0 ? trip.legs[0].fromTime : trip.from.time) || "08:00";
-    const m = String(src).match(/(\d{1,2}):(\d{2})/);
-    return m ? `${m[1].padStart(2, "0")}:${m[2]}` : "08:00";
-  })();
-  const [qDate, setQDate] = useState(initialDate);
-  const [qTime, setQTime] = useState(initialTime);
-  const [regionalOnly, setRegionalOnly] = useState(true);
-  const [expanded, setExpanded] = useState(null);
-
-  const legs = trip.legs && trip.legs.length > 0 ? trip.legs : null;
-  // Якщо в останньому відрізку не заповнена станція прибуття, беремо
-  // загальну кінцеву точку поїздки — раніше поле просто лишалось порожнім.
-  const defaultDest = (legs && legs[legs.length - 1].to) || (trip.to && trip.to.name) || "";
-  const [destInput, setDestInput] = useState(defaultDest);
-  const dest = destInput.trim() || defaultDest;
-
-  // Кінцева станція резолвиться ОДРАЗУ у фоні, паралельно з тим, як
-  // користувач шукає своє місто відправлення — раніше цей пошук
-  // відбувався ТІЛЬКИ після вибору станції, додаючи зайвий послідовний
-  // запит на кожен пошук. Тепер до моменту вибору станції вона вже
-  // майже завжди готова, і чекати нема на що.
-  const [destStop, setDestStop] = useState(null);
-  useEffect(() => {
-    let cancelled = false;
-    setDestStop(null);
-    if (!armed || !dest) return undefined;
-    const ctl = new AbortController();
-    dbLocationsCached(dest, ctl.signal)
-      .then((list) => { if (!cancelled) setDestStop(list[0] || null); })
-      .catch(() => { if (!cancelled) setDestStop(null); });
-    return () => { cancelled = true; ctl.abort(); };
-  }, [dest, armed]);
-
-  // Живі підказки станцій. Раніше список станцій зʼявлявся ЛИШЕ після
-  // натискання «Знайти» і тільки якщо назва виявлялась неоднозначною —
-  // тобто в більшості випадків обрати станцію було нічим, а пошук падав
-  // з незрозумілою помилкою. Тепер список підвантажується під час набору
-  // тексту, з паузою 350 мс, щоб не смикати сервер на кожну літеру.
-  // Пауза 550 мс і мінімум 3 літери: за час набору «Augsburg Hbf» це
-  // один-два запити замість дюжини. Запит, який уже не потрібен,
-  // ОБРИВАЄТЬСЯ — інакше він і далі займав би ліміт сервісу.
-  useEffect(() => {
-    if (oPicked) return undefined;
-    const q = origin.trim();
-    if (q.length < 3) { setOSug(null); setOSugErr(false); setOSugBusy(false); return undefined; }
-    let cancelled = false;
-    const ctl = new AbortController();
-    setOSugBusy(true); setOSugErr(false);
-    const timer = setTimeout(() => {
-      dbLocationsCached(q, ctl.signal)
-        .then((list) => { if (!cancelled) setOSug(list); })
-        .catch(() => { if (!cancelled) { setOSug(null); setOSugErr(true); } })
-        .finally(() => { if (!cancelled) setOSugBusy(false); });
-    }, 550);
-    return () => { cancelled = true; clearTimeout(timer); ctl.abort(); };
-  }, [origin, oPicked]);
-
-  useEffect(() => {
-    if (dPicked) return undefined;
-    const q = destInput.trim();
-    if (q.length < 3) { setDSug(null); setDSugErr(false); setDSugBusy(false); return undefined; }
-    let cancelled = false;
-    const ctl = new AbortController();
-    setDSugBusy(true); setDSugErr(false);
-    const timer = setTimeout(() => {
-      dbLocationsCached(q, ctl.signal)
-        .then((list) => { if (!cancelled) setDSug(list); })
-        .catch(() => { if (!cancelled) { setDSug(null); setDSugErr(true); } })
-        .finally(() => { if (!cancelled) setDSugBusy(false); });
-    }, 550);
-    return () => { cancelled = true; clearTimeout(timer); ctl.abort(); };
-  }, [destInput, dPicked]);
-
-  const buildDbUrl = () => {
-    const o = origin.trim().replace(/\s+/g, "+");
-    const d = dest.replace(/\s+/g, "+");
-    return `https://mobile.bahn.de/bin/query.exe/dox?S=${encodeURIComponent(o).replace(/%2B/g, "+")}&Z=${encodeURIComponent(d).replace(/%2B/g, "+")}&timeSel=depart&start=1`;
-  };
-
-  // Момент відправлення: дата поїздки + час першого поїзда (якщо задані).
-  const departureISO = () => {
-    if (!qDate) return null;
-    const m = String(qTime || "").match(/(\d{1,2}):(\d{2})/);
-    const hh = m ? m[1].padStart(2, "0") : "08", mm = m ? m[2] : "00";
-    return `${qDate}T${hh}:${mm}:00${berlinOffset(qDate)}`;
-  };
-
-  // Пошук у два кроки з явним вибором станції — надійніше за спробу
-  // вгадати станцію на сервері: якщо назва неоднозначна, показуємо список.
-  const runJourneys = async (fromId, toId) => {
-    setBusy(true); setErr(false); setErrStage("");
-    try {
-      setJourneys(await dbJourneys(fromId, toId, departureISO(), regionalOnly));
-    } catch { setErr(true); setErrStage("journeys"); }
-    finally { setBusy(false); }
-  };
-
-  const search = async () => {
-    const q = origin.trim(), dq = destInput.trim();
-    if (q === "" || dq === "") return;
-    setArmed(true);
-    setBusy(true); setErr(false); setErrStage(""); setJourneys(null);
-    setOpts(null); setDestOpts(null); setOSug(null); setDSug(null); setShown(10);
-    // Якщо станцію вже обрано зі списку підказок, її ідентифікатор відомий —
-    // повторно шукати не треба. Це і швидше, і прибирає найчастішу причину
-    // помилки: пошук за неточним текстом, який сервіс не впізнає.
-    const fPicked = fromStop && fromStop.name === q ? fromStop : null;
-    const dPickedStop = toStop && toStop.name === dq ? toStop
-      : (destStop && destStop.name === dq ? destStop : null);
-    let ol, dl;
-    try {
-      [ol, dl] = await Promise.all([
-        fPicked ? [fPicked] : dbLocationsCached(q),
-        dPickedStop ? [dPickedStop] : dbLocationsCached(dq),
-      ]);
-    } catch {
-      setErr(true); setErrStage("stations"); setBusy(false); return;
-    }
-    try {
-      if (ol.length === 0 || dl.length === 0) { setOpts([]); return; }
-      if (ol.length > 1 && !fPicked) { setOpts(ol); setToStop(dl[0]); return; }
-      if (dl.length > 1 && !dPickedStop) { setFromStop(ol[0]); setDestOpts(dl); return; }
-      setFromStop(ol[0]); setToStop(dl[0]);
-      await runJourneys(ol[0].id, dl[0].id);
-    } catch { setErr(true); setErrStage("journeys"); }
-    finally { setBusy(false); }
-  };
-
-  // Випадний список станцій під полем вводу.
-  const stationList = (items, isBusy, isErr, onPick) => {
-    if (!isBusy && !isErr && items == null) return null;
-    return (
-      <div style={{ border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden", background: "#fff", margin: "-2px 0 8px" }}>
-        {isBusy && <div style={{ padding: "9px 12px", fontSize: 12, color: C.muted }}>{t("jpLookingUp")}</div>}
-        {!isBusy && isErr && (
-          <div style={{ padding: "9px 12px", fontSize: 12, color: C.rasp, lineHeight: 1.45 }}>
-            {t("jpSugError")}
-            {DB_LAST_ERROR ? <span style={{ display: "block", fontSize: 10.5, color: C.muted, marginTop: 3 }}>({DB_LAST_ERROR})</span> : null}
-          </div>
-        )}
-        {!isBusy && !isErr && items && items.length === 0 && <div style={{ padding: "9px 12px", fontSize: 12, color: C.muted }}>{t("jpNoStation")}</div>}
-        {!isBusy && !isErr && (items || []).map((o, i, a) => (
-          <button key={o.id} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick(o)}
-            style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "none", borderBottom: i === a.length - 1 ? "none" : `1px solid ${C.line}`, padding: "10px 12px", fontSize: 13, color: C.ink, cursor: "pointer", fontFamily: "inherit" }}>
-            🚉 {o.name}
-          </button>
-        ))}
-      </div>
-    );
-  };
-
-  // Кнопка активна лише коли заповнені ОБИДВА поля — інакше пошук
-  // гарантовано провалюється, а користувач бачить незрозумілу помилку.
-  const canSearch = origin.trim() !== "" && destInput.trim() !== "";
-
-  return (
-    <div style={{ marginTop: 14, padding: 13, background: C.greenSoft, borderRadius: 12 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
-        <Train size={15} color={C.green} /> {t("jpTitle")}
-      </div>
-      <div style={{ fontSize: 12, color: C.inkSoft, marginBottom: 10, lineHeight: 1.4 }}>
-        {t("jpHint")}.
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
-        <input type="date" value={qDate} onChange={(e) => { setQDate(e.target.value); setJourneys(null); }}
-          style={{ boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 12px", fontSize: 13.5, fontFamily: "inherit", background: "#fff", color: C.ink }} />
-        <input type="time" value={qTime} onChange={(e) => { setQTime(e.target.value); setJourneys(null); }}
-          style={{ boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 12px", fontSize: 13.5, fontFamily: "inherit", background: "#fff", color: C.ink }} />
-      </div>
-      <button onClick={() => { setRegionalOnly((v) => !v); setJourneys(null); }}
-        style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", marginBottom: 8, border: `1.5px solid ${regionalOnly ? C.green : C.line}`, background: regionalOnly ? "rgba(80,104,60,0.10)" : "#fff", color: regionalOnly ? C.greenDark : C.muted, borderRadius: 10, padding: "9px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-        <span style={{ fontSize: 13 }}>{regionalOnly ? "✓" : "○"}</span>
-        {t("jpRegionalOnly")}
-      </button>
-      <input
-        value={origin}
-        onFocus={() => setArmed(true)}
-        onChange={(e) => { setOrigin(e.target.value); setJourneys(null); setOpts(null); setErr(false); setFromStop(null); setOPicked(false); }}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter") return;
-          e.preventDefault();
-          // Спершу веде до поля «куди»; шукає лише коли заповнені обидва.
-          if (destInput.trim() === "") { const el = document.getElementById("jp-dest-input"); if (el) el.focus(); }
-          else if (canSearch) search();
-        }}
-        placeholder={t("jpPlaceholder")}
-        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${fromStop ? C.green : C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 8 }}
-      />
-      {stationList(oSug, oSugBusy, oSugErr, (o) => {
-        setOrigin(o.name); setFromStop(o); setOPicked(true); setOSug(null); setOpts(null);
-      })}
-      <input
-        id="jp-dest-input"
-        value={destInput}
-        onFocus={() => setArmed(true)}
-        onChange={(e) => { setDestInput(e.target.value); setJourneys(null); setErr(false); setToStop(null); setDPicked(false); }}
-        onKeyDown={(e) => { if (e.key === "Enter" && canSearch) search(); }}
-        placeholder={t("jpDestPlaceholder")}
-        style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${(toStop || destStop) ? C.green : C.line}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 8 }}
-      />
-      {stationList(dSug, dSugBusy, dSugErr, (o) => {
-        setDestInput(o.name); setToStop(o); setDPicked(true); setDSug(null); setDestOpts(null);
-      })}
-      <div style={{ fontSize: 11, color: C.muted, margin: "0 0 10px", lineHeight: 1.4 }}>{t("jpPickHint")}</div>
-      <button onClick={search} disabled={!canSearch || busy}
-        style={{ width: "100%", border: "none", background: canSearch ? C.green : "rgba(80,104,60,0.25)", color: "#fff", borderRadius: 12, padding: "14px", fontSize: 15, fontWeight: 800, cursor: canSearch && !busy ? "pointer" : "default", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-        {busy ? <Spinner /> : <Train size={17} />} {busy ? t("jpSearching") : t("jpSearch")}
-      </button>
-
-      {opts && opts.length === 0 && (
-        <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 10px" }}>{t("jpNoStation")}</p>
-      )}
-      {opts && opts.length > 0 && (
-        <div style={{ border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden", marginBottom: 10, background: "#fff" }}>
-          {opts.map((o) => (
-            <button key={o.id} onClick={async () => {
-                setOpts(null); setFromStop(o); setOrigin(o.name);
-                let d = toStop;
-                if (!d) { const dl = await dbLocationsCached(destInput.trim()); d = dl[0]; }
-                if (!d) { setErr(true); return; }
-                setToStop(d);
-                await runJourneys(o.id, d.id);
-              }}
-              style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "none", borderBottom: `1px solid ${C.line}`, padding: "10px 12px", fontSize: 13, color: C.ink, cursor: "pointer", fontFamily: "inherit" }}>
-              🚉 {o.name}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {destOpts && destOpts.length > 0 && (
-        <div style={{ border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden", marginBottom: 10, background: "#fff" }}>
-          <div style={{ padding: "7px 12px", fontSize: 11.5, fontWeight: 700, color: C.muted, background: C.greenSoft }}>{t("jpDestPlaceholder")}</div>
-          {destOpts.map((o) => (
-            <button key={o.id} onClick={async () => {
-                setDestOpts(null); setToStop(o); setDestInput(o.name);
-                if (fromStop) await runJourneys(fromStop.id, o.id);
-              }}
-              style={{ display: "block", width: "100%", textAlign: "left", background: "#fff", border: "none", borderBottom: `1px solid ${C.line}`, padding: "10px 12px", fontSize: 13, color: C.ink, cursor: "pointer", fontFamily: "inherit" }}>
-              🚉 {o.name}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {busy && fromStop && (
-        <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 2px", marginBottom: 10 }}>
-          <span style={{
-            display: "inline-block", width: 15, height: 15, borderRadius: "50%",
-            border: `2px solid ${C.line}`, borderTopColor: C.green,
-            animation: "jpSpin 0.7s linear infinite", flexShrink: 0,
-          }} />
-          <span style={{ fontSize: 12.5, color: C.greenDark, fontWeight: 600 }}>{t("jpSearching")}</span>
-          <style>{"@keyframes jpSpin { to { transform: rotate(360deg); } }"}</style>
-        </div>
-      )}
-
-      {journeys && journeys.length === 0 && (
-        <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 10px" }}>{t("jpNoTrips")}</p>
-      )}
-      {journeys && journeys.length > 0 && (
-        <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
-          {journeys.slice(0, shown).map((jr, i) => {
-            const ls = (jr.legs || []).filter((l) => !l.walking);
-            if (ls.length === 0) return null;
-            const first = ls[0], last = ls[ls.length - 1];
-            const anyCancelled = ls.some((l) => l.cancelled);
-            const dep = delayMin(first.departureDelay), arr = delayMin(last.arrivalDelay);
-            const isOpen = expanded === i;
-            const mins = (a, b) => {
-              const d = (new Date(a) - new Date(b)) / 60000;
-              return isNaN(d) ? null : Math.round(d);
-            };
-            return (
-              <div key={i} style={{ background: "#fff", borderRadius: 11, border: `1px solid ${anyCancelled ? C.rasp : C.line}`, overflow: "hidden" }}>
-                <button onClick={() => setExpanded(isOpen ? null : i)}
-                  style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: 11, cursor: "pointer", fontFamily: "inherit" }}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
-                    <span style={{ fontSize: 17, fontWeight: 800, color: C.ink }}>{hhmm(first.departure || first.plannedDeparture)}</span>
-                    <span style={{ color: C.faint }}>→</span>
-                    <span style={{ fontSize: 17, fontWeight: 800, color: C.ink }}>{hhmm(last.arrival || last.plannedArrival)}</span>
-                    {dep > 0 && <span style={{ fontSize: 11.5, fontWeight: 700, color: C.rasp }}>+{dep} {t("jpMin")}</span>}
-                    {dep === 0 && arr === 0 && !anyCancelled && <span style={{ fontSize: 11.5, fontWeight: 700, color: C.green }}>{t("jpOnTime")}</span>}
-                    <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>
-                      {ls.length === 1 ? t("jpDirect") : `${ls.length - 1} ${t("jpChanges")}`} {isOpen ? "▲" : "▼"}
-                    </span>
-                  </div>
-                  {anyCancelled && (
-                    <div style={{ fontSize: 12, fontWeight: 700, color: C.rasp, marginBottom: 6 }}>⚠ {t("jpCancelled")}</div>
-                  )}
-                  {!isOpen && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                      {ls.map((l, k) => (
-                        <span key={k} style={{ fontSize: 11, fontWeight: 700, background: l.cancelled ? C.raspSoft : C.yellow, color: l.cancelled ? C.rasp : C.yellowInk, padding: "3px 8px", borderRadius: 20 }}>
-                          {(l.line && (l.line.name || l.line.product)) || "?"}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </button>
-                {isOpen && (
-                  <div style={{ borderTop: `1px solid ${C.line}`, padding: "11px 13px 13px", background: "rgba(80,104,60,0.04)" }}>
-                    {(jr.legs || []).map((l, k, arr) => {
-                      // Пішохідні переходи не показуємо окремим рядком —
-                      // час на них уже врахований у «Пересадка · N хв».
-                      if (l.walking) return null;
-                      const prevArr = arr.slice(0, k).filter((x) => !x.walking);
-                      const prev = prevArr.length > 0 ? prevArr[prevArr.length - 1] : null;
-                      const wait = prev ? mins(l.departure || l.plannedDeparture, prev.arrival || prev.plannedArrival) : null;
-                      const ld = delayMin(l.departureDelay), la = delayMin(l.arrivalDelay);
-                      return (
-                        <div key={k}>
-                          {prev && (
-                            <div style={{ display: "flex", alignItems: "center", gap: 7, margin: "8px 0", padding: "6px 10px", background: C.yellowSoft, borderRadius: 9 }}>
-                              <span style={{ fontSize: 12 }}>⤾</span>
-                              <span style={{ fontSize: 11.5, fontWeight: 700, color: C.yellowInk }}>
-                                {t("transfer")}{wait != null ? ` · ${wait} ${t("jpMin")}` : ""}
-                              </span>
-                            </div>
-                          )}
-                          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                            <div style={{ minWidth: 46 }}>
-                              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>{hhmm(l.departure || l.plannedDeparture)}</div>
-                              {ld > 0 && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rasp }}>+{ld}</div>}
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{(l.origin && l.origin.name) || ""}</div>
-                              {l.departurePlatform && <div style={{ fontSize: 11, color: l.platformTrusted === false ? C.muted : C.rasp, fontWeight: 600 }}>{t("jpTrack")} {l.departurePlatform}</div>}
-                              <div style={{ display: "inline-block", margin: "5px 0", fontSize: 11, fontWeight: 800, background: l.cancelled ? C.raspSoft : C.yellow, color: l.cancelled ? C.rasp : C.yellowInk, padding: "3px 9px", borderRadius: 20 }}>
-                                {(l.line && (l.line.name || l.line.product)) || "?"}
-                              </div>
-                            </div>
-                          </div>
-                          <div style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 2 }}>
-                            <div style={{ minWidth: 46 }}>
-                              <div style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>{hhmm(l.arrival || l.plannedArrival)}</div>
-                              {la > 0 && <div style={{ fontSize: 10.5, fontWeight: 700, color: C.rasp }}>+{la}</div>}
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{(l.destination && l.destination.name) || ""}</div>
-                              {l.arrivalPlatform && <div style={{ fontSize: 11, color: l.platformTrusted === false ? C.muted : C.rasp, fontWeight: 600 }}>{t("jpTrack")} {l.arrivalPlatform}</div>}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {/* Застереження показуємо тільки тоді, коли в цьому
-                        рейсі справді є непідтверджені номери колій — щоб
-                        не лякати текстом там, де дані надійні. */}
-                    {(jr.legs || []).some((l) => !l.walking && (l.departurePlatform || l.arrivalPlatform) && l.platformTrusted === false) && (
-                      <div style={{ fontSize: 10.5, color: C.muted, marginTop: 9, lineHeight: 1.45 }}>{t("jpTrackNote")}</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          {journeys.length > shown && (
-            <button onClick={() => setShown((n) => n + 10)}
-              style={{ width: "100%", border: `1px solid ${C.green}`, background: "transparent", color: C.green, borderRadius: 11, padding: "11px", fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
-              {t("jpShowMore")} ({journeys.length - shown})
-            </button>
-          )}
-        </div>
-      )}
-
-      {err && (
-        <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>
-          {errStage === "stations" ? t("jpSugError") : t("jpError")}
-          {DB_LAST_ERROR ? <span style={{ display: "block", fontSize: 10.5, color: C.muted, marginTop: 3 }}>({DB_LAST_ERROR})</span> : null}
-        </p>
-      )}
-
-      {(
-        <a href={buildDbUrl()} target="_blank" rel="noreferrer"
-          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: journeys ? "rgba(80,104,60,0.12)" : C.green, color: journeys ? C.greenDark : "#fff", borderRadius: 11, padding: "11px", fontSize: 13, fontWeight: 700, textDecoration: "none" }}>
-          <Train size={16} /> {t("jpButton")}
-        </a>
-      )}
-      <div style={{ marginTop: 8, fontSize: 10.5, color: C.muted, fontStyle: "italic", lineHeight: 1.4 }}>
-        {!journeys ? t("jpNeutralNote")
-          : DB_LAST_SOURCE === "dbrest" ? t("jpSourceDb")
-          : DB_LAST_SOURCE === "both" ? t("jpSourceBoth")
-          : t("jpLiveNote")}
-      </div>
-    </div>
   );
 }
 
@@ -1579,6 +1129,10 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
   // Одразу показуємо першу точку з координатами, щоб у розділі «Маршрут»
   // карта була видна без зайвого натискання (цю роль раніше виконувала
   // верхня оглядова карта, яку прибрано).
+  // Обрана бонусна точка. Окремий стан, а не спільний з routeSel: так
+  // ніщо в уже робочому списку маршруту не змінюється. Вибір одного
+  // знімає вибір іншого — на карті завжди рівно одна точка.
+  const [bonusSel, setBonusSel] = useState(null);
   const [routeSel, setRouteSel] = useState(() => {
     const i = (trip.route || []).findIndex((s) => !isNaN(parseFloat(s.lat)) && !isNaN(parseFloat(s.lng)));
     return i >= 0 ? i : null;
@@ -1675,7 +1229,17 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
               body: (
                 <>
                   {trip.legs && trip.legs.length > 0 ? (
-                    <TrainLegs legs={trip.legs} />
+                    <>
+                      <TrainLegs legs={trip.legs} />
+                      {/* Список поїздів веде організатор вручну, тож у ньому
+                          є лише ті міста, які він вніс. Підказка потрібна,
+                          щоб людина з іншого міста знала, що робити. */}
+                      {!isAdmin && (
+                        <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.45, margin: "8px 2px 0" }}>
+                          {t("travelCityNote")}
+                        </p>
+                      )}
+                    </>
                   ) : (
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                       <div style={{ flex: 1, textAlign: "center" }}>
@@ -1705,7 +1269,17 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                     <Train size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                     <span><b>Bayern Ticket 34 €</b> {t("bTicketTail")}</span>
                   </div>
-                  {!isAdmin && <JourneyPlanner trip={trip} />}
+                  {/* Список поїздів веде організатор вручну, тож у ньому лише
+                      ті міста, які вже хтось попросив. Підказка нижче
+                      перетворює цю ваду на робочий механізм: учаснику
+                      зрозуміло, що робити, якщо свого міста не знайшов. */}
+                  {!isAdmin && trip.legs && trip.legs.length > 0 && (
+                    <div style={{ marginTop: 9, display: "flex", gap: 7, alignItems: "flex-start", fontSize: 11.5, color: C.muted, lineHeight: 1.45 }}>
+                      <Info size={13} style={{ flexShrink: 0, marginTop: 2 }} />
+                      <span>{t("legsAskOrganizer")}</span>
+                    </div>
+                  )}
+                  {!isAdmin && <DbScheduleLink trip={trip} />}
                 </>
               ),
             },
@@ -1746,14 +1320,16 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                     </a>
                   )}
                 {(() => {
-                  // Карта обраної точки маршруту (якщо в неї є координати).
-                  const sel = routeSel != null ? trip.route[routeSel] : null;
+                  // Одна карта на обидва списки: показує ту точку, яку
+                  // щойно натиснули — чи то з маршруту, чи то бонусну.
+                  const isBonus = bonusSel != null;
+                  const sel = isBonus ? (trip.bonus || [])[bonusSel] : (routeSel != null ? trip.route[routeSel] : null);
                   const la = parseFloat(sel && sel.lat), ln = parseFloat(sel && sel.lng);
                   if (!sel || isNaN(la) || isNaN(ln)) return null;
                   return (
                     <div style={{ marginBottom: 14 }}>
-                      <MeetingMap lat={la} lng={ln} />
-                      <p style={{ fontSize: 11.5, color: C.muted, margin: "6px 0 0" }}>{tc(sel.name)}</p>
+                      <MeetingMap lat={la} lng={ln} accent={isBonus ? "bonus" : undefined} />
+                      <p style={{ fontSize: 11.5, color: isBonus ? C.yellowInk : C.muted, fontWeight: isBonus ? 700 : 400, margin: "6px 0 0" }}>{tc(sel.name)}</p>
                     </div>
                   );
                 })()}
@@ -1763,7 +1339,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                     const active = routeSel === i;
                     return (
                     <div key={i}
-                      onClick={() => { if (hasGeo) setRouteSel(active ? null : i); }}
+                      onClick={() => { if (hasGeo) { setRouteSel(active ? null : i); setBonusSel(null); } }}
                       style={{ display: "flex", gap: 13, paddingBottom: i === trip.route.length - 1 ? 0 : 18, position: "relative", cursor: hasGeo ? "pointer" : "default" }}>
                       {i !== trip.route.length - 1 && <div style={{ position: "absolute", left: 9, top: 22, bottom: 0, width: 2, background: C.greenLine }} />}
                       <div style={{ width: 20, height: 20, borderRadius: 20, background: active ? C.green : "#fff", border: `2px solid ${active ? C.green : C.greenLine}`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1, zIndex: 1 }}>
@@ -1775,13 +1351,60 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                           <span style={{ fontSize: 12, color: C.rasp, fontWeight: 600 }}>{step.t}</span>
                         </div>
                         <div style={{ fontSize: 12.5, color: "#7a766a", marginTop: 2 }}>{tc(step.note)}</div>
-                        {hasGeo && !active && <div style={{ fontSize: 11, color: C.green, fontWeight: 600, marginTop: 3 }}>Натисніть, щоб показати на карті</div>}
+                        {/* Практична інформація — ціна входу, години роботи,
+                            подія того дня. Винесена в окрему плашку, щоб не
+                            загубитись серед опису точки. */}
+                        {tc(step.info) && tc(step.info).trim() !== "" && (
+                          <div style={{ display: "flex", gap: 6, alignItems: "flex-start", marginTop: 6, padding: "7px 10px", background: C.yellowSoft, borderRadius: 9, fontSize: 12, color: C.yellowInk, lineHeight: 1.45 }}>
+                            <Info size={13} style={{ flexShrink: 0, marginTop: 1.5 }} />
+                            <span style={{ whiteSpace: "pre-wrap" }}>{tc(step.info)}</span>
+                          </div>
+                        )}
+                        {hasGeo && !active && <div style={{ fontSize: 11, color: C.green, fontWeight: 600, marginTop: 3 }}>{t("tapToMap")}</div>}
                       </div>
                     </div>
                     );
                   })}
                   {trip.route.length === 0 && <p style={{ margin: 0, fontSize: 13, color: C.muted }}>{t("routeTbd")}</p>}
                 </div>
+                {/* Бонусні місця. Свідомо стоять ОКРЕМО від таймлайну і без
+                    з'єднувальної лінії: вони не є частиною маршруту, а лише
+                    пропозиції поруч. Обране підсвічується жовтим — тим самим
+                    кольором, що й шпилька на карті. */}
+                {(trip.bonus || []).length > 0 && (
+                  <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px dashed ${C.greenLine}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                      <MapPin size={15} style={{ color: C.yellowInk }} />
+                      <span style={{ fontSize: 13, fontWeight: 800, color: C.yellowInk }}>{t("bonusTitle")}</span>
+                    </div>
+                    <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 11px", lineHeight: 1.4 }}>{t("bonusHint")}</p>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {(trip.bonus || []).map((b, i) => {
+                        const hasGeo = !isNaN(parseFloat(b.lat)) && !isNaN(parseFloat(b.lng));
+                        const active = bonusSel === i;
+                        return (
+                          <div key={i}
+                            onClick={() => { if (hasGeo) { setBonusSel(active ? null : i); setRouteSel(null); } }}
+                            style={{
+                              display: "flex", gap: 11, alignItems: "flex-start", padding: "11px 12px", borderRadius: 12,
+                              background: active ? C.yellowSoft : "#fff",
+                              border: `1.5px solid ${active ? C.yellow : C.line}`,
+                              cursor: hasGeo ? "pointer" : "default",
+                            }}>
+                            <div style={{ width: 26, height: 26, borderRadius: 9, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: active ? C.yellow : C.yellowSoft, color: C.yellowInk }}>
+                              <MapPin size={14} />
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: active ? C.yellowInk : C.ink }}>{tc(b.name)}</div>
+                              {tc(b.note) && <div style={{ fontSize: 12.5, color: "#7a766a", marginTop: 2, lineHeight: 1.4 }}>{tc(b.note)}</div>}
+                              {hasGeo && !active && <div style={{ fontSize: 11, color: C.yellowInk, fontWeight: 700, marginTop: 3 }}>{t("tapToMap")}</div>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 </>
               ),
             },
@@ -1982,7 +1605,7 @@ const BLANK_TRIP = () => ({
   from: { name: "München Hbf", time: "", platform: "" },
   to: { name: "", time: "" },
   trainLine: "",
-  legs: [{ from: "München Hbf", fromTime: "", platform: "", train: "", to: "", toTime: "" }],
+  legs: [{ from: "", fromTime: "", platform: "", train: "", to: "", toTime: "", toPlatform: "", transfer: "" }],
   priceNote: "",
   contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@autdoor_actyvni", phone: "+49 155 617 12359" },
   heroGradient: "linear-gradient(120deg, #1b92dc 0%, #38a3e0 32%, #5fb0c8 56%, #8fbf8a 78%, #aece5f 100%)",
@@ -1993,6 +1616,7 @@ const BLANK_TRIP = () => ({
   about: "",
   route: [],
   routeUrl: "",
+  bonus: [],
   cafes: [],
   weather: { tempC: 15, feelsC: 14, condition: "", icon: "cloud", rainPct: 0, windKmh: 0, humidity: 50 },
   packing: [],
@@ -2017,26 +1641,32 @@ const Field = ({ label, children }) => (
 
 function TripForm({ initial, onSave, onCancel }) {
   const [t, setT] = useState(() => JSON.parse(JSON.stringify(initial)));
+  // Який поїзд зараз розгорнутий у редакторі. Одночасно відкритий лише
+  // один блок — інакше при трьох-чотирьох поїздах форма стає нескінченною.
+  const [openLeg, setOpenLeg] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [addr, setAddr] = useState("");
   const [addrResults, setAddrResults] = useState(null); // null | [] | [..]
   const [addrBusy, setAddrBusy] = useState(false);
-  // Автопідбір поїздів через Deutsche Bahn
-  const [dbFrom, setDbFrom] = useState("");
-  const [dbTo, setDbTo] = useState("");
-  const [dbBusy, setDbBusy] = useState(false);
-  const [dbRes, setDbRes] = useState(null);
-  const [dbErr, setDbErr] = useState("");
-  const [dbTime, setDbTime] = useState("07:00");
+  // Стани від автопідбору поїздів через Deutsche Bahn прибрано разом
+  // із самим підбором: вони лишались оголошеними, але вже нікуди не
+  // використовувались.
   const [selStop, setSelStop] = useState(null);
+  const [selBonus, setSelBonus] = useState(null);
   const set = (patch) => setT((prev) => ({ ...prev, ...patch }));
   const setNested = (key, patch) => setT((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
 
   // Route editing
-  const addStop = () => set({ route: [...t.route, { name: "", note: "", t: "" }] });
+  const addStop = () => set({ route: [...t.route, { name: "", note: "", info: "", t: "" }] });
   const updStop = (i, patch) => set({ route: t.route.map((s, j) => j === i ? { ...s, ...patch } : s) });
   const delStop = (i) => set({ route: t.route.filter((_, j) => j !== i) });
+
+  // Бонусні точки — окремий список, не пов'язаний з маршрутом.
+  const bonus = t.bonus || [];
+  const addBonus = () => { set({ bonus: [...bonus, { name: "", note: "", lat: undefined, lng: undefined }] }); setSelBonus(bonus.length); };
+  const updBonus = (i, patch) => set({ bonus: bonus.map((b, j) => j === i ? { ...b, ...patch } : b) });
+  const delBonus = (i) => { set({ bonus: bonus.filter((_, j) => j !== i) }); setSelBonus(null); };
 
   // Sections editing (rename / reorder / show-hide). Backfill defaults for
   // older trips that don't yet carry a sections array.
@@ -2228,25 +1858,117 @@ function TripForm({ initial, onSave, onCancel }) {
         <div style={card}>
           <h3 style={cardTitle}><Train size={15} /> Поїзди (з пересадками)</h3>
           <p style={{ fontSize: 12, color: C.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
-            Додайте один або кілька поїздів. Між поїздами автоматично показується пересадка.
+            Кожен поїзд — окремий блок: натисніть, щоб розгорнути поля. Між поїздами
+            з'являється пересадка; лишіть поле порожнім — час порахується з часів
+            прибуття й відправлення сам. Поїздів і пересадок може бути скільки завгодно.
           </p>
 
-          {(t.legs || []).map((leg, i) => (
-            <div key={i} style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 10, background: "#fff" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: C.rasp }}>Поїзд {i + 1}</span>
-                <button onClick={() => set({ legs: t.legs.filter((_, j) => j !== i) })} style={{ background: "none", border: "none", color: C.rasp, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Видалити</button>
+          {(t.legs || []).map((leg, i) => {
+            const upd = (patch) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, ...patch } : l) });
+            const prev = i > 0 ? t.legs[i - 1] : null;
+            const autoMin = prev ? minutesBetween(prev.toTime, leg.fromTime) : null;
+            const isOpen = openLeg === i;
+            return (
+              <div key={i}>
+                {/* Пересадка стоїть МІЖ поїздами — там, де вона й відбувається.
+                    Порожнє поле означає «порахувати з часів»: якщо попередній
+                    поїзд прибуває о 09:56, а цей відходить о 10:29, підпис
+                    з'явиться сам. Вписане значення має перевагу. */}
+                {prev && (
+                  <div style={{ background: C.yellowSoft, border: `1px solid ${C.yellow}`, borderRadius: 12, padding: "10px 12px", marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
+                    <Footprints size={17} style={{ color: C.yellowInk, flexShrink: 0 }} />
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: C.yellowInk, flexShrink: 0 }}>Пересадка</span>
+                    <input
+                      style={{ ...inp, marginBottom: 0, flex: 1, minWidth: 0, background: "#fff" }}
+                      value={leg.transfer || ""}
+                      onChange={(e) => upd({ transfer: e.target.value })}
+                      placeholder={autoMin != null ? `${autoMin} хв (авто)` : "напр. 14 хв"} />
+                  </div>
+                )}
+                <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, marginBottom: 10, background: "#fff", overflow: "hidden" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px" }}>
+                    <button onClick={() => setOpenLeg(isOpen ? null : i)}
+                      style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                        <span style={{ color: C.rasp, flexShrink: 0, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
+                          <ChevronRight size={16} />
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: C.rasp }}>Поїзд {i + 1}</span>
+                        {leg.train && leg.train.trim() !== "" && (
+                          <span style={{ fontSize: 11, fontWeight: 800, color: C.yellowInk, background: C.yellow, padding: "3px 9px", borderRadius: 20 }}>{leg.train}</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 12, color: C.muted, marginTop: 4, paddingLeft: 23, lineHeight: 1.35 }}>
+                        {(leg.fromTime || "—") + " " + (leg.from || "станція не вказана")}
+                        {" → "}
+                        {(leg.toTime || "—") + " " + (leg.to || "кінцева не вказана")}
+                      </div>
+                    </button>
+                    <button onClick={() => { set({ legs: t.legs.filter((_, j) => j !== i) }); setOpenLeg(null); }}
+                      style={{ background: "none", border: "none", color: C.rasp, fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>Видалити</button>
+                  </div>
+                  {isOpen && (
+                    <div style={{ padding: "0 12px 12px", borderTop: `1px solid ${C.line}` }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "11px 0 7px" }}>Звідки</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <input style={{ ...inp, marginBottom: 0 }} value={leg.from || ""} onChange={(e) => upd({ from: e.target.value })} placeholder="Станція (Augsburg Hbf)" />
+                        <input style={{ ...inp, marginBottom: 0 }} value={leg.fromTime || ""} onChange={(e) => upd({ fromTime: e.target.value })} placeholder="Відпр. 08:38" />
+                        <input style={{ ...inp, marginBottom: 0 }} value={leg.platform || ""} onChange={(e) => upd({ platform: e.target.value })} placeholder="Колія (8)" />
+                        <input style={{ ...inp, marginBottom: 0 }} value={leg.train || ""} onChange={(e) => upd({ train: e.target.value })} placeholder="Поїзд (RE 9)" />
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "13px 0 7px" }}>Куди (кінцева станція цього поїзда)</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <input style={{ ...inp, marginBottom: 0 }} value={leg.to || ""} onChange={(e) => upd({ to: e.target.value })} placeholder="Станція (München Hbf)" />
+                        <input style={{ ...inp, marginBottom: 0 }} value={leg.toTime || ""} onChange={(e) => upd({ toTime: e.target.value })} placeholder="Приб. 09:56" />
+                        <input style={{ ...inp, marginBottom: 0 }} value={leg.toPlatform || ""} onChange={(e) => upd({ toPlatform: e.target.value })} placeholder="Колія прибуття (17)" />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
+            );
+          })}
+          <button onClick={() => { const n = (t.legs || []).length; set({ legs: [...(t.legs || []), { from: "", fromTime: "", platform: "", train: "", to: "", toTime: "", toPlatform: "", transfer: "" }] }); setOpenLeg(n); }} style={{ width: "100%", border: `1.5px dashed ${C.rasp}`, background: C.raspSoft, color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}>+ Додати поїзд{(t.legs || []).length > 0 ? " і пересадку" : ""}</button>
+          <Field label="Примітка про квитки"><input style={inp} value={t.priceNote} onChange={(e) => set({ priceNote: e.target.value })} placeholder="Bayern-Ticket ~29 €/особа" /></Field>
+        </div>
+
+        {/* Бонусні точки */}
+        <div style={card}>
+          <h3 style={cardTitle}><MapPin size={15} /> Додаткові місця на карті</h3>
+          <p style={{ fontSize: 12, color: C.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
+            Місця поруч, які не входять у маршрут: оглядовий майданчик, каплиця, купальня.
+            У розділі «Маршрут» вони йдуть окремим списком під основними точками, а при
+            натисканні підсвічуються жовтим і показуються на карті жовтою шпилькою.
+          </p>
+          {bonus.length === 0 && <p style={{ fontSize: 13, color: C.muted, margin: "0 0 12px" }}>Поки немає. Можна не додавати — розділ просто не з'явиться.</p>}
+          {(() => {
+            const sel = selBonus != null ? bonus[selBonus] : null;
+            const la = parseFloat(sel && sel.lat), ln = parseFloat(sel && sel.lng);
+            if (!sel || isNaN(la) || isNaN(ln)) return null;
+            return (
+              <div style={{ marginBottom: 12 }}>
+                <MeetingMap lat={la} lng={ln} accent="bonus" />
+                <p style={{ fontSize: 11.5, color: C.muted, margin: "6px 0 0" }}>На карті: {sel.name || `Місце ${selBonus + 1}`}</p>
+              </div>
+            );
+          })()}
+          {bonus.map((b, i) => (
+            <div key={i}
+              onClick={() => setSelBonus(selBonus === i ? null : i)}
+              style={{ border: `1.5px solid ${selBonus === i ? C.yellow : C.line}`, borderRadius: 12, padding: 12, marginBottom: 10, background: selBonus === i ? C.yellowSoft : "#fff", cursor: "pointer" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.yellowInk }}>Місце {i + 1}{selBonus === i ? " · на карті" : ""}</span>
+                <button onClick={(e) => { e.stopPropagation(); delBonus(i); }} style={{ background: "none", border: "none", color: C.rasp, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Видалити</button>
+              </div>
+              <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 8 }} value={b.name || ""} onChange={(e) => updBonus(i, { name: e.target.value })} placeholder="Назва (Оглядовий майданчик Wendelstein)" />
+              <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 8 }} value={b.note || ""} onChange={(e) => updBonus(i, { note: e.target.value })} placeholder="Опис (20 хв пішки від станції, вхід вільний)" />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <input style={{ ...inp, marginBottom: 8 }} value={leg.from} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, from: e.target.value } : l) })} placeholder="Станція (München Hbf)" />
-                <input style={{ ...inp, marginBottom: 8 }} value={leg.fromTime} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, fromTime: e.target.value } : l) })} placeholder="Відпр. 08:32" />
-                <input style={{ ...inp, marginBottom: 0 }} value={leg.train} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, train: e.target.value } : l) })} placeholder="Поїзд (RB 6)" />
-                <input style={{ ...inp, marginBottom: 0 }} value={leg.platform} onChange={(e) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, platform: e.target.value } : l) })} placeholder="Платформа (27)" />
+                <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 0 }} type="number" step="any" value={b.lat ?? ""} onChange={(e) => updBonus(i, { lat: e.target.value === "" ? undefined : parseFloat(e.target.value) })} placeholder="Широта (47.49)" />
+                <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 0 }} type="number" step="any" value={b.lng ?? ""} onChange={(e) => updBonus(i, { lng: e.target.value === "" ? undefined : parseFloat(e.target.value) })} placeholder="Довгота (11.10)" />
               </div>
             </div>
           ))}
-          <button onClick={() => set({ legs: [...(t.legs || []), { from: "", fromTime: "", platform: "", train: "", to: "", toTime: "" }] })} style={{ width: "100%", border: `1.5px dashed ${C.rasp}`, background: C.raspSoft, color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}>+ Додати поїзд</button>
-          <Field label="Примітка про квитки"><input style={inp} value={t.priceNote} onChange={(e) => set({ priceNote: e.target.value })} placeholder="Bayern-Ticket ~29 €/особа" /></Field>
+          <button onClick={addBonus} style={{ width: "100%", border: `1.5px dashed ${C.yellowInk}`, background: C.yellowSoft, color: C.yellowInk, borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Додати додаткове місце</button>
         </div>
 
         {/* Meeting point */}
@@ -2350,7 +2072,15 @@ function TripForm({ initial, onSave, onCancel }) {
                 <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 8 }} value={s.name} onChange={(e) => updStop(i, { name: e.target.value })} placeholder="Назва точки" />
                 <input style={{ ...inp, marginBottom: 8 }} value={s.t} onChange={(e) => updStop(i, { t: e.target.value })} placeholder="10:30" />
               </div>
-              <input style={{ ...inp, marginBottom: 8 }} value={s.note} onChange={(e) => updStop(i, { note: e.target.value })} placeholder="Примітка (необов'язково)" />
+              <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 8 }} value={s.note} onChange={(e) => updStop(i, { note: e.target.value })} placeholder="Примітка (необов'язково)" />
+              {/* Багаторядкове: сюди йдуть ціни, години роботи, події —
+                  один рядок для цього затісний, а перенесення рядків
+                  зберігаються й показуються учаснику як є. */}
+              <textarea onClick={(e) => e.stopPropagation()} rows={2}
+                style={{ ...inp, marginBottom: 8, resize: "vertical", lineHeight: 1.45 }}
+                value={s.info || ""}
+                onChange={(e) => updStop(i, { info: e.target.value })}
+                placeholder="Додаткова інформація: вхід 8 €, музей до 17:00, у неділю фестиваль" />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <input style={{ ...inp, marginBottom: 0 }} type="number" step="any" value={s.lat ?? ""} onChange={(e) => updStop(i, { lat: e.target.value === "" ? undefined : parseFloat(e.target.value) })} placeholder="Широта (47.49)" />
                 <input style={{ ...inp, marginBottom: 0 }} type="number" step="any" value={s.lng ?? ""} onChange={(e) => updStop(i, { lng: e.target.value === "" ? undefined : parseFloat(e.target.value) })} placeholder="Довгота (11.10)" />
@@ -2615,7 +2345,12 @@ export default function App() {
   const [editing, setEditing] = useState(null); // trip object being edited, or "new"
   const [pinOpen, setPinOpen] = useState(false);
   const [pin, setPin] = useState("");
-  const ADMIN_PIN = "73911305"; // PIN організатора — 8 символів
+  const [pinVisible, setPinVisible] = useState(false);
+  // PIN організатора — 10 знаків: A 7 3 9 1 . 1 3 0 5
+  // ⚠️ Той самий PIN мусить стояти у ДВОХ функціях Supabase
+  // (save_trip і delete_trip) — інакше збереження мовчки перестане
+  // працювати, хоча вхід у режим організатора буде проходити.
+  const ADMIN_PIN = "A7391.1305";
 
   // Group trips by their status group. "done"/"cancelled" → Минулі; the rest
   // (upcoming, recruiting, ongoing, postponed) → Найближчі. At the start of a
@@ -2820,13 +2555,28 @@ export default function App() {
             <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, borderRadius: 18, padding: 22, width: "100%", maxWidth: 320, boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
               <h3 style={{ margin: "0 0 6px", fontSize: 17, fontWeight: 800, color: C.ink }}>{t("pinTitle")}</h3>
               <p style={{ margin: "0 0 16px", fontSize: 13, color: C.muted }}>{t("pinDesc")}</p>
-              <input
-                autoFocus type="password" inputMode="numeric" value={pin}
-                onChange={(e) => setPin(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { if (pin === ADMIN_PIN) { setIsAdmin(true); setAdminPin(pin); setPinOpen(false); } else setPin(""); } }}
-                placeholder="••••••••"
-                style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px", fontSize: 18, textAlign: "center", letterSpacing: 4, marginBottom: 14, fontFamily: "inherit" }}
-              />
+              {/* Клавіатура літер і символів. Раніше стояло
+                  inputMode="numeric" — телефон показував лише цифрову
+                  панель, і ввести літеру чи крапку було просто нічим. */}
+              <div style={{ position: "relative", marginBottom: 14 }}>
+                <input
+                  autoFocus type={pinVisible ? "text" : "password"} inputMode="text"
+                  autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { if (pin === ADMIN_PIN) { setIsAdmin(true); setAdminPin(pin); setPinOpen(false); } else setPin(""); } }}
+                  placeholder="••••••••••"
+                  style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 44px 12px 12px", fontSize: 18, textAlign: "center", letterSpacing: 2, fontFamily: "inherit" }}
+                />
+                {/* Показати введене. Для PIN із літер і символів це не
+                    примха: одну помилку в одинадцяти знаках наосліп
+                    знайти неможливо. */}
+                <button type="button" onClick={() => setPinVisible((v) => !v)}
+                  aria-label={pinVisible ? "Сховати" : "Показати"}
+                  style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 11, fontWeight: 700, padding: "8px 10px", fontFamily: "inherit" }}>
+                  {pinVisible ? "СХОВАТИ" : "ПОКАЗАТИ"}
+                </button>
+              </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <button onClick={() => setPinOpen(false)} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, color: C.muted, borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{t("cancel")}</button>
                 <button onClick={() => { if (pin === ADMIN_PIN) { setIsAdmin(true); setAdminPin(pin); setPinOpen(false); } else setPin(""); }} style={{ flex: 1, background: C.green, border: "none", color: "#fff", borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{t("enter")}</button>
