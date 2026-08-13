@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v33";
+const APP_VERSION = "v35";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -113,6 +113,8 @@ const T = {
   appName: { uk: "Аутдор Активні", en: "Autdoor Actyvni", de: "Autdoor Actyvni", ru: "Аутдор Активные" },
   appSubtitle: { uk: "Одноденні поїздки в гори та міста", en: "Day trips to mountains and cities", de: "Tagesausflüge in Berge und Städte", ru: "Однодневные поездки в горы и города" },
   upcomingTrips: { uk: "Найближчі поїздки", en: "Upcoming trips", de: "Kommende Ausflüge", ru: "Ближайшие поездки" },
+  futureTrips: { uk: "Майбутні поїздки", en: "Later trips", de: "Weitere Ausflüge", ru: "Будущие поездки" },
+  avgCheck: { uk: "середній чек", en: "average check", de: "im Schnitt", ru: "средний чек" },
   pastTrips: { uk: "Минулі поїздки", en: "Past trips", de: "Vergangene Ausflüge", ru: "Прошлые поездки" },
   noUpcoming: { uk: "Поки немає запланованих поїздок.", en: "No trips planned yet.", de: "Noch keine Ausflüge geplant.", ru: "Пока нет запланированных поездок." },
   addTrip: { uk: "Додати поїздку", en: "Add trip", de: "Ausflug hinzufügen", ru: "Добавить поездку" },
@@ -195,6 +197,7 @@ const T = {
   tapToMap: { uk: "Натисніть, щоб показати на карті", en: "Tap to show on the map", de: "Antippen, um auf der Karte zu zeigen", ru: "Нажмите, чтобы показать на карте" },
   legTransfer: { uk: "Пересадка", en: "Transfer", de: "Umstieg", ru: "Пересадка" },
   legMin: { uk: "хв", en: "min", de: "Min", ru: "мин" },
+  legHour: { uk: "год", en: "h", de: "Std", ru: "ч" },
   legDetails: { uk: "Деталі поїздки", en: "Journey details", de: "Reisedetails", ru: "Детали поездки" },
   jpShowMore: { uk: "Показати ще", en: "Show more", de: "Mehr anzeigen", ru: "Показать ещё" },
   jpTrackNote: { uk: "Номери колій сірим — з розкладу відкритих даних, без підтвердження в реальному часі. Звіряйте з табло на вокзалі.", en: "Grey platform numbers come from the open-data timetable and are not confirmed in real time. Check the station board.", de: "Grau markierte Gleisnummern stammen aus dem Open-Data-Fahrplan und sind nicht in Echtzeit bestätigt. Bitte Anzeigetafel prüfen.", ru: "Номера путей серым — из расписания открытых данных, без подтверждения в реальном времени. Сверяйте с табло на вокзале." },
@@ -597,6 +600,16 @@ const legFilled = (l) => l && [l.from, l.fromTime, l.train, l.to, l.toTime]
 const filledLegs = (j) => ((j && j.legs) || []).filter(legFilled);
 const blankLeg = () => ({ from: "", fromTime: "", platform: "", train: "", to: "", toTime: "", toPlatform: "", transfer: "" });
 
+// Додане, але не заповнене місце — це ще не місце. Без цієї перевірки
+// в розділі «Маршрут» з'являвся заголовок «Додатково поруч» і під ним
+// порожня біла картка з самою іконкою.
+const bonusFilled = (b) => {
+  if (!b) return false;
+  const txt = (v) => String(tc(v) || "").trim();
+  const hasGeo = !isNaN(parseFloat(b.lat)) && !isNaN(parseFloat(b.lng));
+  return txt(b.name) !== "" || txt(b.note) !== "" || hasGeo;
+};
+
 // Скільки хвилин між двома часами у форматі «10:56». Потрібно, щоб
 // показати тривалість пересадки, коли організатор не вписав її вручну.
 function minutesBetween(a, b) {
@@ -606,6 +619,29 @@ function minutesBetween(a, b) {
   let d = (Number(pb[1]) * 60 + Number(pb[2])) - (Number(pa[1]) * 60 + Number(pa[2]));
   if (d < 0) d += 24 * 60;
   return d;
+}
+
+// Позначка середнього чека в кафе. Це вільний текст організатора, який
+// автопереклад щоразу вивертав по-різному — в одному списку виходило
+// «Average check: 25€», «€12 average check», «Average check: 15€».
+// Якщо в українському тексті впізнається сума й слова «середній чек»,
+// збираємо підпис із ціни та одного перекладеного слова: вигляд стає
+// однаковим для всіх кафе й усіх мов.
+function cafeTag(tag) {
+  const src = String(ukOf(tag) || "").trim();
+  if (src === "") return "";
+  const m = src.match(/(\d+(?:[.,]\d+)?)\s*(?:€|eur|євро|евро)?/i);
+  if (m && /середн\S*\s+чек/i.test(src)) return `${m[1]}€ ${t("avgCheck")}`;
+  return tc(tag);
+}
+
+// Тривалість у людському вигляді: «58 хв», «2 год», «2 год 18 хв».
+function formatDuration(min) {
+  if (min == null || isNaN(min) || min < 0) return "";
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h === 0) return `${m} ${t("legMin")}`;
+  if (m === 0) return `${h} ${t("legHour")}`;
+  return `${h} ${t("legHour")} ${m} ${t("legMin")}`;
 }
 
 // Один рядок ланцюжка: точка на лінії, час, станція, платформа.
@@ -641,6 +677,11 @@ function TrainLegs({ legs: rawLegs }) {
   const first = legs[0] || {};
   const last = legs[legs.length - 1] || {};
   const trains = legs.map((l) => l.train).filter((x) => x && x.trim() !== "");
+  // Загальний час у дорозі — від відправлення першого поїзда до прибуття
+  // останнього. Пересадки входять сюди самі собою, бо це просто різниця
+  // між двома часами, а не сума відрізків.
+  const totalMin = minutesBetween(first.fromTime, last.toTime);
+  const totalText = formatDuration(totalMin);
 
   return (
     <div style={{ border: `1px solid ${C.greenLine}`, borderRadius: 14, overflow: "hidden", background: "#fff" }}>
@@ -670,6 +711,11 @@ function TrainLegs({ legs: rawLegs }) {
               <Footprints size={13} /> {legs.length - 1}
             </span>
           )}
+          {totalText && (
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: C.greenDark, background: C.greenSoft, padding: "4px 11px", borderRadius: 20, display: "flex", alignItems: "center", gap: 5 }}>
+              <Clock size={13} /> {totalText}
+            </span>
+          )}
         </div>
       </button>
 
@@ -679,9 +725,15 @@ function TrainLegs({ legs: rawLegs }) {
             const prev = i > 0 ? legs[i - 1] : null;
             // Час пересадки: вписаний організатором має перевагу, інакше
             // рахуємо з часів прибуття попереднього і відправлення цього.
+            // Час пересадки. Якщо організатор вписав саме число хвилин
+            // («14» чи «14 хв»), показуємо його мовою інтерфейсу — раніше
+            // текст «14 хв» лишався українським і в англійській, і в
+            // німецькій версії. Довільний текст лишаємо як є.
             const manual = String(leg.transfer || "").trim();
+            const onlyMin = manual.match(/^(\d{1,3})\s*(хв|хвилин\w*|мин|минут\w*|min|mins|minutes|minuten)?\.?$/i);
             const autoMin = prev ? minutesBetween(prev.toTime, leg.fromTime) : null;
-            const wait = manual !== "" ? manual : (autoMin != null ? `${autoMin} ${t("legMin")}` : "");
+            const waitMin = onlyMin ? parseInt(onlyMin[1], 10) : (manual === "" ? autoMin : null);
+            const wait = waitMin != null ? formatDuration(waitMin) : manual;
             return (
               <div key={i}>
                 {prev && (
@@ -717,6 +769,21 @@ function TrainLegs({ legs: rawLegs }) {
   );
 }
 
+// Посилання на точку в Google Maps. Форма «/maps/place/<коорд>/@<коорд>»
+// ставить шпильку РІВНО в задані координати. Попередня форма
+// «/maps/search/?api=1&query=…» була саме ПОШУКОМ: Google брав координати
+// як запит і підставляв найближчий відомий йому об'єкт. У місті різниця
+// непомітна, а в горах, де адрес майже немає, точка з'їжджала на сотні
+// метрів — тому в застосунку місце показувалось правильно, а в Google
+// Maps ні. Координати округлюємо до шести знаків — це близько 10 см,
+// точніше не має сенсу.
+function gmapsUrl(lat, lng) {
+  const a = Number(lat), b = Number(lng);
+  if (isNaN(a) || isNaN(b)) return "https://www.google.com/maps";
+  const c = `${a.toFixed(6)},${b.toFixed(6)}`;
+  return `https://www.google.com/maps/place/${c}/@${c},17z`;
+}
+
 // ── Карта точки на OpenStreetMap ────────────────────────────────────
 // Керування масштабом власними кнопками, а не тими, що малює сам OSM.
 // Причина: вбудована карта лишається несприйнятливою до дотиків
@@ -733,7 +800,7 @@ function MeetingMap({ lat, lng, accent }) {
   const pinFill = accent === "bonus" ? "#f2c200" : "#e8332f";
   const pinDot = accent === "bonus" ? "#4a3f00" : "#fff";
   const [span, setSpan] = useState(MAP_SPAN_DEFAULT);
-  const gmaps = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  const gmaps = gmapsUrl(lat, lng);
   const bbox = `${lng - span},${lat - span},${lng + span},${lat + span}`;
   const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik`;
   const canIn = span > MAP_SPAN_MIN * 1.01;
@@ -1155,6 +1222,9 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
   // ніщо в уже робочому списку маршруту не змінюється. Вибір одного
   // знімає вибір іншого — на карті завжди рівно одна точка.
   const [bonusSel, setBonusSel] = useState(null);
+  // Показуємо лише заповнені місця — і в списку, і на карті, щоб індекси
+  // збігались і вибір не «з'їжджав» на сусідній пункт.
+  const bonusPts = (trip.bonus || []).filter(bonusFilled);
   const [routeSel, setRouteSel] = useState(() => {
     const i = (trip.route || []).findIndex((s) => !isNaN(parseFloat(s.lat)) && !isNaN(parseFloat(s.lng)));
     return i >= 0 ? i : null;
@@ -1316,7 +1386,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                     </div>
                   </div>
                   {trip.coords && (
-                    <a href={`https://www.google.com/maps/search/?api=1&query=${trip.coords.lat},${trip.coords.lng}`} target="_blank" rel="noreferrer"
+                    <a href={gmapsUrl(trip.coords.lat, trip.coords.lng)} target="_blank" rel="noreferrer"
                       style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 10, background: C.green, color: "#fff", borderRadius: 11, padding: "13px", fontSize: 14, fontWeight: 700, textDecoration: "none" }}>
                       <Navigation size={17} /> {t("openGeo")}
                     </a>
@@ -1341,7 +1411,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                   // Одна карта на обидва списки: показує ту точку, яку
                   // щойно натиснули — чи то з маршруту, чи то бонусну.
                   const isBonus = bonusSel != null;
-                  const sel = isBonus ? (trip.bonus || [])[bonusSel] : (routeSel != null ? trip.route[routeSel] : null);
+                  const sel = isBonus ? bonusPts[bonusSel] : (routeSel != null ? trip.route[routeSel] : null);
                   const la = parseFloat(sel && sel.lat), ln = parseFloat(sel && sel.lng);
                   if (!sel || isNaN(la) || isNaN(ln)) return null;
                   return (
@@ -1389,7 +1459,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                     з'єднувальної лінії: вони не є частиною маршруту, а лише
                     пропозиції поруч. Обране підсвічується жовтим — тим самим
                     кольором, що й шпилька на карті. */}
-                {(trip.bonus || []).length > 0 && (
+                {bonusPts.length > 0 && (
                   <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px dashed ${C.greenLine}` }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
                       <MapPin size={15} style={{ color: C.yellowInk }} />
@@ -1397,7 +1467,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                     </div>
                     <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 11px", lineHeight: 1.4 }}>{t("bonusHint")}</p>
                     <div style={{ display: "grid", gap: 8 }}>
-                      {(trip.bonus || []).map((b, i) => {
+                      {bonusPts.map((b, i) => {
                         const hasGeo = !isNaN(parseFloat(b.lat)) && !isNaN(parseFloat(b.lng));
                         const active = bonusSel === i;
                         return (
@@ -1436,7 +1506,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                       <div style={{ flex: 1 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
                           <span style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>{tc(c.name)}</span>
-                          {c.tag && <span style={{ fontSize: 10.5, color: C.rasp, background: C.raspSoft, padding: "3px 8px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap" }}>{tc(c.tag)}</span>}
+                          {cafeTag(c.tag) && <span style={{ fontSize: 10.5, color: C.rasp, background: C.raspSoft, padding: "3px 8px", borderRadius: 20, fontWeight: 600, whiteSpace: "nowrap" }}>{cafeTag(c.tag)}</span>}
                         </div>
                         <div style={{ fontSize: 12.5, color: "#7a766a", marginTop: 2 }}>{tc(c.note)}</div>
                       </div>
@@ -2069,7 +2139,7 @@ function TripForm({ initial, onSave, onCancel }) {
             <span>Напишіть адресу або назву місця й натисніть <b>«Знайти»</b> — оберіть потрібний варіант зі списку, координати підставляться самі. Або вставте у це ж поле готові координати чи посилання з <a href="https://www.google.com/maps" target="_blank" rel="noreferrer" style={{ color: C.greenDark, fontWeight: 700 }}>Google Maps</a>. Перевіряйте точку на карті вище.</span>
           </div>
           {(t.coords.lat !== 0 || t.coords.lng !== 0) && (
-            <a href={`https://www.google.com/maps/search/?api=1&query=${t.coords.lat},${t.coords.lng}`} target="_blank" rel="noreferrer"
+            <a href={gmapsUrl(t.coords.lat, t.coords.lng)} target="_blank" rel="noreferrer"
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 10, background: "#fff", color: C.green, border: `1.5px solid ${C.green}`, borderRadius: 10, padding: "9px", fontSize: 12.5, fontWeight: 700, textDecoration: "none" }}>
               <Navigation size={14} /> Перевірити на карті
             </a>
@@ -2356,6 +2426,8 @@ function TripForm({ initial, onSave, onCancel }) {
             .map((j) => ({ legs: ((j && j.legs) || []).filter(legFilled) }))
             .filter((j) => j.legs.length > 0);
           out.journeys = js;
+          // Порожні заготовки додаткових місць теж викидаємо.
+          out.bonus = (out.bonus || []).filter(bonusFilled);
           // Поле legs лишається як перше відправлення — на нього спираються
           // збережені раніше поїздки й похідні поля нижче.
           out.legs = js.length > 0 ? js[0].legs : [];
@@ -2438,8 +2510,23 @@ export default function App() {
   // (upcoming, recruiting, ongoing, postponed) → Найближчі. At the start of a
   // new month there are simply no past trips yet, so everything naturally
   // shows under Найближчі — matching the one-month planning cycle.
-  const upcoming = trips.filter((t) => (STATUS[t.status]?.group || "upcoming") === "upcoming");
+  const upcomingAll = trips.filter((t) => (STATUS[t.status]?.group || "upcoming") === "upcoming");
   const past = trips.filter((t) => (STATUS[t.status]?.group || "upcoming") === "past");
+  // «Найближчі» — те, що вже за два тижні або раніше. Решта майбутніх
+  // поїздок іде окремим списком нижче: так одразу видно, куди йдемо цими
+  // вихідними, а далекі плани не змішуються з найближчими. Поїздка без
+  // проставленої дати лишається серед найближчих — краще показати зайве,
+  // ніж заховати.
+  const SOON_DAYS = 14;
+  const daysUntil = (iso) => {
+    if (!iso) return null;
+    const d = new Date(String(iso) + "T00:00:00");
+    if (isNaN(d.getTime())) return null;
+    const n = new Date();
+    return Math.round((d - new Date(n.getFullYear(), n.getMonth(), n.getDate())) / 86400000);
+  };
+  const upcoming = upcomingAll.filter((x) => { const n = daysUntil(x.date); return n == null || n <= SOON_DAYS; });
+  const later = upcomingAll.filter((x) => { const n = daysUntil(x.date); return n != null && n > SOON_DAYS; });
   const trip = trips.find((t) => t.id === selected);
 
   // Зберігає поїздку в Supabase (якщо підключено).
@@ -2601,6 +2688,16 @@ export default function App() {
               </button>
             )}
             {upcoming.map((t) => (
+              <TripCard key={t.id} trip={t} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} />
+            ))}
+
+            {later.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "24px 4px 14px" }}>
+                <Calendar size={16} color={C.yellow} />
+                <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, color: C.yellow }}>{t("futureTrips")}</h2>
+              </div>
+            )}
+            {later.map((t) => (
               <TripCard key={t.id} trip={t} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} />
             ))}
 
