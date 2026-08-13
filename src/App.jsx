@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v36";
+const APP_VERSION = "v39";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -372,24 +372,51 @@ async function translateBatch(texts, target) {
 
 async function translateTripContent(trip0) {
   const trip = JSON.parse(JSON.stringify(trip0));
+  // Ручні виправлення, збережені редактором перекладів. Вони мають
+  // перевагу над машинним перекладом — інакше кожне збереження поїздки
+  // повертало б «Штурм Бисмарка» замість виправленої «Башни Бисмарка».
+  const manual = Array.isArray(trip.__tr) ? trip.__tr : [];
+  delete trip.__tr;
   const acc = TRANSLATABLE(trip);
   const idx = []; const texts = [];
-  acc.forEach((a, i) => { const v = ukOf(a.get()).trim(); if (v !== "") { idx.push(i); texts.push(v); } });
+  acc.forEach((a, i) => {
+    const v = ukOf(a.get()).trim();
+    if (v === "") return;
+    // Рядок без жодної кирилиці — це власна назва латиницею: «Würzburg»,
+    // «Starnberger See», «Bismarcksturm», «Andreas-Stüberl». Перекладачеві
+    // його віддавати не можна: він транслітерує назву в «Вюрцбург» або й
+    // зовсім вигадує сенс («Bismarcksturm» → «Штурм Бисмарка»). Такі рядки
+    // лишаємо як є в усіх мовах — назва вокзалу чи гори має бути тією
+    // самою, що на табло й на вказівнику.
+    if (!/[А-Яа-яЁёЄєІіЇїҐґ]/.test(v)) { acc[i].set({ uk: v, en: v, ru: v }); return; }
+    idx.push(i); texts.push(v);
+  });
   if (texts.length === 0) return trip;
   const [en, ru] = await Promise.all([translateBatch(texts, "EN"), translateBatch(texts, "RU")]);
   let changed = 0;
   idx.forEach((ai, k) => {
-    const e = en[k] || texts[k], r = ru[k] || texts[k];
+    const m = manual[ai] || {};
+    const e = (m.en && m.en.trim() !== "") ? m.en : (en[k] || texts[k]);
+    const r = (m.ru && m.ru.trim() !== "") ? m.ru : (ru[k] || texts[k]);
     if (e !== texts[k] || r !== texts[k]) changed++;
     acc[ai].set({ uk: texts[k], en: e, ru: r });
   });
   trip.__translated = changed;
   return trip;
 }
-// Готує поїздку до редагування: всі багатомовні поля → прості укр. рядки.
+// Готує поїздку до редагування: всі багатомовні поля → прості укр. рядки,
+// інакше поля вводу отримали б об'єкт замість тексту. Самі переклади при
+// цьому не викидаємо, а відкладаємо в окремий список __tr, вирівняний за
+// тим самим обходом TRANSLATABLE. Без цього кроку будь-яка правка поїздки
+// стирала б усі ручні виправлення перекладу.
 function toEditable(trip0) {
   const trip = JSON.parse(JSON.stringify(trip0));
-  TRANSLATABLE(trip).forEach((a) => a.set(ukOf(a.get())));
+  const acc = TRANSLATABLE(trip);
+  trip.__tr = acc.map((a) => {
+    const v = a.get();
+    return (v && typeof v === "object") ? { en: v.en || "", ru: v.ru || "" } : { en: "", ru: "" };
+  });
+  acc.forEach((a) => a.set(ukOf(a.get())));
   return trip;
 }
 
@@ -1767,6 +1794,8 @@ function TripForm({ initial, onSave, onCancel }) {
   // використовувались.
   const [selStop, setSelStop] = useState(null);
   const [selBonus, setSelBonus] = useState(null);
+  const [trLang, setTrLang] = useState("ru");
+  const [trOpen, setTrOpen] = useState(false);
   // Маршрути в редакторі. Стара поїздка зберігала один маршрут у полі
   // legs — читаємо його як перше відправлення, щоб нічого не загубилось.
   const journeys = (t.journeys && t.journeys.length > 0)
@@ -2312,6 +2341,63 @@ function TripForm({ initial, onSave, onCancel }) {
           <button onClick={addBonus} style={{ width: "100%", border: `1.5px dashed ${C.yellowInk}`, background: C.yellowSoft, color: C.yellowInk, borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Додати додаткове місце</button>
         </div>
 
+        {/* Ручне виправлення перекладів */}
+        <div style={card}>
+          <button onClick={() => setTrOpen(!trOpen)}
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+            <span style={{ color: C.green, flexShrink: 0, transform: trOpen ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
+              <ChevronRight size={17} />
+            </span>
+            <h3 style={{ ...cardTitle, margin: 0 }}>🌐 Переклади</h3>
+          </button>
+          {trOpen && (() => {
+            // Список збирається тим самим обходом, що й автопереклад, тож
+            // сюди автоматично потрапляє КОЖНЕ текстове поле поїздки —
+            // і ті, які з'являться в застосунку пізніше.
+            const tr = Array.isArray(t.__tr) ? t.__tr : [];
+            const rows = TRANSLATABLE(t)
+              .map((r, i) => ({ i, uk: ukOf(r.get()).trim() }))
+              .filter((r) => r.uk !== "");
+            const setTr = (idx, value) => {
+              const next = TRANSLATABLE(t).map((_, k) => ({ ...(tr[k] || { en: "", ru: "" }) }));
+              next[idx][trLang] = value;
+              set({ __tr: next });
+            };
+            return (
+              <>
+                <p style={{ fontSize: 12, color: C.muted, margin: "12px 0 12px", lineHeight: 1.5 }}>
+                  Автопереклад — машина, і в іменах та рідкісних словах він помиляється:
+                  «Bismarcksturm» стає «Штурмом Бисмарка» замість «Башни Бисмарка».
+                  Тут можна виправити будь-який рядок вручну. Зверху — ваш український
+                  оригінал, знизу — переклад, який побачать учасники. Порожнє поле означає,
+                  що переклад підставиться автоматично при збереженні.
+                </p>
+                <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                  {[["en", "English"], ["ru", "Русский"]].map(([code, name]) => (
+                    <button key={code} onClick={() => setTrLang(code)}
+                      style={{ flex: 1, border: `1.5px solid ${trLang === code ? C.green : C.line}`, background: trLang === code ? C.greenSoft : "#fff", color: trLang === code ? C.greenDark : C.muted, borderRadius: 10, padding: "9px 6px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      {name}
+                    </button>
+                  ))}
+                </div>
+                {rows.length === 0 && <p style={{ fontSize: 13, color: C.muted, margin: 0 }}>Спершу заповніть тексти поїздки.</p>}
+                {rows.map((r) => {
+                  const cur = (tr[r.i] && tr[r.i][trLang]) || "";
+                  const long = r.uk.length > 60;
+                  return (
+                    <div key={r.i} style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 11, marginBottom: 9, background: "#fff" }}>
+                      <div style={{ fontSize: 12.5, color: C.muted, lineHeight: 1.45, marginBottom: 7 }}>{r.uk}</div>
+                      {long
+                        ? <textarea rows={3} style={{ ...inp, marginBottom: 0, resize: "vertical", lineHeight: 1.45 }} value={cur} onChange={(e) => setTr(r.i, e.target.value)} placeholder="Переклад підставиться автоматично" />
+                        : <input style={{ ...inp, marginBottom: 0 }} value={cur} onChange={(e) => setTr(r.i, e.target.value)} placeholder="Переклад підставиться автоматично" />}
+                    </div>
+                  );
+                })}
+              </>
+            );
+          })()}
+        </div>
+
         {/* Contacts editor: multiple people per trip */}
         <div style={card}>
           <h3 style={cardTitle}><MessageCircle size={15} /> Контакти для зв'язку</h3>
@@ -2534,8 +2620,22 @@ export default function App() {
   // (upcoming, recruiting, ongoing, postponed) → Найближчі. At the start of a
   // new month there are simply no past trips yet, so everything naturally
   // shows under Найближчі — matching the one-month planning cycle.
-  const upcomingAll = trips.filter((t) => (STATUS[t.status]?.group || "upcoming") === "upcoming");
-  const past = trips.filter((t) => (STATUS[t.status]?.group || "upcoming") === "past");
+  // Порядок за датою, а не за порядком у базі. Майбутні — від найближчої
+  // до найдальшої, минулі — навпаки, свіжі зверху. Поїздка без дати йде
+  // в кінець свого списку: сховати її було б гірше, ніж показати останньою.
+  const dateKey = (x) => {
+    const d = new Date(String(x && x.date ? x.date : "") + "T00:00:00");
+    return isNaN(d.getTime()) ? null : d.getTime();
+  };
+  const byDate = (dir) => (a, b) => {
+    const ka = dateKey(a), kb = dateKey(b);
+    if (ka == null && kb == null) return 0;
+    if (ka == null) return 1;
+    if (kb == null) return -1;
+    return dir * (ka - kb);
+  };
+  const upcomingAll = trips.filter((t) => (STATUS[t.status]?.group || "upcoming") === "upcoming").sort(byDate(1));
+  const past = trips.filter((t) => (STATUS[t.status]?.group || "upcoming") === "past").sort(byDate(-1));
   // «Найближчі» — те, що вже за два тижні або раніше. Решта майбутніх
   // поїздок іде окремим списком нижче: так одразу видно, куди йдемо цими
   // вихідними, а далекі плани не змішуються з найближчими. Поїздка без
@@ -2560,9 +2660,12 @@ export default function App() {
     catch (e) { alert("Не вдалося зберегти в базі даних.\n" + (e && e.message ? e.message : e)); }
   };
   const saveTrip = (edited) => {
+    // У пам'ять кладемо без службового списку ручних правок — він потрібен
+    // лише всередині редактора й не повинен ані показуватись, ані зберігатись.
+    const shown = { ...edited }; delete shown.__tr;
     setTrips((prev) => {
-      const exists = prev.some((t) => t.id === edited.id);
-      return exists ? prev.map((t) => (t.id === edited.id ? edited : t)) : [...prev, edited];
+      const exists = prev.some((t) => t.id === shown.id);
+      return exists ? prev.map((t) => (t.id === shown.id ? shown : t)) : [...prev, shown];
     });
     setEditing(null);
     // У фоні: автопереклад вмісту (DeepL) і збереження в базу.
@@ -2571,7 +2674,11 @@ export default function App() {
       try {
         final = await translateTripContent(edited);
         setTrips((prev) => prev.map((t) => (t.id === final.id ? final : t)));
-      } catch (e) { /* переклад вимкнено або недоступний — лишаємо укр. */ }
+      } catch (e) {
+        // Переклад вимкнено або недоступний — лишаємо український текст.
+        // Службовий список ручних правок у базу не пишемо в жодному разі.
+        final = { ...edited }; delete final.__tr;
+      }
       await persistTrip(final);
     })();
   };
