@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v31";
+const APP_VERSION = "v33";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -190,7 +190,6 @@ const T = {
   jpCancelled: { uk: "Рейс скасовано або є скасовані ділянки", en: "Cancelled or partly cancelled", de: "Fahrt entfällt teilweise", ru: "Рейс отменён или есть отменённые участки" },
   jpTrack: { uk: "кол.", en: "pl.", de: "Gl.", ru: "пут." },
   travelCityNote: { uk: "Якщо вашого міста немає у цьому списку — повідомте організатора. Він оновить список.", en: "If your city is not on this list, let the organiser know. They will update it.", de: "Wenn Ihre Stadt nicht in dieser Liste steht, sagen Sie der Organisation Bescheid. Die Liste wird dann ergänzt.", ru: "Если вашего города нет в этом списке — сообщите организатору. Он обновит список." },
-  legsAskOrganizer: { uk: "Якщо вашого міста немає у цьому списку — повідомте організатора. Він оновить список.", en: "If your city is not on this list, let the organizer know — they will update it.", de: "Wenn Ihre Stadt nicht in dieser Liste steht, sagen Sie der Organisation Bescheid — die Liste wird ergänzt.", ru: "Если вашего города нет в этом списке — сообщите организатору. Он обновит список." },
   bonusTitle: { uk: "Додатково поруч", en: "Also nearby", de: "Auch in der Nähe", ru: "Дополнительно рядом" },
   bonusHint: { uk: "Не входить у маршрут — заходьте, якщо буде час і бажання.", en: "Not part of the route — visit if you have time.", de: "Nicht Teil der Route — bei Zeit und Lust einen Abstecher wert.", ru: "Не входит в маршрут — загляните, если будет время." },
   tapToMap: { uk: "Натисніть, щоб показати на карті", en: "Tap to show on the map", de: "Antippen, um auf der Karte zu zeigen", ru: "Нажмите, чтобы показать на карте" },
@@ -578,6 +577,26 @@ const diffColor = (d) =>
 // legs: [{ from, fromTime, platform, train, to, toTime }]. Backward
 // compatible: callers fall back to the old single from/to fields when a trip
 // has no legs array.
+// ── Кілька окремих маршрутів до тієї самої цілі ──────────────────────
+// Поїздка може мати кілька незалежних відправлень: із Landsberg, із
+// Augsburg, із Мюнхена. Кожне — власний ланцюжок поїздів із пересадками.
+// Старі поїздки зберігали ОДИН маршрут у полі legs; читаємо обидва
+// формати, щоб нічого зі збереженого не загубилось.
+function tripJourneys(trip) {
+  const js = trip && Array.isArray(trip.journeys) ? trip.journeys : null;
+  if (js && js.length > 0) return js.map((j) => ({ legs: Array.isArray(j.legs) ? j.legs : [] }));
+  const legs = trip && Array.isArray(trip.legs) ? trip.legs : [];
+  return legs.length > 0 ? [{ legs }] : [];
+}
+
+// Порожня заготовка поїзда — це ще не поїзд. Без цієї перевірки в шапці
+// картки замість кінцевої станції показувалась риска («07:52 → —»),
+// бо в кінці списку висів недозаповнений блок.
+const legFilled = (l) => l && [l.from, l.fromTime, l.train, l.to, l.toTime]
+  .some((v) => String(v == null ? "" : v).trim() !== "");
+const filledLegs = (j) => ((j && j.legs) || []).filter(legFilled);
+const blankLeg = () => ({ from: "", fromTime: "", platform: "", train: "", to: "", toTime: "", toPlatform: "", transfer: "" });
+
 // Скільки хвилин між двома часами у форматі «10:56». Потрібно, щоб
 // показати тривалість пересадки, коли організатор не вписав її вручну.
 function minutesBetween(a, b) {
@@ -615,8 +634,10 @@ function LegStop({ time, name, platform, last }) {
 // приїде, якими поїздами. Натиск розкриває повний ланцюжок, де кожна
 // пересадка стоїть МІЖ двома поїздами — щоб було видно, на якій станції
 // і скільки часу на неї є.
-function TrainLegs({ legs }) {
+function TrainLegs({ legs: rawLegs }) {
   const [open, setOpen] = useState(false);
+  const legs = (rawLegs || []).filter(legFilled);
+  if (legs.length === 0) return null;
   const first = legs[0] || {};
   const last = legs[legs.length - 1] || {};
   const trains = legs.map((l) => l.train).filter((x) => x && x.trim() !== "");
@@ -768,7 +789,8 @@ function MeetingMap({ lat, lng, accent }) {
 // поїздів: розклад тепер вводить організатор, а хто хоче інші варіанти —
 // відкриває сайт перевізника, де список завжди повний і актуальний.
 function DbScheduleLink({ trip }) {
-  const legs = trip.legs && trip.legs.length > 0 ? trip.legs : null;
+  const js = tripJourneys(trip).map(filledLegs).filter((l) => l.length > 0);
+  const legs = js.length > 0 ? js[0] : null;
   const from = (legs ? legs[0].from : trip.from && trip.from.name) || "";
   const to = (legs ? legs[legs.length - 1].to : trip.to && trip.to.name) || "";
   if (from.trim() === "" || to.trim() === "") return null;
@@ -1228,9 +1250,15 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
               icon: <Train size={17} />, accent: C.rasp,
               body: (
                 <>
-                  {trip.legs && trip.legs.length > 0 ? (
+                  {tripJourneys(trip).some((j) => filledLegs(j).length > 0) ? (
                     <>
-                      <TrainLegs legs={trip.legs} />
+                      {/* Кожне відправлення — окрема картка. Учасник
+                          розгортає лише те, що стосується його міста. */}
+                      <div style={{ display: "grid", gap: 10 }}>
+                        {tripJourneys(trip)
+                          .filter((j) => filledLegs(j).length > 0)
+                          .map((j, i) => <TrainLegs key={i} legs={j.legs} />)}
+                      </div>
                       {/* Список поїздів веде організатор вручну, тож у ньому
                           є лише ті міста, які він вніс. Підказка потрібна,
                           щоб людина з іншого міста знала, що робити. */}
@@ -1269,16 +1297,6 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                     <Train size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                     <span><b>Bayern Ticket 34 €</b> {t("bTicketTail")}</span>
                   </div>
-                  {/* Список поїздів веде організатор вручну, тож у ньому лише
-                      ті міста, які вже хтось попросив. Підказка нижче
-                      перетворює цю ваду на робочий механізм: учаснику
-                      зрозуміло, що робити, якщо свого міста не знайшов. */}
-                  {!isAdmin && trip.legs && trip.legs.length > 0 && (
-                    <div style={{ marginTop: 9, display: "flex", gap: 7, alignItems: "flex-start", fontSize: 11.5, color: C.muted, lineHeight: 1.45 }}>
-                      <Info size={13} style={{ flexShrink: 0, marginTop: 2 }} />
-                      <span>{t("legsAskOrganizer")}</span>
-                    </div>
-                  )}
                   {!isAdmin && <DbScheduleLink trip={trip} />}
                 </>
               ),
@@ -1641,9 +1659,11 @@ const Field = ({ label, children }) => (
 
 function TripForm({ initial, onSave, onCancel }) {
   const [t, setT] = useState(() => JSON.parse(JSON.stringify(initial)));
-  // Який поїзд зараз розгорнутий у редакторі. Одночасно відкритий лише
-  // один блок — інакше при трьох-чотирьох поїздах форма стає нескінченною.
-  const [openLeg, setOpenLeg] = useState(0);
+  // Який маршрут і який поїзд усередині нього зараз розгорнуті.
+  // Ключ поїзда — рядок «номер_маршруту:номер_поїзда», інакше розгортання
+  // поїзда в одному відправленні відкривало б і сусіднє.
+  const [openJourney, setOpenJourney] = useState(0);
+  const [openLeg, setOpenLeg] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [addr, setAddr] = useState("");
   const [addrResults, setAddrResults] = useState(null); // null | [] | [..]
@@ -1653,6 +1673,11 @@ function TripForm({ initial, onSave, onCancel }) {
   // використовувались.
   const [selStop, setSelStop] = useState(null);
   const [selBonus, setSelBonus] = useState(null);
+  // Маршрути в редакторі. Стара поїздка зберігала один маршрут у полі
+  // legs — читаємо його як перше відправлення, щоб нічого не загубилось.
+  const journeys = (t.journeys && t.journeys.length > 0)
+    ? t.journeys
+    : (t.legs && t.legs.length > 0 ? [{ legs: t.legs }] : [{ legs: [blankLeg()] }]);
   const set = (patch) => setT((prev) => ({ ...prev, ...patch }));
   const setNested = (key, patch) => setT((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
@@ -1858,117 +1883,124 @@ function TripForm({ initial, onSave, onCancel }) {
         <div style={card}>
           <h3 style={cardTitle}><Train size={15} /> Поїзди (з пересадками)</h3>
           <p style={{ fontSize: 12, color: C.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
-            Кожен поїзд — окремий блок: натисніть, щоб розгорнути поля. Між поїздами
-            з'являється пересадка; лишіть поле порожнім — час порахується з часів
-            прибуття й відправлення сам. Поїздів і пересадок може бути скільки завгодно.
+            Кожне <b>відправлення</b> — окремий маршрут із власного міста до спільної цілі.
+            Усередині відправлення додавайте поїзди; між ними сама з'явиться пересадка.
+            Лишіть поле пересадки порожнім — час порахується з часів прибуття й відправлення.
+            Відправлень, поїздів і пересадок може бути скільки завгодно.
           </p>
 
-          {(t.legs || []).map((leg, i) => {
-            const upd = (patch) => set({ legs: t.legs.map((l, j) => j === i ? { ...l, ...patch } : l) });
-            const prev = i > 0 ? t.legs[i - 1] : null;
-            const autoMin = prev ? minutesBetween(prev.toTime, leg.fromTime) : null;
-            const isOpen = openLeg === i;
+          {journeys.map((jr, ji) => {
+            const legs = jr.legs || [];
+            const jOpen = openJourney === ji;
+            const jFrom = (legs.find(legFilled) || {}).from || "";
+            const jTo = ([...legs].reverse().find(legFilled) || {}).to || "";
+            // Змінює один маршрут, не чіпаючи решту.
+            const setLegs = (nextLegs) => set({ journeys: journeys.map((x, k) => k === ji ? { ...x, legs: nextLegs } : x) });
             return (
-              <div key={i}>
-                {/* Пересадка стоїть МІЖ поїздами — там, де вона й відбувається.
-                    Порожнє поле означає «порахувати з часів»: якщо попередній
-                    поїзд прибуває о 09:56, а цей відходить о 10:29, підпис
-                    з'явиться сам. Вписане значення має перевагу. */}
-                {prev && (
-                  <div style={{ background: C.yellowSoft, border: `1px solid ${C.yellow}`, borderRadius: 12, padding: "10px 12px", marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
-                    <Footprints size={17} style={{ color: C.yellowInk, flexShrink: 0 }} />
-                    <span style={{ fontSize: 12.5, fontWeight: 700, color: C.yellowInk, flexShrink: 0 }}>Пересадка</span>
-                    <input
-                      style={{ ...inp, marginBottom: 0, flex: 1, minWidth: 0, background: "#fff" }}
-                      value={leg.transfer || ""}
-                      onChange={(e) => upd({ transfer: e.target.value })}
-                      placeholder={autoMin != null ? `${autoMin} хв (авто)` : "напр. 14 хв"} />
-                  </div>
-                )}
-                <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, marginBottom: 10, background: "#fff", overflow: "hidden" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px" }}>
-                    <button onClick={() => setOpenLeg(isOpen ? null : i)}
-                      style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                        <span style={{ color: C.rasp, flexShrink: 0, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
-                          <ChevronRight size={16} />
-                        </span>
-                        <span style={{ fontSize: 12, fontWeight: 800, color: C.rasp }}>Поїзд {i + 1}</span>
-                        {leg.train && leg.train.trim() !== "" && (
-                          <span style={{ fontSize: 11, fontWeight: 800, color: C.yellowInk, background: C.yellow, padding: "3px 9px", borderRadius: 20 }}>{leg.train}</span>
-                        )}
-                      </div>
-                      <div style={{ fontSize: 12, color: C.muted, marginTop: 4, paddingLeft: 23, lineHeight: 1.35 }}>
-                        {(leg.fromTime || "—") + " " + (leg.from || "станція не вказана")}
-                        {" → "}
-                        {(leg.toTime || "—") + " " + (leg.to || "кінцева не вказана")}
-                      </div>
-                    </button>
-                    <button onClick={() => { set({ legs: t.legs.filter((_, j) => j !== i) }); setOpenLeg(null); }}
-                      style={{ background: "none", border: "none", color: C.rasp, fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>Видалити</button>
-                  </div>
-                  {isOpen && (
-                    <div style={{ padding: "0 12px 12px", borderTop: `1px solid ${C.line}` }}>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "11px 0 7px" }}>Звідки</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                        <input style={{ ...inp, marginBottom: 0 }} value={leg.from || ""} onChange={(e) => upd({ from: e.target.value })} placeholder="Станція (Augsburg Hbf)" />
-                        <input style={{ ...inp, marginBottom: 0 }} value={leg.fromTime || ""} onChange={(e) => upd({ fromTime: e.target.value })} placeholder="Відпр. 08:38" />
-                        <input style={{ ...inp, marginBottom: 0 }} value={leg.platform || ""} onChange={(e) => upd({ platform: e.target.value })} placeholder="Колія (8)" />
-                        <input style={{ ...inp, marginBottom: 0 }} value={leg.train || ""} onChange={(e) => upd({ train: e.target.value })} placeholder="Поїзд (RE 9)" />
-                      </div>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "13px 0 7px" }}>Куди (кінцева станція цього поїзда)</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                        <input style={{ ...inp, marginBottom: 0 }} value={leg.to || ""} onChange={(e) => upd({ to: e.target.value })} placeholder="Станція (München Hbf)" />
-                        <input style={{ ...inp, marginBottom: 0 }} value={leg.toTime || ""} onChange={(e) => upd({ toTime: e.target.value })} placeholder="Приб. 09:56" />
-                        <input style={{ ...inp, marginBottom: 0 }} value={leg.toPlatform || ""} onChange={(e) => upd({ toPlatform: e.target.value })} placeholder="Колія прибуття (17)" />
-                      </div>
+              <div key={ji} style={{ border: `1.5px solid ${jOpen ? C.rasp : C.line}`, borderRadius: 14, marginBottom: 12, background: jOpen ? C.raspSoft : "#fff", overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 13px" }}>
+                  <button onClick={() => { setOpenJourney(jOpen ? null : ji); setOpenLeg(null); }}
+                    style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                      <span style={{ color: C.rasp, flexShrink: 0, transform: jOpen ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
+                        <ChevronRight size={17} />
+                      </span>
+                      <span style={{ fontSize: 12.5, fontWeight: 800, color: C.rasp }}>Відправлення {ji + 1}</span>
+                      <span style={{ fontSize: 11, color: C.muted }}>· поїздів: {legs.filter(legFilled).length}</span>
                     </div>
+                    <div style={{ fontSize: 12.5, color: C.ink, fontWeight: 600, marginTop: 4, paddingLeft: 24, lineHeight: 1.35 }}>
+                      {(jFrom || "місто не вказане") + " → " + (jTo || "кінцева не вказана")}
+                    </div>
+                  </button>
+                  {journeys.length > 1 && (
+                    <button onClick={() => { set({ journeys: journeys.filter((_, k) => k !== ji) }); setOpenJourney(null); setOpenLeg(null); }}
+                      style={{ background: "none", border: "none", color: C.rasp, fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>Видалити</button>
                   )}
                 </div>
+
+                {jOpen && (
+                  <div style={{ padding: "0 13px 13px", borderTop: `1px solid ${C.line}`, background: "#fff" }}>
+                    <div style={{ height: 12 }} />
+                    {legs.map((leg, i) => {
+                      const upd = (patch) => setLegs(legs.map((l, j) => j === i ? { ...l, ...patch } : l));
+                      const prev = i > 0 ? legs[i - 1] : null;
+                      const autoMin = prev ? minutesBetween(prev.toTime, leg.fromTime) : null;
+                      // Ключ включає номер маршруту: інакше розгортання поїзда
+                      // в одному відправленні відкривало б і поїзд у сусідньому.
+                      const legKey = ji + ":" + i;
+                      const isOpen = openLeg === legKey;
+                      return (
+                        <div key={i}>
+                          {/* Пересадка стоїть МІЖ поїздами — там, де вона й відбувається. */}
+                          {prev && (
+                            <div style={{ background: C.yellowSoft, border: `1px solid ${C.yellow}`, borderRadius: 12, padding: "10px 12px", marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
+                              <Footprints size={17} style={{ color: C.yellowInk, flexShrink: 0 }} />
+                              <span style={{ fontSize: 12.5, fontWeight: 700, color: C.yellowInk, flexShrink: 0 }}>Пересадка</span>
+                              <input
+                                style={{ ...inp, marginBottom: 0, flex: 1, minWidth: 0, background: "#fff" }}
+                                value={leg.transfer || ""}
+                                onChange={(e) => upd({ transfer: e.target.value })}
+                                placeholder={autoMin != null ? `${autoMin} хв (авто)` : "напр. 14 хв"} />
+                            </div>
+                          )}
+                          <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, marginBottom: 10, background: "#fff", overflow: "hidden" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px" }}>
+                              <button onClick={() => setOpenLeg(isOpen ? null : legKey)}
+                                style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                                  <span style={{ color: C.rasp, flexShrink: 0, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
+                                    <ChevronRight size={16} />
+                                  </span>
+                                  <span style={{ fontSize: 12, fontWeight: 800, color: C.rasp }}>Поїзд {i + 1}</span>
+                                  {leg.train && leg.train.trim() !== "" && (
+                                    <span style={{ fontSize: 11, fontWeight: 800, color: C.yellowInk, background: C.yellow, padding: "3px 9px", borderRadius: 20 }}>{leg.train}</span>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: 12, color: C.muted, marginTop: 4, paddingLeft: 23, lineHeight: 1.35 }}>
+                                  {(leg.fromTime || "—") + " " + (leg.from || "станція не вказана")}
+                                  {" → "}
+                                  {(leg.toTime || "—") + " " + (leg.to || "кінцева не вказана")}
+                                </div>
+                              </button>
+                              <button onClick={() => { setLegs(legs.filter((_, j) => j !== i)); setOpenLeg(null); }}
+                                style={{ background: "none", border: "none", color: C.rasp, fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>Видалити</button>
+                            </div>
+                            {isOpen && (
+                              <div style={{ padding: "0 12px 12px", borderTop: `1px solid ${C.line}` }}>
+                                <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "11px 0 7px" }}>Звідки</div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                                  <input style={{ ...inp, marginBottom: 0 }} value={leg.from || ""} onChange={(e) => upd({ from: e.target.value })} placeholder="Станція (Augsburg Hbf)" />
+                                  <input style={{ ...inp, marginBottom: 0 }} value={leg.fromTime || ""} onChange={(e) => upd({ fromTime: e.target.value })} placeholder="Відпр. 08:38" />
+                                  <input style={{ ...inp, marginBottom: 0 }} value={leg.platform || ""} onChange={(e) => upd({ platform: e.target.value })} placeholder="Колія (8)" />
+                                  <input style={{ ...inp, marginBottom: 0 }} value={leg.train || ""} onChange={(e) => upd({ train: e.target.value })} placeholder="Поїзд (RE 9)" />
+                                </div>
+                                <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "13px 0 7px" }}>Куди (кінцева станція цього поїзда)</div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                                  <input style={{ ...inp, marginBottom: 0 }} value={leg.to || ""} onChange={(e) => upd({ to: e.target.value })} placeholder="Станція (München Hbf)" />
+                                  <input style={{ ...inp, marginBottom: 0 }} value={leg.toTime || ""} onChange={(e) => upd({ toTime: e.target.value })} placeholder="Приб. 09:56" />
+                                  <input style={{ ...inp, marginBottom: 0 }} value={leg.toPlatform || ""} onChange={(e) => upd({ toPlatform: e.target.value })} placeholder="Колія прибуття (17)" />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <button onClick={() => { setLegs([...legs, blankLeg()]); setOpenLeg(ji + ":" + legs.length); }}
+                      style={{ width: "100%", border: `1.5px dashed ${C.rasp}`, background: C.raspSoft, color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                      + Додати поїзд{legs.length > 0 ? " і пересадку" : ""}
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
-          <button onClick={() => { const n = (t.legs || []).length; set({ legs: [...(t.legs || []), { from: "", fromTime: "", platform: "", train: "", to: "", toTime: "", toPlatform: "", transfer: "" }] }); setOpenLeg(n); }} style={{ width: "100%", border: `1.5px dashed ${C.rasp}`, background: C.raspSoft, color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}>+ Додати поїзд{(t.legs || []).length > 0 ? " і пересадку" : ""}</button>
-          <Field label="Примітка про квитки"><input style={inp} value={t.priceNote} onChange={(e) => set({ priceNote: e.target.value })} placeholder="Bayern-Ticket ~29 €/особа" /></Field>
-        </div>
 
-        {/* Бонусні точки */}
-        <div style={card}>
-          <h3 style={cardTitle}><MapPin size={15} /> Додаткові місця на карті</h3>
-          <p style={{ fontSize: 12, color: C.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
-            Місця поруч, які не входять у маршрут: оглядовий майданчик, каплиця, купальня.
-            У розділі «Маршрут» вони йдуть окремим списком під основними точками, а при
-            натисканні підсвічуються жовтим і показуються на карті жовтою шпилькою.
-          </p>
-          {bonus.length === 0 && <p style={{ fontSize: 13, color: C.muted, margin: "0 0 12px" }}>Поки немає. Можна не додавати — розділ просто не з'явиться.</p>}
-          {(() => {
-            const sel = selBonus != null ? bonus[selBonus] : null;
-            const la = parseFloat(sel && sel.lat), ln = parseFloat(sel && sel.lng);
-            if (!sel || isNaN(la) || isNaN(ln)) return null;
-            return (
-              <div style={{ marginBottom: 12 }}>
-                <MeetingMap lat={la} lng={ln} accent="bonus" />
-                <p style={{ fontSize: 11.5, color: C.muted, margin: "6px 0 0" }}>На карті: {sel.name || `Місце ${selBonus + 1}`}</p>
-              </div>
-            );
-          })()}
-          {bonus.map((b, i) => (
-            <div key={i}
-              onClick={() => setSelBonus(selBonus === i ? null : i)}
-              style={{ border: `1.5px solid ${selBonus === i ? C.yellow : C.line}`, borderRadius: 12, padding: 12, marginBottom: 10, background: selBonus === i ? C.yellowSoft : "#fff", cursor: "pointer" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: C.yellowInk }}>Місце {i + 1}{selBonus === i ? " · на карті" : ""}</span>
-                <button onClick={(e) => { e.stopPropagation(); delBonus(i); }} style={{ background: "none", border: "none", color: C.rasp, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Видалити</button>
-              </div>
-              <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 8 }} value={b.name || ""} onChange={(e) => updBonus(i, { name: e.target.value })} placeholder="Назва (Оглядовий майданчик Wendelstein)" />
-              <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 8 }} value={b.note || ""} onChange={(e) => updBonus(i, { note: e.target.value })} placeholder="Опис (20 хв пішки від станції, вхід вільний)" />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 0 }} type="number" step="any" value={b.lat ?? ""} onChange={(e) => updBonus(i, { lat: e.target.value === "" ? undefined : parseFloat(e.target.value) })} placeholder="Широта (47.49)" />
-                <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 0 }} type="number" step="any" value={b.lng ?? ""} onChange={(e) => updBonus(i, { lng: e.target.value === "" ? undefined : parseFloat(e.target.value) })} placeholder="Довгота (11.10)" />
-              </div>
-            </div>
-          ))}
-          <button onClick={addBonus} style={{ width: "100%", border: `1.5px dashed ${C.yellowInk}`, background: C.yellowSoft, color: C.yellowInk, borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Додати додаткове місце</button>
+          <button onClick={() => { const n = journeys.length; set({ journeys: [...journeys, { legs: [blankLeg()] }] }); setOpenJourney(n); setOpenLeg(n + ":0"); }}
+            style={{ width: "100%", border: `1.5px dashed ${C.green}`, background: C.greenSoft, color: C.greenDark, borderRadius: 10, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}>
+            + Додати відправлення з іншого міста
+          </button>
+          <Field label="Примітка про квитки"><input style={inp} value={t.priceNote} onChange={(e) => set({ priceNote: e.target.value })} placeholder="Bayern-Ticket ~29 €/особа" /></Field>
         </div>
 
         {/* Meeting point */}
@@ -2147,6 +2179,45 @@ function TripForm({ initial, onSave, onCancel }) {
           </div>
         </div>
 
+        {/* Бонусні точки */}
+        <div style={card}>
+          <h3 style={cardTitle}><MapPin size={15} /> Додаткові місця на карті</h3>
+          <p style={{ fontSize: 12, color: C.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
+            Місця поруч, які не входять у маршрут: оглядовий майданчик, каплиця, купальня.
+            У розділі «Маршрут» вони йдуть окремим списком під основними точками, а при
+            натисканні підсвічуються жовтим і показуються на карті жовтою шпилькою.
+          </p>
+          {bonus.length === 0 && <p style={{ fontSize: 13, color: C.muted, margin: "0 0 12px" }}>Поки немає. Можна не додавати — розділ просто не з'явиться.</p>}
+          {(() => {
+            const sel = selBonus != null ? bonus[selBonus] : null;
+            const la = parseFloat(sel && sel.lat), ln = parseFloat(sel && sel.lng);
+            if (!sel || isNaN(la) || isNaN(ln)) return null;
+            return (
+              <div style={{ marginBottom: 12 }}>
+                <MeetingMap lat={la} lng={ln} accent="bonus" />
+                <p style={{ fontSize: 11.5, color: C.muted, margin: "6px 0 0" }}>На карті: {sel.name || `Місце ${selBonus + 1}`}</p>
+              </div>
+            );
+          })()}
+          {bonus.map((b, i) => (
+            <div key={i}
+              onClick={() => setSelBonus(selBonus === i ? null : i)}
+              style={{ border: `1.5px solid ${selBonus === i ? C.yellow : C.line}`, borderRadius: 12, padding: 12, marginBottom: 10, background: selBonus === i ? C.yellowSoft : "#fff", cursor: "pointer" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.yellowInk }}>Місце {i + 1}{selBonus === i ? " · на карті" : ""}</span>
+                <button onClick={(e) => { e.stopPropagation(); delBonus(i); }} style={{ background: "none", border: "none", color: C.rasp, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Видалити</button>
+              </div>
+              <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 8 }} value={b.name || ""} onChange={(e) => updBonus(i, { name: e.target.value })} placeholder="Назва (Оглядовий майданчик Wendelstein)" />
+              <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 8 }} value={b.note || ""} onChange={(e) => updBonus(i, { note: e.target.value })} placeholder="Опис (20 хв пішки від станції, вхід вільний)" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 0 }} type="number" step="any" value={b.lat ?? ""} onChange={(e) => updBonus(i, { lat: e.target.value === "" ? undefined : parseFloat(e.target.value) })} placeholder="Широта (47.49)" />
+                <input onClick={(e) => e.stopPropagation()} style={{ ...inp, marginBottom: 0 }} type="number" step="any" value={b.lng ?? ""} onChange={(e) => updBonus(i, { lng: e.target.value === "" ? undefined : parseFloat(e.target.value) })} placeholder="Довгота (11.10)" />
+              </div>
+            </div>
+          ))}
+          <button onClick={addBonus} style={{ width: "100%", border: `1.5px dashed ${C.yellowInk}`, background: C.yellowSoft, color: C.yellowInk, borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Додати додаткове місце</button>
+        </div>
+
         {/* Contacts editor: multiple people per trip */}
         <div style={card}>
           <h3 style={cardTitle}><MessageCircle size={15} /> Контакти для зв'язку</h3>
@@ -2277,7 +2348,18 @@ function TripForm({ initial, onSave, onCancel }) {
           out.spotsTaken = num(out.spotsTaken, true);
           if (out.coords) out.coords = { lat: num(out.coords.lat), lng: num(out.coords.lng) };
           if (out.weather) out.weather = { ...out.weather, tempC: num(out.weather.tempC, true), feelsC: num(out.weather.feelsC, true), rainPct: num(out.weather.rainPct, true), windKmh: num(out.weather.windKmh, true), humidity: num(out.weather.humidity, true) };
-          if (out.legs && out.legs.length > 0) {
+          // Маршрути: викидаємо порожні заготовки поїздів і порожні
+          // відправлення, щоб у користувача не з'являлись картки з рисками.
+          const js = (out.journeys && out.journeys.length > 0
+            ? out.journeys
+            : (out.legs && out.legs.length > 0 ? [{ legs: out.legs }] : []))
+            .map((j) => ({ legs: ((j && j.legs) || []).filter(legFilled) }))
+            .filter((j) => j.legs.length > 0);
+          out.journeys = js;
+          // Поле legs лишається як перше відправлення — на нього спираються
+          // збережені раніше поїздки й похідні поля нижче.
+          out.legs = js.length > 0 ? js[0].legs : [];
+          if (out.legs.length > 0) {
             const first = out.legs[0], last = out.legs[out.legs.length - 1];
             out.from = { name: first.from, time: first.fromTime, platform: first.platform };
             out.to = { name: last.to, time: last.toTime };
