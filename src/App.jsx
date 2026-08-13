@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v35";
+const APP_VERSION = "v36";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -258,10 +258,34 @@ const t = (key) => {
 // plain string (one language) or as a {uk,en,ru} object (pre-translated).
 // tc() picks the current language with graceful fallback so nothing renders
 // blank.
+// DeepL сприймає коротку фразу як заголовок і повертає її з Великих
+// Літер: «Одяг по погоді» → «Clothing for the Weather». Знімаємо зайві
+// великі літери, але тільки там, де це безпечно:
+//   • лише короткі рядки — саме на них трапляється така поведінка;
+//   • німецьку НЕ чіпаємо: там усі іменники пишуться з великої за
+//     правилами мови, і «Kleidung nach dem Wetter» — правильно;
+//   • якщо в українському оригіналі велика літера є десь, крім першого
+//     знака, або є латиниця — там власна назва («Deutschland Ticket»,
+//     «München Hbf»), і переклад лишаємо недоторканим;
+//   • слова з цифрами та написані повністю великими («ICE», «RB55»)
+//     не чіпаємо в жодному разі.
+function fixTitleCase(text, src, lang) {
+  if (lang === "uk" || lang === "de") return text;
+  if (!text || !src || text.length > 44) return text;
+  if (/[A-Za-z]/.test(src)) return text;
+  if (/[A-ZА-ЯЁЄІЇҐ]/.test(src.slice(1))) return text;
+  return text.replace(/\S+/g, (w, offset) => {
+    if (offset === 0) return w;
+    if (/\d/.test(w) || w === w.toUpperCase()) return w;
+    return w.charAt(0).toLowerCase() + w.slice(1);
+  });
+}
+
 const tc = (val) => {
   if (val == null) return "";
   if (typeof val === "string") return val;
-  return val[CURRENT_LANG] || val.uk || val.en || val.ru || "";
+  const out = val[CURRENT_LANG] || val.uk || val.en || val.ru || "";
+  return fixTitleCase(out, val.uk || "", CURRENT_LANG);
 };
 
 // ── Автопереклад вмісту (DeepL через /api/translate на Vercel) ────────
