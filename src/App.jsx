@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v39";
+const APP_VERSION = "v40";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -375,8 +375,14 @@ async function translateTripContent(trip0) {
   // Ручні виправлення, збережені редактором перекладів. Вони мають
   // перевагу над машинним перекладом — інакше кожне збереження поїздки
   // повертало б «Штурм Бисмарка» замість виправленої «Башни Бисмарка».
-  const manual = Array.isArray(trip.__tr) ? trip.__tr : [];
-  delete trip.__tr;
+  // Ручні виправлення шукаємо за САМИМ українським текстом, а не за
+  // номером поля в списку. Прив'язка до номера була помилкою: варто було
+  // додати чи прибрати один пункт спорядження — і всі наступні поля
+  // отримували чужий переклад. Саме через це назви розділів «поїхали»
+  // на дві позиції: «Кафе/їжа» стало заголовком контактів тощо.
+  const manual = (trip.manualTr && typeof trip.manualTr === "object") ? trip.manualTr : {};
+  delete trip.__tr;      // залишок старого формату
+  delete trip.__trShow;  // службове поле редактора
   const acc = TRANSLATABLE(trip);
   const idx = []; const texts = [];
   acc.forEach((a, i) => {
@@ -395,12 +401,18 @@ async function translateTripContent(trip0) {
   const [en, ru] = await Promise.all([translateBatch(texts, "EN"), translateBatch(texts, "RU")]);
   let changed = 0;
   idx.forEach((ai, k) => {
-    const m = manual[ai] || {};
+    const m = manual[texts[k]] || {};
     const e = (m.en && m.en.trim() !== "") ? m.en : (en[k] || texts[k]);
     const r = (m.ru && m.ru.trim() !== "") ? m.ru : (ru[k] || texts[k]);
     if (e !== texts[k] || r !== texts[k]) changed++;
     acc[ai].set({ uk: texts[k], en: e, ru: r });
   });
+  // Прибираємо правки до текстів, яких у поїздці вже немає, щоб список
+  // не ріс без потреби.
+  const alive = new Set(texts);
+  const kept = {};
+  Object.keys(manual).forEach((k) => { if (alive.has(k)) kept[k] = manual[k]; });
+  trip.manualTr = kept;
   trip.__translated = changed;
   return trip;
 }
@@ -412,10 +424,18 @@ async function translateTripContent(trip0) {
 function toEditable(trip0) {
   const trip = JSON.parse(JSON.stringify(trip0));
   const acc = TRANSLATABLE(trip);
-  trip.__tr = acc.map((a) => {
+  // Чинні переклади складаємо у словник «український текст → переклад».
+  // Він потрібен лише редакторові, щоб показати, що зараз бачать
+  // учасники; у базу не потрапляє. Самі ручні правки живуть окремо,
+  // у полі manualTr, і зберігаються разом із поїздкою.
+  const show = {};
+  acc.forEach((a) => {
     const v = a.get();
-    return (v && typeof v === "object") ? { en: v.en || "", ru: v.ru || "" } : { en: "", ru: "" };
+    const uk = ukOf(v).trim();
+    if (uk !== "" && v && typeof v === "object") show[uk] = { en: v.en || "", ru: v.ru || "" };
   });
+  trip.__trShow = show;
+  delete trip.__tr;
   acc.forEach((a) => a.set(ukOf(a.get())));
   return trip;
 }
@@ -2354,14 +2374,17 @@ function TripForm({ initial, onSave, onCancel }) {
             // Список збирається тим самим обходом, що й автопереклад, тож
             // сюди автоматично потрапляє КОЖНЕ текстове поле поїздки —
             // і ті, які з'являться в застосунку пізніше.
-            const tr = Array.isArray(t.__tr) ? t.__tr : [];
+            const manual = t.manualTr || {};
+            const show = t.__trShow || {};
+            // Однакові тексти в різних полях — один рядок: виправлення
+            // застосується скрізь, і вигляд лишиться однаковим.
+            const seen = new Set();
             const rows = TRANSLATABLE(t)
-              .map((r, i) => ({ i, uk: ukOf(r.get()).trim() }))
-              .filter((r) => r.uk !== "");
-            const setTr = (idx, value) => {
-              const next = TRANSLATABLE(t).map((_, k) => ({ ...(tr[k] || { en: "", ru: "" }) }));
-              next[idx][trLang] = value;
-              set({ __tr: next });
+              .map((r) => ukOf(r.get()).trim())
+              .filter((uk) => uk !== "" && !seen.has(uk) && seen.add(uk));
+            const setTr = (uk, value) => {
+              const cur = manual[uk] || {};
+              set({ manualTr: { ...manual, [uk]: { ...cur, [trLang]: value } } });
             };
             return (
               <>
@@ -2381,15 +2404,20 @@ function TripForm({ initial, onSave, onCancel }) {
                   ))}
                 </div>
                 {rows.length === 0 && <p style={{ fontSize: 13, color: C.muted, margin: 0 }}>Спершу заповніть тексти поїздки.</p>}
-                {rows.map((r) => {
-                  const cur = (tr[r.i] && tr[r.i][trLang]) || "";
-                  const long = r.uk.length > 60;
+                {rows.map((uk) => {
+                  const cur = (manual[uk] && manual[uk][trLang]) || "";
+                  const auto = (show[uk] && show[uk][trLang]) || "";
+                  const long = uk.length > 60;
+                  const edited = cur.trim() !== "";
                   return (
-                    <div key={r.i} style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 11, marginBottom: 9, background: "#fff" }}>
-                      <div style={{ fontSize: 12.5, color: C.muted, lineHeight: 1.45, marginBottom: 7 }}>{r.uk}</div>
+                    <div key={uk} style={{ border: `1px solid ${edited ? C.green : C.line}`, borderRadius: 12, padding: 11, marginBottom: 9, background: "#fff" }}>
+                      <div style={{ fontSize: 12.5, color: C.muted, lineHeight: 1.45, marginBottom: 7 }}>{uk}</div>
                       {long
-                        ? <textarea rows={3} style={{ ...inp, marginBottom: 0, resize: "vertical", lineHeight: 1.45 }} value={cur} onChange={(e) => setTr(r.i, e.target.value)} placeholder="Переклад підставиться автоматично" />
-                        : <input style={{ ...inp, marginBottom: 0 }} value={cur} onChange={(e) => setTr(r.i, e.target.value)} placeholder="Переклад підставиться автоматично" />}
+                        ? <textarea rows={3} style={{ ...inp, marginBottom: 0, resize: "vertical", lineHeight: 1.45 }} value={cur} onChange={(e) => setTr(uk, e.target.value)} placeholder={auto || "Переклад підставиться автоматично"} />
+                        : <input style={{ ...inp, marginBottom: 0 }} value={cur} onChange={(e) => setTr(uk, e.target.value)} placeholder={auto || "Переклад підставиться автоматично"} />}
+                      {!edited && auto !== "" && (
+                        <div style={{ fontSize: 11, color: C.muted, marginTop: 5 }}>Зараз показується: {auto}</div>
+                      )}
                     </div>
                   );
                 })}
@@ -2662,7 +2690,7 @@ export default function App() {
   const saveTrip = (edited) => {
     // У пам'ять кладемо без службового списку ручних правок — він потрібен
     // лише всередині редактора й не повинен ані показуватись, ані зберігатись.
-    const shown = { ...edited }; delete shown.__tr;
+    const shown = { ...edited }; delete shown.__tr; delete shown.__trShow;
     setTrips((prev) => {
       const exists = prev.some((t) => t.id === shown.id);
       return exists ? prev.map((t) => (t.id === shown.id ? shown : t)) : [...prev, shown];
@@ -2677,7 +2705,7 @@ export default function App() {
       } catch (e) {
         // Переклад вимкнено або недоступний — лишаємо український текст.
         // Службовий список ручних правок у базу не пишемо в жодному разі.
-        final = { ...edited }; delete final.__tr;
+        final = { ...edited }; delete final.__tr; delete final.__trShow;
       }
       await persistTrip(final);
     })();
