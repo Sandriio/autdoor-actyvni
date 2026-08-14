@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v44";
+const APP_VERSION = "v46";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -135,7 +135,7 @@ const T = {
   secRoute: { uk: "Маршрут", en: "Route", de: "Route", ru: "Маршрут" },
   secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
   driveNote: { uk: "Спільний архів усіх наших поїздок: фото, відео, треки маршрутів. Додавайте свої знімки — вони будуть доступні всій групі.", en: "A shared archive of all our trips: photos, videos and route tracks. Add your own shots — everyone in the group will see them.", de: "Gemeinsames Archiv aller Ausflüge: Fotos, Videos und Routen. Eigene Aufnahmen sind willkommen — die ganze Gruppe sieht sie.", ru: "Общий архив всех наших поездок: фото, видео, треки маршрутов. Добавляйте свои снимки — они будут доступны всей группе." },
-  driveHomeNote: { uk: "Архів фото й відео з усіх поїздок", en: "Photo and video archive from all trips", de: "Foto- und Videoarchiv aller Ausflüge", ru: "Архив фото и видео со всех поездок" },
+  driveHomeNote: { uk: "Архів медіа з усіх поїздок", en: "Media archive from all trips", de: "Medienarchiv aller Ausflüge", ru: "Архив медиа со всех поездок" },
   driveButton: { uk: "Відкрити Google Диск", en: "Open Google Drive", de: "Google Drive öffnen", ru: "Открыть Google Диск" },
   secCafes: { uk: "Де поїсти та випити", en: "Where to eat & drink", de: "Essen & Trinken", ru: "Где поесть и выпить" },
   secPacking: { uk: "Що взяти з собою", en: "What to bring", de: "Was mitnehmen", ru: "Что взять с собой" },
@@ -2971,15 +2971,15 @@ export default function App() {
                 головне на цьому екрані — найближчі поїздки, а архів
                 потрібен рідше й не має відтягувати увагу. */}
             <a href={DRIVE_URL} target="_blank" rel="noreferrer"
-              style={{ display: "flex", alignItems: "center", gap: 13, marginTop: 22, background: C.card, borderRadius: 16, padding: "14px 16px", textDecoration: "none", boxShadow: "0 2px 12px rgba(0,0,0,0.10)" }}>
-              <span style={{ width: 40, height: 40, borderRadius: 12, background: C.greenSoft, color: C.greenDark, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Camera size={19} />
+              style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 34, background: "transparent", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 14, padding: "11px 13px", textDecoration: "none" }}>
+              <span style={{ width: 30, height: 30, borderRadius: 9, background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.85)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Camera size={15} />
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontSize: 14.5, fontWeight: 800, color: C.ink }}>{t("secDrive")}</span>
-                <span style={{ display: "block", fontSize: 12, color: C.muted, marginTop: 2, lineHeight: 1.35 }}>{t("driveHomeNote")}</span>
+                <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>{t("secDrive")}</span>
+                <span style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 1, lineHeight: 1.35 }}>{t("driveHomeNote")}</span>
               </span>
-              <ChevronRight size={19} style={{ color: C.green, flexShrink: 0 }} />
+              <ChevronRight size={16} style={{ color: "rgba(255,255,255,0.45)", flexShrink: 0 }} />
             </a>
 
             {/* Footer + organizer gear */}
