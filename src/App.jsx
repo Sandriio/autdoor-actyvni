@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v40";
+const APP_VERSION = "v43";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -133,6 +133,9 @@ const T = {
   secTravel: { uk: "Як добираємось", en: "Getting there", de: "Anreise", ru: "Как добраться" },
   secMeeting: { uk: "Точка збору", en: "Meeting point", de: "Treffpunkt", ru: "Точка сбора" },
   secRoute: { uk: "Маршрут", en: "Route", de: "Route", ru: "Маршрут" },
+  secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
+  driveNote: { uk: "Спільний архів усіх наших поїздок: фото, відео, треки маршрутів. Додавайте свої знімки — вони будуть доступні всій групі.", en: "A shared archive of all our trips: photos, videos and route tracks. Add your own shots — everyone in the group will see them.", de: "Gemeinsames Archiv aller Ausflüge: Fotos, Videos und Routen. Eigene Aufnahmen sind willkommen — die ganze Gruppe sieht sie.", ru: "Общий архив всех наших поездок: фото, видео, треки маршрутов. Добавляйте свои снимки — они будут доступны всей группе." },
+  driveButton: { uk: "Відкрити Google Диск", en: "Open Google Drive", de: "Google Drive öffnen", ru: "Открыть Google Диск" },
   secCafes: { uk: "Де поїсти та випити", en: "Where to eat & drink", de: "Essen & Trinken", ru: "Где поесть и выпить" },
   secPacking: { uk: "Що взяти з собою", en: "What to bring", de: "Was mitnehmen", ru: "Что взять с собой" },
   secContact: { uk: "Питання? Зв'яжіться з нами", en: "Questions? Contact us", de: "Fragen? Kontaktiere uns", ru: "Вопросы? Свяжитесь с нами" },
@@ -957,7 +960,7 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
               background: "rgba(255,255,255,0.22)", backdropFilter: "blur(4px)",
               color: "#fff", fontSize: 11, fontWeight: 600, padding: "4px 10px",
               borderRadius: 20, letterSpacing: 0.3,
-            }}>{trip.dateLabel}</span>
+            }}>{dateWithWeekday(trip)}</span>
             {STATUS[trip.status]?.badge && (
               <span style={{ background: STATUS[trip.status].bg, color: STATUS[trip.status].fg, fontSize: 10, fontWeight: 700, padding: "4px 9px", borderRadius: 20, textTransform: "uppercase", letterSpacing: 0.5 }}>{trip.status === "postponed" ? postponedLabel(trip) : statusLabel(trip.status)}</span>
             )}
@@ -1120,13 +1123,53 @@ const DEFAULT_SECTIONS = [
   { type: "route", tkey: "secRoute" },
   { type: "cafes", tkey: "secCafes" },
   { type: "packing", tkey: "secPacking" },
+  { type: "drive", tkey: "secDrive" },
   { type: "contact", tkey: "secContact" },
 ];
+// Спільний архів фото й відео з усіх поїздок. Окрема поїздка може мати
+// власне посилання (поле driveUrl) — тоді показується воно.
+const DRIVE_URL = "https://drive.google.com/drive/folders/17zaBzXwcsTBnjvf7ncOlzltQNaVTGOyi?usp=drive_link";
 const SECTION_LABELS = {
   about: "Про місце", difficulty: "Складність", weather: "Погода",
   travel: "Транспорт", meeting: "Точка збору", route: "Маршрут",
-  cafes: "Кафе/їжа", packing: "Спорядження", contact: "Контакт",
+  cafes: "Кафе/їжа", packing: "Спорядження", drive: "Фото та відео", contact: "Контакт",
 };
+// Вбудована назва розділу поточною мовою. Потрібна і для показу, і для
+// підказки в редакторі: якщо організатор лишає поле порожнім, застосунок
+// бере власний, вручну виписаний переклад — він завжди правильний в усіх
+// мовах, на відміну від машинного перекладу довільної назви.
+const sectionDefaultTitle = (sec) => {
+  const key = (sec && sec.tkey) || (DEFAULT_SECTIONS.find((d) => d.type === (sec && sec.type)) || {}).tkey;
+  return key ? t(key) : "";
+};
+
+// Дні тижня для підпису дати. Рахуються з поля «дата для прогнозу», тож
+// організаторові не треба вписувати їх руками — і вони самі стають на
+// потрібну мову.
+const WEEKDAYS = {
+  uk: ["Неділя", "Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота"],
+  en: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+  ru: ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"],
+};
+function weekdayOf(iso) {
+  // Полудень замість опівночі — щоб зсув часового поясу не «переносив»
+  // поїздку на сусідній день.
+  const d = new Date(String(iso || "").trim() + "T12:00:00");
+  if (isNaN(d.getTime())) return "";
+  return (WEEKDAYS[CURRENT_LANG] || WEEKDAYS.uk)[d.getDay()];
+}
+// Підпис дати з днем тижня. Якщо організатор уже вписав день у текст
+// дати («Субота, 21 червня»), другий раз не додаємо.
+function dateWithWeekday(trip) {
+  const label = tc(trip && trip.dateLabel) || "";
+  const wd = weekdayOf(trip && trip.date);
+  if (!wd) return label;
+  const hay = (label + " " + ukOf(trip && trip.dateLabel)).toLowerCase();
+  const known = [].concat(WEEKDAYS.uk, WEEKDAYS.en, WEEKDAYS.ru);
+  if (known.some((w) => hay.includes(w.toLowerCase().slice(0, 5)))) return label;
+  return label ? `${wd}, ${label}` : wd;
+}
+
 const resolveSections = (trip) => {
   // If the trip carries its own sections (possibly renamed by the organizer),
   // use them as-is. Otherwise use the defaults, translated to current language.
@@ -1134,11 +1177,19 @@ const resolveSections = (trip) => {
     // ВАЖЛИВО: збережені секції можуть містити лише технічний ключ (tkey)
     // без назви — тоді заголовок треба взяти з перекладу, інакше секція
     // рендериться без підпису (лишається сама іконка).
-    return trip.sections.map((s) => ({
+    const stored = trip.sections.map((s) => ({
       visible: true,
       ...s,
-      title: s.title || (s.tkey ? t(s.tkey) : ""),
+      title: (s.title && String(s.title).trim() !== "") ? s.title : sectionDefaultTitle(s),
     }));
+    // Розділи, доданих у застосунок після збереження цієї поїздки, у її
+    // списку відсутні. Дописуємо їх у кінець, інакше нове ніколи не
+    // з'явилось би у старих поїздках.
+    const have = new Set(stored.map((x) => x.type));
+    const missing = DEFAULT_SECTIONS
+      .filter((d) => !have.has(d.type))
+      .map((d) => ({ visible: true, type: d.type, tkey: d.tkey, title: t(d.tkey) }));
+    return stored.concat(missing);
   }
   return DEFAULT_SECTIONS.map((s) => ({ visible: true, type: s.type, title: t(s.tkey) }));
 };
@@ -1325,7 +1376,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           )}
         </div>
         <div style={{ marginTop: 22 }}>
-          <span style={{ background: "rgba(255,255,255,0.22)", padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{trip.dateLabel}</span>
+          <span style={{ background: "rgba(255,255,255,0.22)", padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{dateWithWeekday(trip)}</span>
           <h1 style={{ margin: "12px 0 4px", fontSize: 30, fontWeight: 800, letterSpacing: -0.6, lineHeight: 1.05 }}>{tc(trip.title)}</h1>
           <p style={{ margin: 0, fontSize: 14.5, opacity: 0.93 }}>{tc(trip.subtitle)}</p>
         </div>
@@ -1598,6 +1649,21 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                 </div>
               ),
             },
+            drive: {
+              icon: <Camera size={17} />, accent: C.green,
+              body: (() => {
+                const url = (trip.driveUrl && String(trip.driveUrl).trim() !== "") ? String(trip.driveUrl).trim() : DRIVE_URL;
+                return (
+                  <>
+                    <p style={{ margin: "0 0 13px", fontSize: 13.5, color: C.inkSoft, lineHeight: 1.5 }}>{t("driveNote")}</p>
+                    <a href={url} target="_blank" rel="noreferrer"
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 13.5, fontWeight: 700, textDecoration: "none" }}>
+                      <Camera size={16} /> {t("driveButton")}
+                    </a>
+                  </>
+                );
+              })(),
+            },
             contact: {
               icon: <MessageCircle size={17} />, accent: C.rasp,
               body: (() => {
@@ -1838,9 +1904,15 @@ function TripForm({ initial, onSave, onCancel }) {
 
   // Sections editing (rename / reorder / show-hide). Backfill defaults for
   // older trips that don't yet carry a sections array.
-  const sections = (t.sections && t.sections.length > 0)
-    ? t.sections
-    : DEFAULT_SECTIONS.map((s) => ({ ...s, visible: true }));
+  const sections = (() => {
+    if (!(t.sections && t.sections.length > 0)) return DEFAULT_SECTIONS.map((s) => ({ ...s, visible: true }));
+    // Розділи, що з'явились у застосунку пізніше, дописуємо в кінець —
+    // інакше їх не можна було б ні перейменувати, ні сховати, ні
+    // переставити в уже збереженій поїздці.
+    const have = new Set(t.sections.map((x) => x.type));
+    const missing = DEFAULT_SECTIONS.filter((d) => !have.has(d.type)).map((d) => ({ ...d, visible: true }));
+    return t.sections.concat(missing);
+  })();
   const setSections = (next) => set({ sections: next });
   const renameSection = (i, title) => setSections(sections.map((s, j) => j === i ? { ...s, title } : s));
   const toggleSectionVisible = (i) => setSections(sections.map((s, j) => j === i ? { ...s, visible: s.visible === false ? true : false } : s));
@@ -1887,7 +1959,15 @@ function TripForm({ initial, onSave, onCancel }) {
           <Field label="Назва місця *"><input style={inp} value={t.title} onChange={(e) => set({ title: e.target.value })} placeholder="Наприклад: Айбзеє" /></Field>
           <Field label="Короткий підпис"><input style={inp} value={t.subtitle} onChange={(e) => set({ subtitle: e.target.value })} placeholder="Смарагдове озеро під Цугшпітце" /></Field>
           <Field label="Дата (текстом) *"><input style={inp} value={t.dateLabel} onChange={(e) => set({ dateLabel: e.target.value })} placeholder="Субота, 21 червня" /></Field>
-          <Field label="Дата (для прогнозу погоди)"><input style={inp} type="date" value={t.date || ""} onChange={(e) => set({ date: e.target.value })} /></Field>
+          <Field label="Дата (календарна) *">
+            <input style={{ ...inp, marginBottom: 6 }} type="date" value={t.date || ""} onChange={(e) => set({ date: e.target.value })} />
+            <p style={{ fontSize: 11.5, margin: "0 0 12px", lineHeight: 1.45, color: weekdayOf(t.date) ? C.greenDark : C.rasp }}>
+              {weekdayOf(t.date)
+                ? <>День тижня: <b>{weekdayOf(t.date)}</b> — додасться до дати сам, усіма мовами.</>
+                : <>Заповніть: від цього залежать день тижня біля дати, порядок поїздок у списку та прогноз погоди.</>}
+            </p>
+          </Field>
+          <Field label="Google Диск для цієї поїздки (необов'язково)"><input style={inp} value={t.driveUrl || ""} onChange={(e) => set({ driveUrl: e.target.value })} placeholder="Порожньо — показується спільний архів" /></Field>
           {(() => {
             // Живий прогноз одразу в редакторі — щойно вказані дата й координати.
             const la = parseFloat(t.coords && t.coords.lat), ln = parseFloat(t.coords && t.coords.lng);
@@ -1955,6 +2035,8 @@ function TripForm({ initial, onSave, onCancel }) {
           <h3 style={cardTitle}><Settings size={15} /> Структура поїздки</h3>
           <p style={{ fontSize: 12, color: C.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
             Перейменовуйте блоки, міняйте їх порядок стрілками або ховайте окремі блоки для цієї поїздки.
+            <br /><b>Порада:</b> лишіть назву порожньою — застосунок підставить власну, вже перекладену
+            на всі мови. Власна назва перекладається машинно, і в ній можливі помилки.
           </p>
           {sections.map((s, i) => (
             <div key={s.type} style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 10, marginBottom: 8, background: s.visible === false ? "#f5f3ee" : "#fff", opacity: s.visible === false ? 0.7 : 1 }}>
@@ -1963,9 +2045,23 @@ function TripForm({ initial, onSave, onCancel }) {
                   <button onClick={() => moveSection(i, -1)} disabled={i === 0} style={{ border: "none", background: i === 0 ? "#eee" : C.greenSoft, color: i === 0 ? "#bbb" : C.greenDark, borderRadius: 6, width: 26, height: 20, cursor: i === 0 ? "default" : "pointer", fontSize: 11, fontWeight: 800, lineHeight: 1 }}>▲</button>
                   <button onClick={() => moveSection(i, 1)} disabled={i === sections.length - 1} style={{ border: "none", background: i === sections.length - 1 ? "#eee" : C.greenSoft, color: i === sections.length - 1 ? "#bbb" : C.greenDark, borderRadius: 6, width: 26, height: 20, cursor: i === sections.length - 1 ? "default" : "pointer", fontSize: 11, fontWeight: 800, lineHeight: 1 }}>▼</button>
                 </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 }}>{SECTION_LABELS[s.type] || s.type}</div>
-                  <input value={s.title} onChange={(e) => renameSection(i, e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 10px", fontSize: 13.5, fontFamily: "inherit", background: "#fff", color: C.ink }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                    <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{SECTION_LABELS[s.type] || s.type}</span>
+                    {/* Порожня назва означає «взяти вбудовану». Вбудовані
+                        назви перекладені вручну й правильні в усіх мовах,
+                        а власна назва йде через машинний переклад — тому
+                        повернути стандартну має бути легко, в один дотик. */}
+                    {String(s.title || "").trim() !== "" && (
+                      <button onClick={() => renameSection(i, "")}
+                        style={{ border: "none", background: "none", color: C.green, fontSize: 10.5, fontWeight: 700, cursor: "pointer", padding: 0, fontFamily: "inherit", textDecoration: "underline" }}>
+                        стандартна назва
+                      </button>
+                    )}
+                  </div>
+                  <input value={s.title || ""} onChange={(e) => renameSection(i, e.target.value)}
+                    placeholder={sectionDefaultTitle(s)}
+                    style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 10px", fontSize: 13.5, fontFamily: "inherit", background: "#fff", color: C.ink }} />
                 </div>
                 <button onClick={() => toggleSectionVisible(i)} title={s.visible === false ? "Показати" : "Сховати"} style={{ border: "none", background: s.visible === false ? C.line : C.raspSoft, color: s.visible === false ? C.muted : C.rasp, borderRadius: 8, padding: "8px 10px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
                   {s.visible === false ? "Сховано" : "Видно"}
