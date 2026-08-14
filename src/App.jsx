@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v46";
+const APP_VERSION = "v48";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -304,6 +304,9 @@ const TRANSLATABLE = (trip) => {
   push(() => trip.subtitle, (v) => (trip.subtitle = v));
   push(() => trip.about, (v) => (trip.about = v));
   push(() => trip.difficultyNote, (v) => (trip.difficultyNote = v));
+  // Потрібне для випадків на кшталт «цілий день» — числові варіанти
+  // збирає durationText() сам, без перекладача.
+  push(() => trip.durationHrs, (v) => (trip.durationHrs = v));
   push(() => trip.meetingPoint, (v) => (trip.meetingPoint = v));
   (trip.route || []).forEach((st) => { push(() => st.name, (v) => (st.name = v)); push(() => st.note, (v) => (st.note = v)); push(() => st.info, (v) => (st.info = v)); });
   (trip.bonus || []).forEach((b) => { push(() => b.name, (v) => (b.name = v)); push(() => b.note, (v) => (b.note = v)); });
@@ -696,6 +699,24 @@ function minutesBetween(a, b) {
   return d;
 }
 
+// Тривалість організатор пише вільним текстом: «4 год», «5–6 год».
+// Показувати її як є не можна — в англійській лишалось «4 год» поруч із
+// «11.86 km». Тому дістаємо число або діапазон і додаємо одиницю мовою
+// інтерфейсу. Якщо там не число, а слова («цілий день»), покладаємось на
+// звичайний переклад тексту.
+function durationText(v) {
+  const raw = String(tc(v) || "").trim();
+  if (raw === "") return "";
+  // Число шукаємо будь-де в рядку, а не тільки на початку. Раніше стояла
+  // прив'язка до початку, і варіанти на кшталт «~4 год», «прибл. 4 год»
+  // чи «близько 5 годин» не розпізнавались — тоді показувався сирий
+  // текст організатора, який лишався українським у всіх мовах.
+  const m = raw.match(/(\d+(?:[.,]\d+)?)\s*(?:[–—-]\s*(\d+(?:[.,]\d+)?))?/);
+  if (!m) return raw;
+  const range = m[2] ? `${m[1]}–${m[2]}` : m[1];
+  return `${range} ${t("unitH")}`;
+}
+
 // Позначка середнього чека в кафе. Це вільний текст організатора, який
 // автопереклад щоразу вивертав по-різному — в одному списку виходило
 // «Average check: 25€», «€12 average check», «Average check: 15€».
@@ -974,7 +995,7 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
         <div style={{ padding: "13px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", gap: 14, fontSize: 12.5, color: C.inkSoft }}>
             <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Footprints size={14} /> {trip.distanceKm} {t("unitKm")}</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Clock size={14} /> {trip.durationHrs}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Clock size={14} /> {durationText(trip.durationHrs)}</span>
             <span style={{ display: "flex", alignItems: "center", gap: 4, color: diffColor(trip.difficulty) }}>
               <span style={{ width: 7, height: 7, borderRadius: 7, background: diffColor(trip.difficulty), display: "inline-block" }} />
               {diffLabel(trip.difficulty)}
@@ -1392,7 +1413,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
             { key: "distance", show: sv.distance !== false, label: t("statDistance"), value: `${trip.distanceKm} ${t("unitKm")}`, icon: <Footprints size={17} /> },
             { key: "ascent", show: sv.ascent !== false, label: t("statAscent"), value: `${trip.ascentM} ${t("unitM")}`, icon: <TrendingUp size={17} /> },
             { key: "descent", show: sv.descent === true, label: t("statDescent"), value: `${trip.descentM || 0} ${t("unitM")}`, icon: <TrendingDown size={17} /> },
-            { key: "duration", show: sv.duration !== false, label: t("statDuration"), value: trip.durationHrs, icon: <Clock size={17} /> },
+            { key: "duration", show: sv.duration !== false, label: t("statDuration"), value: durationText(trip.durationHrs), icon: <Clock size={17} /> },
           ].filter((s) => s.show);
           if (items.length === 0) return null;
           // 3 or fewer → single row; 4 → 2×2 grid
@@ -2971,7 +2992,7 @@ export default function App() {
                 головне на цьому екрані — найближчі поїздки, а архів
                 потрібен рідше й не має відтягувати увагу. */}
             <a href={DRIVE_URL} target="_blank" rel="noreferrer"
-              style={{ display: "flex", alignItems: "center", gap: 11, marginTop: 34, background: "transparent", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 14, padding: "11px 13px", textDecoration: "none" }}>
+              style={{ display: "flex", alignItems: "center", gap: 11, margin: "34px 30px 0", background: "transparent", border: "1px solid rgba(253,228,70,0.6)", borderRadius: 14, padding: "11px 13px", textDecoration: "none" }}>
               <span style={{ width: 30, height: 30, borderRadius: 9, background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.85)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <Camera size={15} />
               </span>
