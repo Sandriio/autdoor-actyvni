@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
   Sun, CloudRain, Wind, Droplets, Navigation, Calendar, ArrowLeft, ArrowUp,
@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v48";
+const APP_VERSION = "v55";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -33,6 +33,70 @@ const SUPABASE_URL = "https://aalanelaevutbmmbelpx.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhbGFuZWxhZXZ1dGJtbWJlbHB4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4NDcxMjAsImV4cCI6MjEwMTQyMzEyMH0.ZHMdF83-BA_Y3p1ILara45jjHW_Ner3UMHHaJVAl3gU";
 
 const sbConfigured = () => SUPABASE_URL.trim() !== "" && SUPABASE_ANON_KEY.trim() !== "";
+
+// ── Push-сповіщення ───────────────────────────────────────────────────
+// Публічний ключ VAPID можна тримати у відкритому коді — він лише
+// підтверджує, що сповіщення надіслав саме цей застосунок. Приватний
+// ключ живе в налаштуваннях Vercel і сюди ніколи не потрапляє.
+const VAPID_PUBLIC_KEY = "BBEhhNxEOPS5WMaSv0qQs2IsqZu-hgW5J_XiWc1xrD6IArfwHZoadrhTFt5Io0GNh2JoAVr35WcHIzUKaGKRKJ8";
+
+// Браузер видає ключ у вигляді тексту, а підписці потрібні байти.
+function urlB64ToBytes(base64) {
+  const pad = "=".repeat((4 - (base64.length % 4)) % 4);
+  const raw = atob((base64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+const pushSupported = () =>
+  typeof navigator !== "undefined" && "serviceWorker" in navigator &&
+  typeof window !== "undefined" && "PushManager" in window && "Notification" in window;
+
+// На iPhone дозвіл на сповіщення можна попросити ЛИШЕ якщо застосунок
+// доданий на головний екран. У звичайній вкладці Safari система навіть
+// не покаже запит — це вимога Apple, обійти неможливо.
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent || "");
+const isStandalone = () =>
+  window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+
+async function pushRegister() {
+  if (!pushSupported()) return null;
+  return navigator.serviceWorker.register("/sw.js");
+}
+async function pushSubscribe(lang) {
+  const reg = await navigator.serviceWorker.ready;
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") throw new Error("denied");
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlB64ToBytes(VAPID_PUBLIC_KEY),
+    });
+  }
+  const j = sub.toJSON();
+  await sbRpc("push_subscribe", {
+    p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_lang: lang || "uk",
+  });
+  return sub;
+}
+async function pushUnsubscribe() {
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (!sub) return;
+  await sbRpc("push_unsubscribe", { p_endpoint: sub.endpoint }).catch(() => {});
+  await sub.unsubscribe();
+}
+// Надсилання — лише з режиму організатора. Слово-пароль спільне з
+// серверною функцією; без нього надіслати сповіщення неможливо.
+const PUSH_SECRET = "IVLmioo5R7-ZNLiNh-0P52nWEB8oSwWG";
+async function pushSend(title, body, url, tag) {
+  const r = await fetch("/api/push", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ secret: PUSH_SECRET, title, body, url: url || "/", tag: tag || "autdoor" }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
 const sbHeaders = () => ({
   apikey: SUPABASE_ANON_KEY,
   Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
@@ -55,6 +119,44 @@ async function sbDeleteTrip(tripId, pin) {
     method: "POST", headers: sbHeaders(), body: JSON.stringify({ trip_id: tripId, pin }),
   });
   if (!r.ok) throw new Error(await r.text());
+}
+
+// ── Записи на поїздки ─────────────────────────────────────────────────
+// Уся робота йде через функції бази, а не через пряме читання таблиці.
+// Причина проста: застосунок відкритий за посиланням, і пряме читання
+// означало б, що телефони учасників може вивантажити будь-хто.
+async function sbRpc(fn, body) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: "POST", headers: sbHeaders(), body: JSON.stringify(body || {}),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  const txt = await r.text();
+  return txt ? JSON.parse(txt) : null;
+}
+// Скільки місць уже зайнято в кожній поїздці — одним запитом на всі.
+async function sbBookedCounts() {
+  const rows = await sbRpc("booked_counts", {});
+  const map = {};
+  (rows || []).forEach((x) => { map[x.trip_id] = Number(x.taken) || 0; });
+  return map;
+}
+// Відкритий список: імена й кількість осіб, без контактів.
+const sbGuests = (tripId) => sbRpc("trip_guests", { p_trip_id: tripId });
+const sbBook = (tripId, name, contact, people, showName) =>
+  sbRpc("book_trip", { p_trip_id: tripId, p_name: name, p_contact: contact, p_people: people, p_show_name: showName });
+// Повний список з контактами — лише організаторові, за PIN.
+const sbBookings = (tripId, pin) => sbRpc("trip_bookings", { p_trip_id: tripId, pin });
+const sbDeleteBooking = (id, pin) => sbRpc("delete_booking", { p_id: id, pin });
+
+// Текст помилки з бази — короткими латинськими кодами, щоб не залежати
+// від кодування. Перекладаємо їх у людські формулювання.
+function bookErrorKey(e) {
+  const m = String((e && e.message) || "");
+  if (m.includes("Zapys zakryto")) return "bkClosed";
+  if (m.includes("Nemaye vilnykh")) return "bkNoSpots";
+  if (m.includes("Vkazhit")) return "bkFillFields";
+  if (m.includes("Nepravylna")) return "bkBadCount";
+  return "bkFailed";
 }
 
 // ── Завантаження фото в Supabase Storage ───────────────────────────────
@@ -133,8 +235,46 @@ const T = {
   secTravel: { uk: "Як добираємось", en: "Getting there", de: "Anreise", ru: "Как добраться" },
   secMeeting: { uk: "Точка збору", en: "Meeting point", de: "Treffpunkt", ru: "Точка сбора" },
   secRoute: { uk: "Маршрут", en: "Route", de: "Route", ru: "Маршрут" },
+  pnTitle: { uk: "Сповіщення про поїздки", en: "Trip notifications", de: "Benachrichtigungen", ru: "Уведомления о поездках" },
+  pnNote: { uk: "Дізнавайтесь про новий набір, зміни та збір — вчасно", en: "Get told about new trips, changes and meet-ups in time", de: "Rechtzeitig über neue Ausflüge und Änderungen erfahren", ru: "Узнавайте о новом наборе, изменениях и сборе вовремя" },
+  pnOn: { uk: "Увімкнути", en: "Turn on", de: "Aktivieren", ru: "Включить" },
+  pnOff: { uk: "вимкнути", en: "turn off", de: "aus", ru: "выключить" },
+  pnOnTitle: { uk: "Сповіщення увімкнено", en: "Notifications are on", de: "Benachrichtigungen aktiv", ru: "Уведомления включены" },
+  pnOnNote: { uk: "Ви отримуватимете новини про поїздки", en: "You will get trip updates", de: "Sie erhalten Neuigkeiten zu Ausflügen", ru: "Вы будете получать новости о поездках" },
+  pnDenied: { uk: "Сповіщення заборонені в налаштуваннях браузера — увімкніть їх там", en: "Notifications are blocked in your browser settings — enable them there", de: "Benachrichtigungen sind im Browser blockiert — bitte dort erlauben", ru: "Уведомления запрещены в настройках браузера — включите их там" },
+  pnNeedInstall: { uk: "На iPhone спершу додайте застосунок на головний екран", en: "On iPhone, add the app to your home screen first", de: "Auf dem iPhone zuerst zum Startbildschirm hinzufügen", ru: "На iPhone сначала добавьте приложение на главный экран" },
+  pnFailed: { uk: "Не вдалося увімкнути. Спробуйте ще раз", en: "Could not turn on. Please try again", de: "Aktivierung fehlgeschlagen. Bitte erneut versuchen", ru: "Не удалось включить. Попробуйте ещё раз" },
+  secBooking: { uk: "Запис у поїздку", en: "Sign up", de: "Anmeldung", ru: "Запись в поездку" },
+  bkDeadline: { uk: "Запис до", en: "Sign up until", de: "Anmeldung bis", ru: "Запись до" },
+  bkLeft: { uk: "Залишилось", en: "Spots left", de: "Freie Plätze", ru: "Осталось" },
+  bkOf: { uk: "з", en: "of", de: "von", ru: "из" },
+  bkSpots: { uk: "місць", en: "spots", de: "Plätze", ru: "мест" },
+  bkJoin: { uk: "Записатися", en: "Sign up", de: "Anmelden", ru: "Записаться" },
+  bkName: { uk: "Ваше ім'я", en: "Your name", de: "Ihr Name", ru: "Ваше имя" },
+  bkContact: { uk: "Telegram, WhatsApp або телефон", en: "Telegram, WhatsApp or phone", de: "Telegram, WhatsApp oder Telefon", ru: "Telegram, WhatsApp или телефон" },
+  bkPeople: { uk: "Скільки осіб разом з вами", en: "How many people including you", de: "Wie viele Personen inklusive Ihnen", ru: "Сколько человек вместе с вами" },
+  bkShowName: { uk: "Показувати моє ім'я у списку учасників", en: "Show my name in the participant list", de: "Meinen Namen in der Teilnehmerliste zeigen", ru: "Показывать моё имя в списке участников" },
+  bkPrivacy: { uk: "Контакт бачить лише організатор. Дані потрібні для цієї поїздки й видаляються після неї.", en: "Only the organiser sees your contact. The data is used for this trip and deleted afterwards.", de: "Nur die Organisation sieht Ihren Kontakt. Die Daten gelten für diesen Ausflug und werden danach gelöscht.", ru: "Контакт видит только организатор. Данные нужны для этой поездки и удаляются после неё." },
+  bkConfirm: { uk: "Підтвердити запис", en: "Confirm booking", de: "Anmeldung bestätigen", ru: "Подтвердить запись" },
+  bkSending: { uk: "Записуємо…", en: "Booking…", de: "Wird gesendet…", ru: "Записываем…" },
+  bkDone: { uk: "Вас записано", en: "You are on the list", de: "Sie sind angemeldet", ru: "Вы записаны" },
+  bkCancelNote: { uk: "Плани змінилися? Напишіть організатору — він зніме вас зі списку та звільнить місце для інших.", en: "Plans changed? Message the organiser — they will take you off the list and free the spot.", de: "Pläne geändert? Schreiben Sie der Organisation — sie streicht Sie von der Liste und gibt den Platz frei.", ru: "Планы изменились? Напишите организатору — он снимет вас со списка и освободит место." },
+  bkClosedTitle: { uk: "Запис закрито", en: "Sign-up closed", de: "Anmeldung geschlossen", ru: "Запись закрыта" },
+  bkClosed: { uk: "Запис на цю поїздку вже закрито.", en: "Sign-up for this trip is closed.", de: "Die Anmeldung für diesen Ausflug ist geschlossen.", ru: "Запись на эту поездку уже закрыта." },
+  bkNoSpotsTitle: { uk: "Місць немає", en: "No spots left", de: "Keine Plätze frei", ru: "Мест нет" },
+  bkNoSpots: { uk: "Усі місця зайнято.", en: "All spots are taken.", de: "Alle Plätze sind belegt.", ru: "Все места заняты." },
+  bkAskOrganizer: { uk: "Напишіть організатору — місце може звільнитися, і він повідомить.", en: "Message the organiser — a spot may free up and they will let you know.", de: "Schreiben Sie der Organisation — vielleicht wird ein Platz frei.", ru: "Напишите организатору — место может освободиться, и он сообщит." },
+  bkFillFields: { uk: "Заповніть ім'я та контакт.", en: "Fill in your name and contact.", de: "Bitte Name und Kontakt ausfüllen.", ru: "Заполните имя и контакт." },
+  bkBadCount: { uk: "Невірна кількість осіб.", en: "Invalid number of people.", de: "Ungültige Personenzahl.", ru: "Неверное количество человек." },
+  bkFailed: { uk: "Не вдалося записати. Спробуйте ще раз.", en: "Could not book. Please try again.", de: "Anmeldung fehlgeschlagen. Bitte erneut versuchen.", ru: "Не удалось записать. Попробуйте ещё раз." },
+  bkGuests: { uk: "Хто їде", en: "Who is going", de: "Wer mitfährt", ru: "Кто едет" },
+  bkGuestHidden: { uk: "Учасник", en: "Participant", de: "Teilnehmer", ru: "Участник" },
+  bkPlusOne: { uk: "+1 особа", en: "+1 person", de: "+1 Person", ru: "+1 человек" },
+  bkPlusMany: { uk: "+{n} особи", en: "+{n} people", de: "+{n} Personen", ru: "+{n} человека" },
+  bkOnlyOrganizer: { uk: "Контакти бачить лише організатор", en: "Only the organiser sees contacts", de: "Kontakte sieht nur die Organisation", ru: "Контакты видит только организатор" },
+  bkNobody: { uk: "Ще ніхто не записався — будьте першим.", en: "Nobody yet — be the first.", de: "Noch niemand — seien Sie die erste Person.", ru: "Пока никто не записался — будьте первым." },
   secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
-  driveNote: { uk: "Спільний архів усіх наших поїздок: фото, відео, треки маршрутів. Додавайте свої знімки — вони будуть доступні всій групі.", en: "A shared archive of all our trips: photos, videos and route tracks. Add your own shots — everyone in the group will see them.", de: "Gemeinsames Archiv aller Ausflüge: Fotos, Videos und Routen. Eigene Aufnahmen sind willkommen — die ganze Gruppe sieht sie.", ru: "Общий архив всех наших поездок: фото, видео, треки маршрутов. Добавляйте свои снимки — они будут доступны всей группе." },
+  driveNote: { uk: "Спільний архів медіа з цієї поїздки. Додавайте свої — вони будуть доступні всій групі.", en: "A shared media archive from this trip. Add your own — everyone in the group will see them.", de: "Gemeinsames Medienarchiv dieses Ausflugs. Fügen Sie eigene hinzu — die ganze Gruppe sieht sie.", ru: "Общий архив медиа с этой поездки. Добавляйте свои — они будут доступны всей группе." },
   driveHomeNote: { uk: "Архів медіа з усіх поїздок", en: "Media archive from all trips", de: "Medienarchiv aller Ausflüge", ru: "Архив медиа со всех поездок" },
   driveButton: { uk: "Відкрити Google Диск", en: "Open Google Drive", de: "Google Drive öffnen", ru: "Открыть Google Диск" },
   secCafes: { uk: "Де поїсти та випити", en: "Where to eat & drink", de: "Essen & Trinken", ru: "Где поесть и выпить" },
@@ -967,9 +1107,86 @@ function DbScheduleLink({ trip }) {
   );
 }
 
+// ── Сповіщення: підписка учасника ────────────────────────────────────
+// Кнопка живе на головному екрані. Свідомо не просимо дозвіл самі при
+// відкритті: непроханий системний запит люди майже завжди відхиляють,
+// а відхилений дозвіл у браузері вдруге не попросиш — його доводиться
+// вмикати руками в налаштуваннях. Тому спершу пояснюємо, навіщо.
+function PushToggle() {
+  const [state, setState] = useState("idle"); // idle | on | busy | denied | unsupported | needInstall
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (!pushSupported()) { setState("unsupported"); return; }
+    // На iPhone дозвіл доступний лише встановленому застосунку.
+    if (isIOS() && !isStandalone()) { setState("needInstall"); return; }
+    pushRegister().then(async () => {
+      if (Notification.permission === "denied") { setState("denied"); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      setState(sub ? "on" : "idle");
+    }).catch(() => setState("unsupported"));
+  }, []);
+
+  const turnOn = async () => {
+    setState("busy"); setErr("");
+    try {
+      await pushSubscribe(CURRENT_LANG);
+      setState("on");
+    } catch (e) {
+      if (String(e.message) === "denied") { setState("denied"); }
+      else { setState("idle"); setErr(t("pnFailed")); }
+    }
+  };
+  const turnOff = async () => {
+    setState("busy");
+    try { await pushUnsubscribe(); } catch {}
+    setState("idle");
+  };
+
+  if (state === "unsupported") return null;
+
+  const shell = (children, border) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 11, margin: "18px 30px 0", background: "transparent", border: `1px solid ${border}`, borderRadius: 14, padding: "11px 13px" }}>
+      {children}
+    </div>
+  );
+  const icon = (
+    <span style={{ width: 30, height: 30, borderRadius: 9, background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.85)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <Signal size={15} />
+    </span>
+  );
+  const label = (title, note) => (
+    <span style={{ flex: 1, minWidth: 0 }}>
+      <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>{title}</span>
+      <span style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 1, lineHeight: 1.35 }}>{note}</span>
+    </span>
+  );
+
+  if (state === "needInstall") return shell(<>{icon}{label(t("pnTitle"), t("pnNeedInstall"))}</>, "rgba(255,255,255,0.18)");
+  if (state === "denied") return shell(<>{icon}{label(t("pnTitle"), t("pnDenied"))}</>, "rgba(255,255,255,0.18)");
+
+  if (state === "on") {
+    return shell(<>
+      {icon}
+      {label(t("pnOnTitle"), t("pnOnNote"))}
+      <button onClick={turnOff} style={{ border: "none", background: "none", color: "rgba(255,255,255,0.5)", fontSize: 11.5, fontWeight: 700, cursor: "pointer", flexShrink: 0, fontFamily: "inherit", textDecoration: "underline" }}>{t("pnOff")}</button>
+    </>, "rgba(253,228,70,0.6)");
+  }
+
+  return shell(<>
+    {icon}
+    {label(t("pnTitle"), err || t("pnNote"))}
+    <button onClick={turnOn} disabled={state === "busy"}
+      style={{ border: `1px solid ${C.yellow}`, background: "transparent", color: C.yellow, fontSize: 11.5, fontWeight: 700, cursor: "pointer", flexShrink: 0, fontFamily: "inherit", borderRadius: 9, padding: "7px 12px" }}>
+      {state === "busy" ? "…" : t("pnOn")}
+    </button>
+  </>, "rgba(255,255,255,0.22)");
+}
+
 // ── Trip card (list view) ──────────────────────────────────────────────
-function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onEdit }) {
-  const left = trip.spots - trip.spotsTaken;
+function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onEdit, counts }) {
+  const left = Math.max(0, (Number(trip.spots) || 0) - takenOf(trip, counts));
   return (
     <div style={{
       width: "100%", borderRadius: 20, overflow: "hidden", background: C.card,
@@ -1173,6 +1390,31 @@ const WEEKDAYS = {
   en: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
   ru: ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"],
 };
+// Скільки місць зайнято. Джерело правди — реальні записи з бази; поле
+// spotsTaken лишається запасним для поїздок, створених до появи запису.
+function takenOf(trip, counts) {
+  if (counts && Object.prototype.hasOwnProperty.call(counts, trip.id)) return counts[trip.id];
+  return Number(trip.spotsTaken) || 0;
+}
+// Чи вже минув дедлайн запису. Порожнє поле означає «без дедлайну».
+function bookingClosed(trip) {
+  const d = String((trip && trip.deadline) || "").trim();
+  if (d === "") return false;
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return false;
+  return Date.now() > dt.getTime();
+}
+// Дедлайн у людському вигляді: «пт, 14.08, 22:00».
+function deadlineText(trip) {
+  const d = String((trip && trip.deadline) || "").trim();
+  if (d === "") return "";
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return "";
+  const wd = (WEEKDAYS[CURRENT_LANG] || WEEKDAYS.uk)[dt.getDay()];
+  const p2 = (n) => String(n).padStart(2, "0");
+  return `${wd}, ${p2(dt.getDate())}.${p2(dt.getMonth() + 1)}, ${p2(dt.getHours())}:${p2(dt.getMinutes())}`;
+}
+
 function weekdayOf(iso) {
   // Полудень замість опівночі — щоб зсув часового поясу не «переносив»
   // поїздку на сусідній день.
@@ -1357,8 +1599,288 @@ function LiveWeather({ trip }) {
   );
 }
 
+// ⏸ ВІДКЛАДЕНО. Система запису через застосунок готова, але поки вимкнена:
+// запис іде як раніше, кнопками Telegram і WhatsApp. Щоб увімкнути назад,
+// треба повернути тип розділу "booking" у DEFAULT_SECTIONS, його тіло в
+// перелік розділів, панель <OrganizerBookings> у «Керування поїздкою»,
+// поле дедлайну в редакторі та завантаження лічильників у refreshCounts.
+// Функції в базі Supabase лишаються на місці й нікому не заважають.
+
+// ── Запис у поїздку ──────────────────────────────────────────────────
+// Один компонент на всі стани: відкритий запис, форма, підтвердження,
+// «місць немає», «запис закрито». Стан обирається сам за дедлайном і
+// кількістю вільних місць, тож організаторові нічого не треба вимикати
+// вручну — навіть якщо він спить, коли настане дедлайн.
+function BookingSection({ trip, taken, onBooked }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [contact, setContact] = useState("");
+  const [people, setPeople] = useState(1);
+  const [showName, setShowName] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+  const [guests, setGuests] = useState(null);
+
+  const spots = Number(trip.spots) || 0;
+  const left = Math.max(0, spots - taken);
+  const closed = bookingClosed(trip);
+  const full = spots > 0 && left <= 0;
+  const dl = deadlineText(trip);
+
+  const loadGuests = () => {
+    if (!sbConfigured()) return;
+    sbGuests(trip.id).then((g) => setGuests(g || [])).catch(() => setGuests([]));
+  };
+  useEffect(() => { loadGuests(); }, [trip.id, done]);
+
+  const submit = async () => {
+    if (name.trim() === "" || contact.trim() === "") { setErr(t("bkFillFields")); return; }
+    setBusy(true); setErr("");
+    try {
+      await sbBook(trip.id, name.trim(), contact.trim(), people, showName);
+      setDone(true); setOpen(false);
+      if (onBooked) onBooked();
+    } catch (e) {
+      setErr(t(bookErrorKey(e)));
+    } finally { setBusy(false); }
+  };
+
+  const box = (bg, color, icon, text) => (
+    <div style={{ background: bg, borderRadius: 11, padding: "10px 12px", display: "flex", gap: 9, alignItems: "flex-start", marginBottom: 11 }}>
+      <span style={{ color, flexShrink: 0, display: "flex", marginTop: 1 }}>{icon}</span>
+      <span style={{ fontSize: 12.5, color, lineHeight: 1.5 }}>{text}</span>
+    </div>
+  );
+
+  return (
+    <>
+      {dl !== "" && !done && (
+        <div style={{ background: closed ? C.raspSoft : C.yellowSoft, border: `1px solid ${closed ? C.rasp : C.yellow}`, borderRadius: 11, padding: "10px 12px", display: "flex", alignItems: "center", gap: 9, marginBottom: 11 }}>
+          <Clock size={16} style={{ color: closed ? C.rasp : C.yellowInk, flexShrink: 0 }} />
+          <span style={{ fontSize: 12.5, color: closed ? C.rasp : C.yellowInk }}>
+            {closed ? t("bkClosedTitle") : <>{t("bkDeadline")} <b style={{ fontWeight: 700 }}>{dl}</b></>}
+          </span>
+        </div>
+      )}
+
+      {spots > 0 && !done && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <Users size={16} style={{ color: full ? C.rasp : C.green, flexShrink: 0 }} />
+          <span style={{ fontSize: 13.5, color: C.ink, fontWeight: 600 }}>
+            {full ? t("bkNoSpotsTitle") : <>{t("bkLeft")} {left} {t("bkOf")} {spots} {t("bkSpots")}</>}
+          </span>
+        </div>
+      )}
+
+      {done && (
+        <div style={{ textAlign: "center", padding: "6px 0 2px" }}>
+          <div style={{ width: 50, height: 50, borderRadius: "50%", background: C.greenSoft, color: C.greenDark, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 11px" }}>
+            <ClipboardCheck size={24} />
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 10 }}>{t("bkDone")}</div>
+          <div style={{ background: C.yellowSoft, borderRadius: 11, padding: "10px 12px", textAlign: "left", fontSize: 12, color: C.yellowInk, lineHeight: 1.5 }}>
+            {t("bkCancelNote")}
+          </div>
+        </div>
+      )}
+
+      {!done && closed && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkClosed") + " " + t("bkAskOrganizer"))}
+      {!done && !closed && full && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkNoSpots") + " " + t("bkAskOrganizer"))}
+
+      {!done && !closed && !full && !open && (
+        <button onClick={() => setOpen(true)}
+          style={{ width: "100%", border: "none", background: C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          {t("bkJoin")}
+        </button>
+      )}
+
+      {!done && open && (
+        <div>
+          <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 4 }}>{t("bkName")}</div>
+          <input value={name} onChange={(e) => { setName(e.target.value); setErr(""); }}
+            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 10 }} />
+          <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 4 }}>{t("bkContact")}</div>
+          <input value={contact} onChange={(e) => { setContact(e.target.value); setErr(""); }}
+            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 10 }} />
+          <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 4 }}>{t("bkPeople")}</div>
+          <div style={{ display: "flex", gap: 7, marginBottom: 11 }}>
+            {[1, 2, 3, 4].map((n) => (
+              <button key={n} onClick={() => setPeople(n)} disabled={spots > 0 && n > left}
+                style={{ flex: 1, border: `1px solid ${people === n ? C.green : C.line}`, background: people === n ? C.green : "#fff", color: people === n ? "#fff" : (spots > 0 && n > left ? C.faint : C.muted), borderRadius: 10, padding: "10px 0", fontSize: 14, fontWeight: 700, cursor: spots > 0 && n > left ? "default" : "pointer", fontFamily: "inherit" }}>{n}</button>
+            ))}
+          </div>
+          <button onClick={() => setShowName(!showName)}
+            style={{ width: "100%", textAlign: "left", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 11, padding: "11px", display: "flex", gap: 10, alignItems: "center", cursor: "pointer", fontFamily: "inherit", marginBottom: 11 }}>
+            <span style={{ width: 20, height: 20, borderRadius: 6, background: showName ? C.green : "#fff", border: `1.5px solid ${showName ? C.green : C.line}`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              {showName && <ClipboardCheck size={12} />}
+            </span>
+            <span style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.45 }}>{t("bkShowName")}</span>
+          </button>
+          <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.5, margin: "0 0 12px" }}>{t("bkPrivacy")}</p>
+          {err !== "" && <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{err}</p>}
+          <button onClick={submit} disabled={busy}
+            style={{ width: "100%", border: "none", background: busy ? C.pageSoft : C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+            {busy ? t("bkSending") : t("bkConfirm")}
+          </button>
+        </div>
+      )}
+
+      {guests && guests.length > 0 && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px dashed ${C.greenLine}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+            <Users size={15} style={{ color: C.green }} />
+            <span style={{ fontSize: 13, fontWeight: 800, color: C.ink }}>
+              {t("bkGuests")} · {guests.reduce((a, g) => a + (Number(g.people) || 1), 0)}
+            </span>
+          </div>
+          <div style={{ background: "#fff", borderRadius: 11, padding: "2px 12px" }}>
+            {guests.map((g, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: i === guests.length - 1 ? "none" : `1px solid ${C.line}` }}>
+                <span style={{ fontSize: 13, color: g.name ? C.ink : C.muted }}>{g.name || t("bkGuestHidden")}</span>
+                {Number(g.people) > 1 && (
+                  <span style={{ fontSize: 11.5, color: C.muted }}>
+                    {Number(g.people) === 2 ? t("bkPlusOne") : t("bkPlusMany").replace("{n}", String(Number(g.people) - 1))}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          <p style={{ fontSize: 11, color: C.muted, margin: "8px 0 0" }}>{t("bkOnlyOrganizer")}</p>
+        </div>
+      )}
+      {guests && guests.length === 0 && !done && !closed && !full && (
+        <p style={{ fontSize: 12, color: C.muted, margin: "12px 0 0", lineHeight: 1.5 }}>{t("bkNobody")}</p>
+      )}
+    </>
+  );
+}
+
+// ── Список записаних для організатора ────────────────────────────────
+// Тут, і тільки тут, видно контакти. Плюс готовий текст для групи:
+// одне повідомлення в Telegram чи WhatsApp накриває всіх одразу, і люди
+// бачать його від організатора, а не від застосунку — можуть відповісти
+// в тій самій розмові.
+function OrganizerBookings({ trip, pin, onChanged }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [copied, setCopied] = useState("");
+
+  const load = () => {
+    if (!sbConfigured() || !pin) return;
+    sbBookings(trip.id, pin).then((r) => { setRows(r || []); setErr(""); })
+      .catch(() => setErr("Не вдалося завантажити список."));
+  };
+  useEffect(() => { load(); }, [trip.id, pin]);
+
+  const total = (rows || []).reduce((a, r) => a + (Number(r.people) || 1), 0);
+
+  const remove = async (id) => {
+    if (!window.confirm("Зняти цей запис? Місце звільниться для інших.")) return;
+    try {
+      await sbDeleteBooking(id, pin);
+      load();
+      if (onChanged) onChanged();
+    } catch { setErr("Не вдалося зняти запис."); }
+  };
+
+  const copy = (text, tag) => {
+    const done = () => { setCopied(tag); setTimeout(() => setCopied(""), 1800); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => {});
+    } else {
+      // Запасний шлях для старих браузерів і незахищеного з'єднання.
+      const ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); done(); } catch {}
+      document.body.removeChild(ta);
+    }
+  };
+
+  const listText = () => (rows || [])
+    .map((r, i) => `${i + 1}. ${r.name}${Number(r.people) > 1 ? ` (${r.people})` : ""} — ${r.contact}`)
+    .join("\n");
+
+  // Текст для групи збирається з даних самої поїздки, тож нічого
+  // передруковувати руками не треба.
+  const groupText = () => {
+    const legs = tripJourneys(trip).map(filledLegs).filter((l) => l.length > 0);
+    const first = legs.length > 0 ? legs[0][0] : null;
+    const lines = [];
+    lines.push(`${ukOf(trip.title)} — ${ukOf(trip.dateLabel)}`);
+    if (trip.meetingPoint) lines.push(`Збір: ${ukOf(trip.meetingPoint)}`);
+    if (first && first.from) {
+      lines.push(`Виїзд: ${first.from}${first.fromTime ? `, ${first.fromTime}` : ""}${first.platform ? `, кол. ${first.platform}` : ""}${first.train ? ` (${first.train})` : ""}`);
+    }
+    lines.push(`Записалося: ${total} осіб`);
+    lines.push("Не забудьте квиток і воду 🙂");
+    return lines.join("\n");
+  };
+
+  const btn = (label, tag, text, filled) => (
+    <button onClick={() => copy(text, tag)}
+      style={{ flex: 1, border: `1.5px solid ${C.green}`, background: filled ? C.green : "transparent", color: filled ? "#fff" : C.greenDark, borderRadius: 10, padding: "10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+      {copied === tag ? "Скопійовано ✓" : label}
+    </button>
+  );
+
+  return (
+    <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${C.line}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+        <ClipboardCheck size={16} style={{ color: C.rasp }} />
+        <span style={{ fontSize: 13, fontWeight: 800, color: C.ink }}>
+          Записалися · {total}{Number(trip.spots) > 0 ? ` з ${trip.spots}` : ""}
+        </span>
+      </div>
+      <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 11px" }}>
+        {deadlineText(trip) ? (bookingClosed(trip) ? `Запис закрито ${deadlineText(trip)}` : `Запис до ${deadlineText(trip)}`) : "Дедлайн не встановлено"}
+      </p>
+
+      {err !== "" && <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 10px" }}>{err}</p>}
+      {rows === null && err === "" && <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>Завантаження…</p>}
+      {rows && rows.length === 0 && <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>Поки ніхто не записався.</p>}
+
+      {rows && rows.length > 0 && (
+        <>
+          <div style={{ background: "#fff", borderRadius: 11, padding: "2px 12px", marginBottom: 11 }}>
+            {rows.map((r, i) => (
+              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: i === rows.length - 1 ? "none" : `1px solid ${C.line}` }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: C.ink, fontWeight: 600 }}>
+                    {r.name}{Number(r.people) > 1 ? ` · ${r.people}` : ""}
+                    {!r.show_name && <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 400 }}> (прихований)</span>}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.muted, marginTop: 1 }}>{r.contact}</div>
+                </div>
+                <button onClick={() => remove(r.id)} aria-label="Зняти запис"
+                  style={{ border: "none", background: "none", color: C.rasp, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            {btn("Скопіювати список", "list", listText(), false)}
+          </div>
+        </>
+      )}
+
+      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 11, padding: 12, marginTop: 4 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 7 }}>Повідомлення в групу</div>
+        <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.6, whiteSpace: "pre-wrap", marginBottom: 10 }}>{groupText()}</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {btn("Скопіювати текст", "group", groupText(), true)}
+        </div>
+        <p style={{ fontSize: 11, color: C.muted, margin: "9px 0 0", lineHeight: 1.5 }}>
+          Вставте у групу Telegram або WhatsApp — одне повідомлення для всіх.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── Detail view ────────────────────────────────────────────────────────
-function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSetPostponedDate }) {
+function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSetPostponedDate, counts, onBooked, adminPin }) {
   // Одразу показуємо першу точку з координатами, щоб у розділі «Маршрут»
   // карта була видна без зайвого натискання (цю роль раніше виконувала
   // верхня оглядова карта, яку прибрано).
@@ -1373,7 +1895,8 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
     const i = (trip.route || []).findIndex((s) => !isNaN(parseFloat(s.lat)) && !isNaN(parseFloat(s.lng)));
     return i >= 0 ? i : null;
   });
-  const left = trip.spots - trip.spotsTaken;
+  const taken = takenOf(trip, counts);
+  const left = Math.max(0, (Number(trip.spots) || 0) - taken);
   const Section = ({ icon, title, children, accent = C.green }) => (
     <div style={{ background: C.card, borderRadius: 18, padding: 18, marginBottom: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 14 }}>
@@ -1849,6 +2372,7 @@ const BLANK_TRIP = () => ({
   durationHrs: "",
   spots: 12,
   spotsTaken: 0,
+  deadline: "",
   from: { name: "München Hbf", time: "", platform: "" },
   to: { name: "", time: "" },
   trainLine: "",
@@ -2723,6 +3247,14 @@ export default function App() {
   const [loadingTrips, setLoadingTrips] = useState(() => sbConfigured());
   const [loadError, setLoadError] = useState(false);
   const [tProgress, setTProgress] = useState(null); // null | {done, total}
+  // Скільки місць зайнято в кожній поїздці. Тягнемо одним запитом на всі
+  // й оновлюємо після кожного нового запису, щоб цифра на картці була
+  // справжньою, а не вписаною руками.
+  const [counts, setCounts] = useState({});
+  // Система запису тимчасово вимкнена (див. коментар біля BookingSection).
+  // Поки лічильники не завантажуються, місця беруться з поля «Зайнято
+  // місць», як було раніше.
+  const refreshCounts = useCallback(() => {}, []);
   const [adminPin, setAdminPin] = useState("");
   const [lang, setLang] = useState("uk");
   // Keep the module-level CURRENT_LANG in sync so t() works everywhere.
@@ -2906,6 +3438,9 @@ export default function App() {
             onDelete={() => deleteTrip(trip.id)}
             onSetStatus={(s) => setStatus(trip.id, s)}
             onSetPostponedDate={(d) => setPostponedDate(trip.id, d)}
+            counts={counts}
+            onBooked={refreshCounts}
+            adminPin={adminPin}
           />
         ) : (
           <div style={{ padding: "0 16px 30px" }}>
@@ -2965,7 +3500,7 @@ export default function App() {
               </button>
             )}
             {upcoming.map((t) => (
-              <TripCard key={t.id} trip={t} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} />
+              <TripCard key={t.id} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} />
             ))}
 
             {later.length > 0 && (
@@ -2975,7 +3510,7 @@ export default function App() {
               </div>
             )}
             {later.map((t) => (
-              <TripCard key={t.id} trip={t} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} />
+              <TripCard key={t.id} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} />
             ))}
 
             {past.length > 0 && (
@@ -2985,8 +3520,10 @@ export default function App() {
               </div>
             )}
             {past.map((t) => (
-              <TripCard key={t.id} trip={t} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} />
+              <TripCard key={t.id} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} />
             ))}
+
+            <PushToggle />
 
             {/* Архів на Google Диску. Стоїть під списками, а не над ними:
                 головне на цьому екрані — найближчі поїздки, а архів
