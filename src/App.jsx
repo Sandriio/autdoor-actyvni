@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v57";
+const APP_VERSION = "v58";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -363,7 +363,6 @@ const T = {
   listTbd: { uk: "Список уточнюється.", en: "List to be confirmed.", de: "Liste wird noch bestätigt.", ru: "Список уточняется." },
   // CTA
   signUp: { uk: "Записатися у поїздку", en: "Sign up for the trip", de: "Für den Ausflug anmelden", ru: "Записаться в поездку" },
-  signUpMsg: { uk: "Хочу приєднатися до поїздки", en: "I'd like to join the trip", de: "Ich möchte am Ausflug teilnehmen", ru: "Хочу присоединиться к поездке" },
   // contact
   cTelegram: { uk: "Telegram", en: "Telegram", de: "Telegram", ru: "Telegram" },
   cPhone: { uk: "Телефон", en: "Phone", de: "Telefon", ru: "Телефон" },
@@ -1801,22 +1800,6 @@ function OrganizerBookings({ trip, pin, onChanged }) {
     .map((r, i) => `${i + 1}. ${r.name}${Number(r.people) > 1 ? ` (${r.people})` : ""}${r.contact && r.contact.trim() !== "" ? ` — ${r.contact}` : ""}`)
     .join("\n");
 
-  // Текст для групи збирається з даних самої поїздки, тож нічого
-  // передруковувати руками не треба.
-  const groupText = () => {
-    const legs = tripJourneys(trip).map(filledLegs).filter((l) => l.length > 0);
-    const first = legs.length > 0 ? legs[0][0] : null;
-    const lines = [];
-    lines.push(`${ukOf(trip.title)} — ${ukOf(trip.dateLabel)}`);
-    if (trip.meetingPoint) lines.push(`Збір: ${ukOf(trip.meetingPoint)}`);
-    if (first && first.from) {
-      lines.push(`Виїзд: ${first.from}${first.fromTime ? `, ${first.fromTime}` : ""}${first.platform ? `, кол. ${first.platform}` : ""}${first.train ? ` (${first.train})` : ""}`);
-    }
-    lines.push(`Записалося: ${total} осіб`);
-    lines.push("Не забудьте квиток і воду 🙂");
-    return lines.join("\n");
-  };
-
   const btn = (label, tag, text, filled) => (
     <button onClick={() => copy(text, tag)}
       style={{ flex: 1, border: `1.5px solid ${C.green}`, background: filled ? C.green : "transparent", color: filled ? "#fff" : C.greenDark, borderRadius: 10, padding: "10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
@@ -1867,16 +1850,6 @@ function OrganizerBookings({ trip, pin, onChanged }) {
         </>
       )}
 
-      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 11, padding: 12, marginTop: 4 }}>
-        <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 7 }}>Повідомлення в групу</div>
-        <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.6, whiteSpace: "pre-wrap", marginBottom: 10 }}>{groupText()}</div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {btn("Скопіювати текст", "group", groupText(), true)}
-        </div>
-        <p style={{ fontSize: 11, color: C.muted, margin: "9px 0 0", lineHeight: 1.5 }}>
-          Вставте у групу Telegram або WhatsApp — одне повідомлення для всіх.
-        </p>
-      </div>
     </div>
   );
 }
