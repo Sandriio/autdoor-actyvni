@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v56";
+const APP_VERSION = "v57";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -251,7 +251,9 @@ const T = {
   bkSpots: { uk: "місць", en: "spots", de: "Plätze", ru: "мест" },
   bkJoin: { uk: "Записатися", en: "Sign up", de: "Anmelden", ru: "Записаться" },
   bkName: { uk: "Ваше ім'я", en: "Your name", de: "Ihr Name", ru: "Ваше имя" },
-  bkContact: { uk: "Telegram, WhatsApp або телефон", en: "Telegram, WhatsApp or phone", de: "Telegram, WhatsApp oder Telefon", ru: "Telegram, WhatsApp или телефон" },
+  bkContact: { uk: "Telegram, WhatsApp, Viber або телефон", en: "Telegram, WhatsApp, Viber or phone", de: "Telegram, WhatsApp, Viber oder Telefon", ru: "Telegram, WhatsApp, Viber или телефон" },
+  bkOptional: { uk: "за бажанням", en: "optional", de: "optional", ru: "по желанию" },
+  bkContactWhy: { uk: "Лишіть контакт, якщо хочете, щоб організатор міг попередити про зміни особисто.", en: "Leave a contact if you want the organiser to reach you personally about changes.", de: "Kontakt angeben, wenn die Organisation Sie bei Änderungen persönlich erreichen soll.", ru: "Оставьте контакт, если хотите, чтобы организатор мог предупредить об изменениях лично." },
   bkPeople: { uk: "Скільки осіб разом з вами", en: "How many people including you", de: "Wie viele Personen inklusive Ihnen", ru: "Сколько человек вместе с вами" },
   bkShowName: { uk: "Показувати моє ім'я у списку учасників", en: "Show my name in the participant list", de: "Meinen Namen in der Teilnehmerliste zeigen", ru: "Показывать моё имя в списке участников" },
   bkPrivacy: { uk: "Контакт бачить лише організатор. Дані потрібні для цієї поїздки й видаляються після неї.", en: "Only the organiser sees your contact. The data is used for this trip and deleted afterwards.", de: "Nur die Organisation sieht Ihren Kontakt. Die Daten gelten für diesen Ausflug und werden danach gelöscht.", ru: "Контакт видит только организатор. Данные нужны для этой поездки и удаляются после неё." },
@@ -264,7 +266,7 @@ const T = {
   bkNoSpotsTitle: { uk: "Місць немає", en: "No spots left", de: "Keine Plätze frei", ru: "Мест нет" },
   bkNoSpots: { uk: "Усі місця зайнято.", en: "All spots are taken.", de: "Alle Plätze sind belegt.", ru: "Все места заняты." },
   bkAskOrganizer: { uk: "Напишіть організатору — місце може звільнитися, і він повідомить.", en: "Message the organiser — a spot may free up and they will let you know.", de: "Schreiben Sie der Organisation — vielleicht wird ein Platz frei.", ru: "Напишите организатору — место может освободиться, и он сообщит." },
-  bkFillFields: { uk: "Заповніть ім'я та контакт.", en: "Fill in your name and contact.", de: "Bitte Name und Kontakt ausfüllen.", ru: "Заполните имя и контакт." },
+  bkFillFields: { uk: "Вкажіть, будь ласка, імʼя.", en: "Please enter your name.", de: "Bitte geben Sie Ihren Namen an.", ru: "Укажите, пожалуйста, имя." },
   bkBadCount: { uk: "Невірна кількість осіб.", en: "Invalid number of people.", de: "Ungültige Personenzahl.", ru: "Неверное количество человек." },
   bkFailed: { uk: "Не вдалося записати. Спробуйте ще раз.", en: "Could not book. Please try again.", de: "Anmeldung fehlgeschlagen. Bitte erneut versuchen.", ru: "Не удалось записать. Попробуйте ещё раз." },
   bkGuests: { uk: "Хто їде", en: "Who is going", de: "Wer mitfährt", ru: "Кто едет" },
@@ -279,7 +281,7 @@ const T = {
   driveButton: { uk: "Відкрити Google Диск", en: "Open Google Drive", de: "Google Drive öffnen", ru: "Открыть Google Диск" },
   secCafes: { uk: "Де поїсти та випити", en: "Where to eat & drink", de: "Essen & Trinken", ru: "Где поесть и выпить" },
   secPacking: { uk: "Що взяти з собою", en: "What to bring", de: "Was mitnehmen", ru: "Что взять с собой" },
-  secContact: { uk: "Питання? Зв'яжіться з нами", en: "Questions? Contact us", de: "Fragen? Kontaktiere uns", ru: "Вопросы? Свяжитесь с нами" },
+  secContact: { uk: "Питання? Звʼяжіться зі мною", en: "Questions? Contact me", de: "Fragen? Schreiben Sie mir", ru: "Вопросы? Свяжитесь со мной" },
   // stats
   statDistance: { uk: "Дистанція", en: "Distance", de: "Distanz", ru: "Дистанция" },
   statAscent: { uk: "Підйом", en: "Ascent", de: "Anstieg", ru: "Подъём" },
@@ -1629,7 +1631,8 @@ function BookingSection({ trip, taken, onBooked }) {
   useEffect(() => { loadGuests(); }, [trip.id, done]);
 
   const submit = async () => {
-    if (name.trim() === "" || contact.trim() === "") { setErr(t("bkFillFields")); return; }
+    // Контакт необовʼязковий: людина сама вирішує, лишати його чи ні.
+    if (name.trim() === "") { setErr(t("bkFillFields")); return; }
     setBusy(true); setErr("");
     try {
       await sbBook(trip.id, name.trim(), contact.trim(), people, showName);
@@ -1694,12 +1697,15 @@ function BookingSection({ trip, taken, onBooked }) {
           <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 4 }}>{t("bkName")}</div>
           <input value={name} onChange={(e) => { setName(e.target.value); setErr(""); }}
             style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 10 }} />
-          <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 4 }}>{t("bkContact")}</div>
+          <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 4 }}>
+            {t("bkContact")} <span style={{ fontWeight: 500, textTransform: "lowercase" }}>· {t("bkOptional")}</span>
+          </div>
           <input value={contact} onChange={(e) => { setContact(e.target.value); setErr(""); }}
-            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 10 }} />
+            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px", fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.ink, marginBottom: 5 }} />
+          <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.5, margin: "0 0 10px" }}>{t("bkContactWhy")}</p>
           <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 4 }}>{t("bkPeople")}</div>
-          <div style={{ display: "flex", gap: 7, marginBottom: 11 }}>
-            {[1, 2, 3, 4].map((n) => (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 6, marginBottom: 11 }}>
+            {[1, 2, 3, 4, 5, 6].map((n) => (
               <button key={n} onClick={() => setPeople(n)} disabled={spots > 0 && n > left}
                 style={{ flex: 1, border: `1px solid ${people === n ? C.green : C.line}`, background: people === n ? C.green : "#fff", color: people === n ? "#fff" : (spots > 0 && n > left ? C.faint : C.muted), borderRadius: 10, padding: "10px 0", fontSize: 14, fontWeight: 700, cursor: spots > 0 && n > left ? "default" : "pointer", fontFamily: "inherit" }}>{n}</button>
             ))}
@@ -1792,7 +1798,7 @@ function OrganizerBookings({ trip, pin, onChanged }) {
   };
 
   const listText = () => (rows || [])
-    .map((r, i) => `${i + 1}. ${r.name}${Number(r.people) > 1 ? ` (${r.people})` : ""} — ${r.contact}`)
+    .map((r, i) => `${i + 1}. ${r.name}${Number(r.people) > 1 ? ` (${r.people})` : ""}${r.contact && r.contact.trim() !== "" ? ` — ${r.contact}` : ""}`)
     .join("\n");
 
   // Текст для групи збирається з даних самої поїздки, тож нічого
@@ -1844,7 +1850,9 @@ function OrganizerBookings({ trip, pin, onChanged }) {
                     {r.name}{Number(r.people) > 1 ? ` · ${r.people}` : ""}
                     {!r.show_name && <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 400 }}> (прихований)</span>}
                   </div>
-                  <div style={{ fontSize: 12, color: C.muted, marginTop: 1 }}>{r.contact}</div>
+                  <div style={{ fontSize: 12, color: r.contact && r.contact.trim() !== "" ? C.muted : C.faint, marginTop: 1 }}>
+                    {r.contact && r.contact.trim() !== "" ? r.contact : "контакт не вказано"}
+                  </div>
                 </div>
                 <button onClick={() => remove(r.id)} aria-label="Зняти запис"
                   style={{ border: "none", background: "none", color: C.rasp, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
@@ -2229,16 +2237,30 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                             <div style={{ fontSize: 12.5, color: C.muted }}>{tc(person.role)}</div>
                           </div>
                         </div>
-                        <div style={{ display: "grid", gap: 8 }}>
-                          {person.telegram && (
-                            <a href={`https://t.me/${person.telegram.replace("@", "")}`} target="_blank" rel="noreferrer"
-                              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: C.greenSoft, textDecoration: "none", color: C.greenDark }}>
-                              <Send size={17} />
-                              <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{t("cTelegram")}</span>
-                              <span style={{ fontSize: 13, color: C.green, fontWeight: 600 }}>{person.telegram}</span>
-                            </a>
-                          )}
-                        </div>
+                        {/* Прямі кнопки в особисті повідомлення. Без
+                            заздалегідь вписаного тексту: людина пише про
+                            що завгодно, а не тільки про запис. Посилання
+                            на групову розмову тут навмисно немає. */}
+                        {(() => {
+                          const tg = String(person.telegramDirect || person.telegram || SIGNUP_TELEGRAM || "").replace("@", "").trim();
+                          const wa = String(person.phone || "").replace(/\D/g, "");
+                          if (tg === "" && wa === "") return null;
+                          const base = { flex: 1, color: "#fff", border: "none", padding: "13px 10px", borderRadius: 12, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, textDecoration: "none", boxSizing: "border-box" };
+                          return (
+                            <div style={{ display: "flex", gap: 8 }}>
+                              {tg !== "" && (
+                                <a href={`https://t.me/${tg}`} target="_blank" rel="noreferrer" style={{ ...base, background: "#229ed9" }}>
+                                  <Send size={16} /> Telegram
+                                </a>
+                              )}
+                              {wa !== "" && (
+                                <a href={`https://wa.me/${wa}`} target="_blank" rel="noreferrer" style={{ ...base, background: "#25d366" }}>
+                                  <MessageCircle size={16} /> WhatsApp
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
@@ -2255,48 +2277,10 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           );
         })}
 
-        {STATUS[trip.status]?.group === "upcoming" && (() => {
-          const list = (trip.contacts && trip.contacts.length > 0) ? trip.contacts : (trip.contact ? [trip.contact] : []);
-          const withWa = list.find((c) => c && c.phone);
-          // Запис іде на особистий акаунт (SIGNUP_TELEGRAM), а не на групу.
-          const tgHandle = (SIGNUP_TELEGRAM || list.find((c) => c && c.telegram)?.telegram || "").replace("@", "").trim();
-          const waNumber = withWa?.phone?.replace(/\D/g, "");
-          const message = `${t("signUpMsg")}: ${tc(trip.title)}${trip.dateLabel ? ` (${trip.dateLabel})` : ""}`;
-          const tgUrl = tgHandle ? `https://t.me/${tgHandle}?text=${encodeURIComponent(message)}` : null;
-          const waUrl = waNumber ? `https://wa.me/${waNumber}?text=${encodeURIComponent(message)}` : null;
-          const disabled = left <= 0;
-          if (disabled) {
-            return (
-              <div style={{ position: "sticky", bottom: "calc(12px + env(safe-area-inset-bottom))", marginTop: 4 }}>
-                <button disabled style={{ width: "100%", background: C.faint, color: "#fff", border: "none", padding: "16px", borderRadius: 16, fontSize: 15.5, fontWeight: 700, cursor: "default", boxShadow: "0 6px 18px rgba(60,79,44,0.3)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                  {t("noSpots")}
-                </button>
-              </div>
-            );
-          }
-          const btnBase = { flex: 1, color: "#fff", border: "none", padding: "14px 10px", borderRadius: 14, fontSize: 14, fontWeight: 700, boxShadow: "0 6px 18px rgba(60,79,44,0.3)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, textDecoration: "none", boxSizing: "border-box" };
-          const tgBtn = { ...btnBase, background: "#229ed9", cursor: tgUrl ? "pointer" : "not-allowed", opacity: tgUrl ? 1 : 0.55 };
-          const waBtn = { ...btnBase, background: "#25d366", cursor: waUrl ? "pointer" : "not-allowed", opacity: waUrl ? 1 : 0.55 };
-          return (
-            <div style={{ position: "sticky", bottom: "calc(12px + env(safe-area-inset-bottom))", marginTop: 4 }}>
-              <div style={{ background: "rgba(80,104,60,0.06)", padding: "10px 12px 12px", borderRadius: 18 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.card, textAlign: "center", marginBottom: 9, letterSpacing: 0.2 }}>{t("signUp")}</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {tgUrl ? (
-                    <a href={tgUrl} target="_blank" rel="noreferrer" style={tgBtn}><Send size={16} /> Telegram</a>
-                  ) : (
-                    <span style={tgBtn} title="Додайте Telegram у контактах"><Send size={16} /> Telegram</span>
-                  )}
-                  {waUrl ? (
-                    <a href={waUrl} target="_blank" rel="noreferrer" style={waBtn}><MessageCircle size={16} /> WhatsApp</a>
-                  ) : (
-                    <span style={waBtn} title="Додайте телефон у контактах"><MessageCircle size={16} /> WhatsApp</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+        {/* Старий блок «Записатися у поїздку» з кнопками Telegram і
+            WhatsApp прибрано: запис тепер іде через розділ «Запис у
+            поїздку», а особисті контакти організатора — у розділі
+            «Питання? Звʼяжіться зі мною» нижче. */}
 
         {isAdmin && (
           <div style={{ background: C.card, borderRadius: 18, padding: 16, marginTop: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
