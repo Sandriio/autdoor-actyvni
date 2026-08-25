@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v55";
+const APP_VERSION = "v56";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1355,6 +1355,7 @@ function Spinner({ size = 15, color = "#fff" }) {
 // carry their own `sections` array (backward compatible).
 const DEFAULT_SECTIONS = [
   { type: "about", tkey: "secAbout" },
+  { type: "booking", tkey: "secBooking" },
   { type: "difficulty", tkey: "secDifficulty" },
   { type: "weather", tkey: "secWeather" },
   { type: "travel", tkey: "secTravel" },
@@ -1369,7 +1370,7 @@ const DEFAULT_SECTIONS = [
 // власне посилання (поле driveUrl) — тоді показується воно.
 const DRIVE_URL = "https://drive.google.com/drive/folders/17zaBzXwcsTBnjvf7ncOlzltQNaVTGOyi?usp=drive_link";
 const SECTION_LABELS = {
-  about: "Про місце", difficulty: "Складність", weather: "Погода",
+  about: "Про місце", booking: "Запис у поїздку", difficulty: "Складність", weather: "Погода",
   travel: "Транспорт", meeting: "Точка збору", route: "Маршрут",
   cafes: "Кафе/їжа", packing: "Спорядження", drive: "Фото та відео", contact: "Контакт",
 };
@@ -1598,13 +1599,6 @@ function LiveWeather({ trip }) {
     </>
   );
 }
-
-// ⏸ ВІДКЛАДЕНО. Система запису через застосунок готова, але поки вимкнена:
-// запис іде як раніше, кнопками Telegram і WhatsApp. Щоб увімкнути назад,
-// треба повернути тип розділу "booking" у DEFAULT_SECTIONS, його тіло в
-// перелік розділів, панель <OrganizerBookings> у «Керування поїздкою»,
-// поле дедлайну в редакторі та завантаження лічильників у refreshCounts.
-// Функції в базі Supabase лишаються на місці й нікому не заважають.
 
 // ── Запис у поїздку ──────────────────────────────────────────────────
 // Один компонент на всі стани: відкритий запис, форма, підтвердження,
@@ -1956,6 +1950,10 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
 
         {resolveSections(trip).filter((s) => s.visible !== false).map((sec) => {
           const renderers = {
+            booking: {
+              icon: <ClipboardCheck size={17} />, accent: C.green,
+              body: <BookingSection trip={trip} taken={taken} onBooked={onBooked} />,
+            },
             about: {
               icon: <Info size={17} />, accent: C.green,
               body: <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#4a4a42" }}>{tc(trip.about)}</p>,
@@ -2303,6 +2301,8 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
         {isAdmin && (
           <div style={{ background: C.card, borderRadius: 18, padding: 16, marginTop: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
             <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>{t("manageTrip")}</h3>
+            <OrganizerBookings trip={trip} pin={adminPin} onChanged={onBooked} />
+            <div style={{ height: 16 }} />
             <label style={{ fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 6, display: "block" }}>{t("tripStatus")}</label>
             <select value={trip.status} onChange={(e) => onSetStatus(e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 11, padding: "12px", fontSize: 14, fontWeight: 700, fontFamily: "inherit", background: C.yellowSoft, color: C.yellowInk, cursor: "pointer", marginBottom: 6 }}>
               {STATUS_ORDER.map((s) => (
@@ -2660,7 +2660,18 @@ function TripForm({ initial, onSave, onCancel }) {
           <Field label="Пояснення складності"><input style={inp} value={t.difficultyNote} onChange={(e) => set({ difficultyNote: e.target.value })} placeholder="Для кого підходить, що врахувати" /></Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <Field label="Всього місць"><input style={inp} type="number" value={t.spots} onChange={(e) => set({ spots: e.target.value })} /></Field>
-            <Field label="Зайнято місць"><input style={inp} type="number" value={t.spotsTaken} onChange={(e) => set({ spotsTaken: e.target.value })} /></Field>
+            <Field label="Запис до (дедлайн)">
+              <input style={{ ...inp, marginBottom: 6 }} type="datetime-local" value={t.deadline || ""} onChange={(e) => set({ deadline: e.target.value })} />
+              <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 12px", lineHeight: 1.45 }}>
+                Після цього часу кнопка «Записатися» закривається сама. Порожнє поле — запис без обмеження в часі.
+              </p>
+            </Field>
+            <Field label="Зайнято місць (запасне)">
+              <input style={{ ...inp, marginBottom: 6 }} type="number" value={t.spotsTaken} onChange={(e) => set({ spotsTaken: e.target.value })} />
+              <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 12px", lineHeight: 1.45 }}>
+                Щойно з'явиться перший запис через застосунок, це поле ні на що не впливає.
+              </p>
+            </Field>
           </div>
         </div>
 
@@ -3251,10 +3262,11 @@ export default function App() {
   // й оновлюємо після кожного нового запису, щоб цифра на картці була
   // справжньою, а не вписаною руками.
   const [counts, setCounts] = useState({});
-  // Система запису тимчасово вимкнена (див. коментар біля BookingSection).
-  // Поки лічильники не завантажуються, місця беруться з поля «Зайнято
-  // місць», як було раніше.
-  const refreshCounts = useCallback(() => {}, []);
+  const refreshCounts = useCallback(() => {
+    if (!sbConfigured()) return;
+    sbBookedCounts().then(setCounts).catch(() => {});
+  }, []);
+  useEffect(() => { refreshCounts(); }, [refreshCounts]);
   const [adminPin, setAdminPin] = useState("");
   const [lang, setLang] = useState("uk");
   // Keep the module-level CURRENT_LANG in sync so t() works everywhere.
