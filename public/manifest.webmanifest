@@ -2,12 +2,12 @@
   "name": "Аутдор Активні",
   "short_name": "Аутдор Активні",
   "description": "Одноденні поїздки в гори та міста Баварії",
-  "start_url": "/",
+  "start_url": "/?v=2",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#50683c",
-  "theme_color": "#50683c",
+  "background_color": "#4e6539",
+  "theme_color": "#4e6539",
   "lang": "uk",
   "icons": [
     {
@@ -28,5 +28,4 @@
       "type": "image/png",
       "purpose": "any"
     }
-  ]
-}
+  
