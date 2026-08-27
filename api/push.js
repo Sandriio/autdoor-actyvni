@@ -129,7 +129,10 @@ export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).json({ error: "POST only" }); return; }
 
   try {
-    const { secret, title, body, url, tag } = req.body || {};
+    // msgs — тексти по мовах: { uk: {title, body}, en: {...}, ru: {...} }.
+    // Кожен пристрій отримує свою мову: вона збережена в підписці ще
+    // при вмиканні сповіщень. Старий формат title/body теж працює.
+    const { secret, title, body, url, tag, msgs } = req.body || {};
     if (!process.env.VAPID_PRIVATE_KEY) {
       res.status(500).json({ error: "VAPID_PRIVATE_KEY not set in Vercel" });
       return;
@@ -138,7 +141,8 @@ export default async function handler(req, res) {
       res.status(403).json({ error: "bad secret" });
       return;
     }
-    if (!title) { res.status(400).json({ error: "no title" }); return; }
+    const pack = (msgs && typeof msgs === "object") ? msgs : null;
+    if (!title && !pack) { res.status(400).json({ error: "no title" }); return; }
 
     const subs = await sb("push_list", { p_secret: secret });
     if (!subs || subs.length === 0) {
@@ -146,7 +150,17 @@ export default async function handler(req, res) {
       return;
     }
 
-    const payload = JSON.stringify({ title, body: body || "", url: url || "/", tag: tag || "autdoor" });
+    // Текст готуємо для кожної мови один раз, а не для кожного пристрою.
+    const payloadFor = (lang) => {
+      const m = pack ? (pack[lang] || pack.uk || pack.en || Object.values(pack)[0]) : null;
+      return JSON.stringify({
+        title: (m && m.title) || title || "Аутдор Активні",
+        body: (m && m.body) || body || "",
+        url: url || "/",
+        tag: tag || "autdoor",
+      });
+    };
+    const cache = {};
     let sent = 0, failed = 0;
     const dead = [];
 
@@ -154,9 +168,11 @@ export default async function handler(req, res) {
     // в ліміт часу, по одному — надто повільно.
     for (let i = 0; i < subs.length; i += 20) {
       const chunk = subs.slice(i, i + 20);
-      const out = await Promise.all(chunk.map((s) =>
-        sendOne(s, payload).catch(() => ({ ok: false, gone: false }))
-      ));
+      const out = await Promise.all(chunk.map((s) => {
+        const lang = (s.lang || "uk").slice(0, 2);
+        if (!cache[lang]) cache[lang] = payloadFor(lang);
+        return sendOne(s, cache[lang]).catch(() => ({ ok: false, gone: false }));
+      }));
       out.forEach((r, k) => {
         if (r.ok) sent++; else failed++;
         if (r.gone) dead.push(chunk[k].endpoint);
