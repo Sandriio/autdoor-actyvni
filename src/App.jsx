@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v58";
+const APP_VERSION = "v59";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -3225,9 +3225,36 @@ export default function App() {
   }, []);
   useEffect(() => { refreshCounts(); }, [refreshCounts]);
   const [adminPin, setAdminPin] = useState("");
-  const [lang, setLang] = useState("uk");
+  // Мова береться з телефона, а не жорстко українська: німець чи поляк
+  // побачить англійську, а не текст, якого не читає. Обраний вручну
+  // варіант має перевагу й памʼятається між відкриттями.
+  const [lang, setLang] = useState(() => {
+    try {
+      const saved = localStorage.getItem("lang");
+      if (saved && LANGS.some((l) => l.code === saved)) return saved;
+    } catch {}
+    const sys = String((navigator.languages && navigator.languages[0]) || navigator.language || "uk").slice(0, 2).toLowerCase();
+    return LANGS.some((l) => l.code === sys) ? sys : (sys === "be" || sys === "kk" ? "ru" : "en");
+  });
+  useEffect(() => { try { localStorage.setItem("lang", lang); } catch {} }, [lang]);
   // Keep the module-level CURRENT_LANG in sync so t() works everywhere.
   CURRENT_LANG = lang;
+  // Сповіщення приходять мовою, збереженою в підписці. Якщо людина
+  // перемкнула мову вже після того, як увімкнула сповіщення, підписку
+  // треба переписати — інакше пуші й далі йшли б старою мовою.
+  useEffect(() => {
+    if (!pushSupported() || !sbConfigured()) return;
+    navigator.serviceWorker.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sub) => {
+        if (!sub) return;
+        const j = sub.toJSON();
+        return sbRpc("push_subscribe", {
+          p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_lang: lang,
+        });
+      })
+      .catch(() => {});
+  }, [lang]);
 
   // Завантаження поїздок із Supabase (якщо підключено). Якщо база
   // недоступна — тихо відкочуємось на демо-дані, щоб сайт ніколи не падав.
