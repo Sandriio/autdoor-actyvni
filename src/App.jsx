@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v59";
+const APP_VERSION = "v60";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -144,6 +144,28 @@ async function sbBookedCounts() {
 const sbGuests = (tripId) => sbRpc("trip_guests", { p_trip_id: tripId });
 const sbBook = (tripId, name, contact, people, showName) =>
   sbRpc("book_trip", { p_trip_id: tripId, p_name: name, p_contact: contact, p_people: people, p_show_name: showName });
+// Правка власного запису. Ключ видається при записі й лежить тільки на
+// телефоні тієї людини — чужий запис виправити неможливо.
+const sbUpdateBooking = (id, token, name, contact, people, showName) =>
+  sbRpc("update_booking", { p_id: id, p_token: token, p_name: name, p_contact: contact, p_people: people, p_show_name: showName });
+// Правка будь-якого запису організатором, за PIN.
+const sbAdminUpdateBooking = (id, pin, name, contact, people, showName) =>
+  sbRpc("admin_update_booking", { p_id: id, pin, p_name: name, p_contact: contact, p_people: people, p_show_name: showName });
+
+// Ключі до власних записів зберігаються на пристрої. Обліковых записів
+// у застосунку немає, тож це єдиний спосіб упізнати «свій» запис.
+const MY_BOOKINGS = "myBookings";
+function myBooking(tripId) {
+  try { return (JSON.parse(localStorage.getItem(MY_BOOKINGS) || "{}"))[tripId] || null; }
+  catch { return null; }
+}
+function rememberBooking(tripId, rec) {
+  try {
+    const all = JSON.parse(localStorage.getItem(MY_BOOKINGS) || "{}");
+    if (rec) all[tripId] = rec; else delete all[tripId];
+    localStorage.setItem(MY_BOOKINGS, JSON.stringify(all));
+  } catch {}
+}
 // Повний список з контактами — лише організаторові, за PIN.
 const sbBookings = (tripId, pin) => sbRpc("trip_bookings", { p_trip_id: tripId, pin });
 const sbDeleteBooking = (id, pin) => sbRpc("delete_booking", { p_id: id, pin });
@@ -274,6 +296,12 @@ const T = {
   bkPlusOne: { uk: "+1 особа", en: "+1 person", de: "+1 Person", ru: "+1 человек" },
   bkPlusMany: { uk: "+{n} особи", en: "+{n} people", de: "+{n} Personen", ru: "+{n} человека" },
   bkOnlyOrganizer: { uk: "Контакти бачить лише організатор", en: "Only the organiser sees contacts", de: "Kontakte sieht nur die Organisation", ru: "Контакты видит только организатор" },
+  bkMine: { uk: "Ваш запис", en: "Your booking", de: "Ihre Anmeldung", ru: "Ваша запись" },
+  bkEdit: { uk: "Змінити", en: "Edit", de: "Ändern", ru: "Изменить" },
+  bkSave: { uk: "Зберегти зміни", en: "Save changes", de: "Änderungen speichern", ru: "Сохранить изменения" },
+  bkCancelEdit: { uk: "Скасувати", en: "Cancel", de: "Abbrechen", ru: "Отмена" },
+  bkSaved: { uk: "Зміни збережено", en: "Changes saved", de: "Änderungen gespeichert", ru: "Изменения сохранены" },
+  bkPersons: { uk: "осіб", en: "people", de: "Personen", ru: "человек" },
   bkNobody: { uk: "Ще ніхто не записався — будьте першим.", en: "Nobody yet — be the first.", de: "Noch niemand — seien Sie die erste Person.", ru: "Пока никто не записался — будьте первым." },
   secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
   driveNote: { uk: "Спільний архів медіа з цієї поїздки. Додавайте свої — вони будуть доступні всій групі.", en: "A shared media archive from this trip. Add your own — everyone in the group will see them.", de: "Gemeinsames Medienarchiv dieses Ausflugs. Fügen Sie eigene hinzu — die ganze Gruppe sieht sie.", ru: "Общий архив медиа с этой поездки. Добавляйте свои — они будут доступны всей группе." },
@@ -1616,6 +1644,10 @@ function BookingSection({ trip, taken, onBooked }) {
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
   const [guests, setGuests] = useState(null);
+  // Власний запис цього пристрою: { id, token, name, contact, people, showName }
+  const [mine, setMine] = useState(() => myBooking(trip.id));
+  const [editing, setEditing] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const spots = Number(trip.spots) || 0;
   const left = Math.max(0, spots - taken);
@@ -1629,12 +1661,45 @@ function BookingSection({ trip, taken, onBooked }) {
   };
   useEffect(() => { loadGuests(); }, [trip.id, done]);
 
+  // Зберегти правки власного запису. Форма та сама, що й для запису —
+  // відрізняється лише те, куди йде результат.
+  const saveEdit = async () => {
+    if (name.trim() === "") { setErr(t("bkFillFields")); return; }
+    setBusy(true); setErr("");
+    try {
+      await sbUpdateBooking(mine.id, mine.token, name.trim(), contact.trim(), people, showName);
+      const rec = { ...mine, name: name.trim(), contact: contact.trim(), people, showName };
+      rememberBooking(trip.id, rec);
+      setMine(rec); setEditing(false); setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+      loadGuests();
+      if (onBooked) onBooked();
+    } catch (e) {
+      setErr(t(bookErrorKey(e)));
+    } finally { setBusy(false); }
+  };
+
+  // Відкрити форму на редагування з підставленими значеннями.
+  const startEdit = () => {
+    setName(mine.name || ""); setContact(mine.contact || "");
+    setPeople(Number(mine.people) || 1); setShowName(mine.showName !== false);
+    setErr(""); setEditing(true); setOpen(true);
+  };
+
   const submit = async () => {
     // Контакт необовʼязковий: людина сама вирішує, лишати його чи ні.
     if (name.trim() === "") { setErr(t("bkFillFields")); return; }
     setBusy(true); setErr("");
     try {
-      await sbBook(trip.id, name.trim(), contact.trim(), people, showName);
+      const rec = await sbBook(trip.id, name.trim(), contact.trim(), people, showName);
+      // Ключ зберігаємо одразу — без нього людина більше не зможе
+      // виправити свій запис і муситиме писати організаторові.
+      const saveRec = {
+        id: rec && rec.id, token: rec && rec.token,
+        name: name.trim(), contact: contact.trim(), people, showName,
+      };
+      rememberBooking(trip.id, saveRec);
+      setMine(saveRec);
       setDone(true); setOpen(false);
       if (onBooked) onBooked();
     } catch (e) {
@@ -1669,29 +1734,42 @@ function BookingSection({ trip, taken, onBooked }) {
         </div>
       )}
 
-      {done && (
-        <div style={{ textAlign: "center", padding: "6px 0 2px" }}>
-          <div style={{ width: 50, height: 50, borderRadius: "50%", background: C.greenSoft, color: C.greenDark, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 11px" }}>
-            <ClipboardCheck size={24} />
+      {/* Свій запис видно завжди, а не лише одразу після натискання:
+          людина може зайти через тиждень і виправити ім'я чи кількість
+          осіб, не звертаючись до організатора. */}
+      {mine && !editing && (
+        <div style={{ border: `1.5px solid ${C.green}`, background: C.greenSoft, borderRadius: 13, padding: 13, marginBottom: 11 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <ClipboardCheck size={16} style={{ color: C.greenDark, flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 800, color: C.greenDark, flex: 1 }}>
+              {saved ? t("bkSaved") : t("bkMine")}
+            </span>
+            <button onClick={startEdit}
+              style={{ border: `1px solid ${C.green}`, background: "#fff", color: C.greenDark, borderRadius: 9, padding: "6px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+              {t("bkEdit")}
+            </button>
           </div>
-          <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 10 }}>{t("bkDone")}</div>
-          <div style={{ background: C.yellowSoft, borderRadius: 11, padding: "10px 12px", textAlign: "left", fontSize: 12, color: C.yellowInk, lineHeight: 1.5 }}>
-            {t("bkCancelNote")}
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>
+            {mine.name}{Number(mine.people) > 1 ? ` · ${mine.people} ${t("bkPersons")}` : ""}
           </div>
+          {mine.contact && mine.contact.trim() !== "" && (
+            <div style={{ fontSize: 12.5, color: C.muted, marginTop: 2 }}>{mine.contact}</div>
+          )}
+          <div style={{ fontSize: 11.5, color: C.muted, marginTop: 9, lineHeight: 1.5 }}>{t("bkCancelNote")}</div>
         </div>
       )}
 
-      {!done && closed && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkClosed") + " " + t("bkAskOrganizer"))}
-      {!done && !closed && full && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkNoSpots") + " " + t("bkAskOrganizer"))}
+      {!mine && closed && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkClosed") + " " + t("bkAskOrganizer"))}
+      {!mine && !closed && full && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkNoSpots") + " " + t("bkAskOrganizer"))}
 
-      {!done && !closed && !full && !open && (
+      {!mine && !closed && !full && !open && (
         <button onClick={() => setOpen(true)}
           style={{ width: "100%", border: "none", background: C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
           {t("bkJoin")}
         </button>
       )}
 
-      {!done && open && (
+      {open && (
         <div>
           <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 4 }}>{t("bkName")}</div>
           <input value={name} onChange={(e) => { setName(e.target.value); setErr(""); }}
@@ -1705,7 +1783,7 @@ function BookingSection({ trip, taken, onBooked }) {
           <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 4 }}>{t("bkPeople")}</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 6, marginBottom: 11 }}>
             {[1, 2, 3, 4, 5, 6].map((n) => (
-              <button key={n} onClick={() => setPeople(n)} disabled={spots > 0 && n > left}
+              <button key={n} onClick={() => setPeople(n)} disabled={spots > 0 && n > left + (editing ? (Number(mine.people) || 0) : 0)}
                 style={{ flex: 1, border: `1px solid ${people === n ? C.green : C.line}`, background: people === n ? C.green : "#fff", color: people === n ? "#fff" : (spots > 0 && n > left ? C.faint : C.muted), borderRadius: 10, padding: "10px 0", fontSize: 14, fontWeight: 700, cursor: spots > 0 && n > left ? "default" : "pointer", fontFamily: "inherit" }}>{n}</button>
             ))}
           </div>
@@ -1718,10 +1796,18 @@ function BookingSection({ trip, taken, onBooked }) {
           </button>
           <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.5, margin: "0 0 12px" }}>{t("bkPrivacy")}</p>
           {err !== "" && <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{err}</p>}
-          <button onClick={submit} disabled={busy}
-            style={{ width: "100%", border: "none", background: busy ? C.pageSoft : C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
-            {busy ? t("bkSending") : t("bkConfirm")}
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {editing && (
+              <button onClick={() => { setEditing(false); setOpen(false); setErr(""); }}
+                style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.muted, borderRadius: 12, padding: "13px 16px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+                {t("bkCancelEdit")}
+              </button>
+            )}
+            <button onClick={editing ? saveEdit : submit} disabled={busy}
+              style={{ flex: 1, border: "none", background: busy ? C.pageSoft : C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+              {busy ? t("bkSending") : (editing ? t("bkSave") : t("bkConfirm"))}
+            </button>
+          </div>
         </div>
       )}
 
@@ -1764,6 +1850,9 @@ function OrganizerBookings({ trip, pin, onChanged }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
   const [copied, setCopied] = useState("");
+  // Який запис зараз редагується і його чернетка.
+  const [editId, setEditId] = useState(null);
+  const [draft, setDraft] = useState({ name: "", contact: "", people: 1 });
 
   const load = () => {
     if (!sbConfigured() || !pin) return;
@@ -1773,6 +1862,22 @@ function OrganizerBookings({ trip, pin, onChanged }) {
   useEffect(() => { load(); }, [trip.id, pin]);
 
   const total = (rows || []).reduce((a, r) => a + (Number(r.people) || 1), 0);
+
+  const startEdit = (r) => {
+    setEditId(r.id);
+    setDraft({ name: r.name || "", contact: r.contact || "", people: Number(r.people) || 1 });
+    setErr("");
+  };
+  const saveEdit = async () => {
+    if (String(draft.name).trim() === "") { setErr("Вкажіть імʼя."); return; }
+    try {
+      await sbAdminUpdateBooking(editId, pin, draft.name.trim(), draft.contact.trim(), Number(draft.people) || 1, true);
+      setEditId(null); load();
+      if (onChanged) onChanged();
+    } catch (e) {
+      setErr("Не вдалося зберегти: " + String((e && e.message) || e).slice(0, 90));
+    }
+  };
 
   const remove = async (id) => {
     if (!window.confirm("Зняти цей запис? Місце звільниться для інших.")) return;
@@ -1827,20 +1932,47 @@ function OrganizerBookings({ trip, pin, onChanged }) {
         <>
           <div style={{ background: "#fff", borderRadius: 11, padding: "2px 12px", marginBottom: 11 }}>
             {rows.map((r, i) => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: i === rows.length - 1 ? "none" : `1px solid ${C.line}` }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: C.ink, fontWeight: 600 }}>
-                    {r.name}{Number(r.people) > 1 ? ` · ${r.people}` : ""}
-                    {!r.show_name && <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 400 }}> (прихований)</span>}
+              <div key={r.id} style={{ padding: "9px 0", borderBottom: i === rows.length - 1 ? "none" : `1px solid ${C.line}` }}>
+                {editId === r.id ? (
+                  <div>
+                    <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Імʼя"
+                      style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 9, padding: "9px 10px", fontSize: 13, fontFamily: "inherit", marginBottom: 7 }} />
+                    <input value={draft.contact} onChange={(e) => setDraft({ ...draft, contact: e.target.value })} placeholder="Контакт (необовʼязково)"
+                      style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 9, padding: "9px 10px", fontSize: 13, fontFamily: "inherit", marginBottom: 7 }} />
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 5, marginBottom: 8 }}>
+                      {[1, 2, 3, 4, 5, 6].map((n) => (
+                        <button key={n} onClick={() => setDraft({ ...draft, people: n })}
+                          style={{ border: `1px solid ${draft.people === n ? C.rasp : C.line}`, background: draft.people === n ? C.rasp : "#fff", color: draft.people === n ? "#fff" : C.muted, borderRadius: 8, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{n}</button>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 7 }}>
+                      <button onClick={() => setEditId(null)}
+                        style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.muted, borderRadius: 9, padding: "9px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Скасувати</button>
+                      <button onClick={saveEdit}
+                        style={{ flex: 1, border: "none", background: C.green, color: "#fff", borderRadius: 9, padding: "9px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Зберегти</button>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 12, color: r.contact && r.contact.trim() !== "" ? C.muted : C.faint, marginTop: 1 }}>
-                    {r.contact && r.contact.trim() !== "" ? r.contact : "контакт не вказано"}
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: C.ink, fontWeight: 600 }}>
+                        {r.name}{Number(r.people) > 1 ? ` · ${r.people}` : ""}
+                        {!r.show_name && <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 400 }}> (прихований)</span>}
+                      </div>
+                      <div style={{ fontSize: 12, color: r.contact && r.contact.trim() !== "" ? C.muted : C.faint, marginTop: 1 }}>
+                        {r.contact && r.contact.trim() !== "" ? r.contact : "контакт не вказано"}
+                      </div>
+                    </div>
+                    <button onClick={() => startEdit(r)} aria-label="Змінити запис"
+                      style={{ border: "none", background: "none", color: C.green, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
+                      <Pencil size={15} />
+                    </button>
+                    <button onClick={() => remove(r.id)} aria-label="Зняти запис"
+                      style={{ border: "none", background: "none", color: C.rasp, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
+                      <Trash2 size={15} />
+                    </button>
                   </div>
-                </div>
-                <button onClick={() => remove(r.id)} aria-label="Зняти запис"
-                  style={{ border: "none", background: "none", color: C.rasp, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
-                  <Trash2 size={15} />
-                </button>
+                )}
               </div>
             ))}
           </div>
