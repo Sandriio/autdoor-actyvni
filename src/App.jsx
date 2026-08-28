@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v63";
+const APP_VERSION = "v64";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -387,6 +387,8 @@ const T = {
   jpChanges: { uk: "пересадка(и)", en: "changes", de: "Umstiege", ru: "пересадка(и)" },
   jpCancelled: { uk: "Рейс скасовано або є скасовані ділянки", en: "Cancelled or partly cancelled", de: "Fahrt entfällt teilweise", ru: "Рейс отменён или есть отменённые участки" },
   jpTrack: { uk: "кол.", en: "pl.", de: "Gl.", ru: "пут." },
+  retTitle: { uk: "Відправлення назад", en: "Return departure", de: "Rückfahrt", ru: "Отправление назад" },
+  retNote: { uk: "Це загальний час відправлення назад, він залежить від ситуації і може відрізнятися. Для уточнення вашого часу зверніться до організатора.", en: "This is the general return departure time. It depends on the day and may differ — ask the organiser to confirm yours.", de: "Das ist die allgemeine Rückfahrzeit. Sie kann je nach Situation abweichen — fragen Sie die Organisation nach Ihrer.", ru: "Это общее время отправления назад, оно зависит от ситуации и может отличаться. Для уточнения вашего времени обратитесь к организатору." },
   travelCityNote: { uk: "Якщо вашого міста немає у цьому списку — повідомте організатора. Він оновить список.", en: "If your city is not on this list, let the organiser know. They will update it.", de: "Wenn Ihre Stadt nicht in dieser Liste steht, sagen Sie der Organisation Bescheid. Die Liste wird dann ergänzt.", ru: "Если вашего города нет в этом списке — сообщите организатору. Он обновит список." },
   bonusTitle: { uk: "Додатково поруч", en: "Also nearby", de: "Auch in der Nähe", ru: "Дополнительно рядом" },
   bonusHint: { uk: "Не входить у маршрут — заходьте, якщо буде час і бажання.", en: "Not part of the route — visit if you have time.", de: "Nicht Teil der Route — bei Zeit und Lust einen Abstecher wert.", ru: "Не входит в маршрут — загляните, если будет время." },
@@ -2311,6 +2313,23 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                       </div>
                     </div>
                   )}
+                  {/* Зворотній поїзд навмисно спрощений: одна година без
+                      станцій і пересадок. Час назад щоразу різний, тож
+                      докладний ланцюжок лише вводив би в оману. */}
+                  {String(trip.returnTime || "").trim() !== "" && (
+                    <div style={{ marginTop: 10, border: `1px solid ${C.greenLine}`, borderRadius: 13, padding: 13, background: "#fff" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ width: 32, height: 32, borderRadius: 10, background: C.greenSoft, color: C.greenDark, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transform: "scaleX(-1)" }}>
+                          <Train size={16} />
+                        </span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "block", fontSize: 12, color: C.muted, fontWeight: 700 }}>{t("retTitle")}</span>
+                          <span style={{ display: "block", fontSize: 19, fontWeight: 800, color: C.ink, marginTop: 1 }}>{String(trip.returnTime).trim()}</span>
+                        </span>
+                      </div>
+                      <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.5, margin: "9px 0 0" }}>{t("retNote")}</p>
+                    </div>
+                  )}
                   <div style={{ marginTop: 8, padding: 11, background: C.yellowSoft, borderRadius: 11, fontSize: 12.5, color: C.yellowInk, display: "flex", gap: 7, alignItems: "flex-start" }}>
                     <Train size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                     <span>{t("dTicket")} <b>Deutschland Ticket</b> <b>63 €</b> {t("dTicketTail")}</span>
@@ -3057,6 +3076,15 @@ function TripForm({ initial, onSave, onCancel }) {
             );
           })}
 
+          {/* Одне поле часу — свідомо, без станцій і пересадок. */}
+          <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 12, background: "#fff" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.rasp, marginBottom: 7 }}>Відправлення назад</div>
+            <input style={{ ...inp, marginBottom: 7 }} value={t.returnTime || ""} onChange={(e) => set({ returnTime: e.target.value })} placeholder="напр. 17:32" />
+            <p style={{ fontSize: 11.5, color: C.muted, margin: 0, lineHeight: 1.45 }}>
+              Порожнє поле — блок не показується. Під часом учасник побачить примітку,
+              що час орієнтовний і залежить від ситуації.
+            </p>
+          </div>
           <button onClick={() => { const n = journeys.length; set({ journeys: [...journeys, { legs: [blankLeg()] }] }); setOpenJourney(n); setOpenLeg(n + ":0"); }}
             style={{ width: "100%", border: `1.5px dashed ${C.green}`, background: C.greenSoft, color: C.greenDark, borderRadius: 10, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}>
             + Додати відправлення з іншого міста
