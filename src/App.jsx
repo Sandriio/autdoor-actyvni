@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v64";
+const APP_VERSION = "v65";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -2324,7 +2324,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                         </span>
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ display: "block", fontSize: 12, color: C.muted, fontWeight: 700 }}>{t("retTitle")}</span>
-                          <span style={{ display: "block", fontSize: 19, fontWeight: 800, color: C.ink, marginTop: 1 }}>{String(trip.returnTime).trim()}</span>
+                          <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: C.ink, marginTop: 2, lineHeight: 1.4 }}>{String(trip.returnTime).trim()}</span>
                         </span>
                       </div>
                       <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.5, margin: "9px 0 0" }}>{t("retNote")}</p>
@@ -3079,7 +3079,7 @@ function TripForm({ initial, onSave, onCancel }) {
           {/* Одне поле часу — свідомо, без станцій і пересадок. */}
           <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 12, background: "#fff" }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: C.rasp, marginBottom: 7 }}>Відправлення назад</div>
-            <input style={{ ...inp, marginBottom: 7 }} value={t.returnTime || ""} onChange={(e) => set({ returnTime: e.target.value })} placeholder="напр. 17:32" />
+            <input style={{ ...inp, marginBottom: 7 }} value={t.returnTime || ""} onChange={(e) => set({ returnTime: e.target.value })} placeholder="напр. 17:32 або Würzburg Hbf, 17:41, кол. 2" />
             <p style={{ fontSize: 11.5, color: C.muted, margin: 0, lineHeight: 1.45 }}>
               Порожнє поле — блок не показується. Під часом учасник побачить примітку,
               що час орієнтовний і залежить від ситуації.
