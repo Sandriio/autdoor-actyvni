@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v61";
+const APP_VERSION = "v62";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -156,6 +156,10 @@ const sbAdminAddBooking = (pin, tripId, name, contact, people, showName) =>
   sbRpc("admin_add_booking", { pin, p_trip_id: tripId, p_name: name, p_contact: contact, p_people: people, p_show_name: showName });
 // Учасник знімає себе сам, своїм ключем.
 const sbCancelBooking = (id, token) => sbRpc("cancel_booking", { p_id: id, p_token: token });
+// Забрати ключ до запису, зробленого до появи ключів або з іншого
+// пристрою. Доводити «це я» доводиться імʼям і контактом.
+const sbClaimBooking = (tripId, name, contact) =>
+  sbRpc("claim_booking", { p_trip_id: tripId, p_name: name, p_contact: contact });
 
 // Ключі до власних записів зберігаються на пристрої. Обліковых записів
 // у застосунку немає, тож це єдиний спосіб упізнати «свій» запис.
@@ -183,6 +187,9 @@ function bookErrorKey(e) {
   if (m.includes("Nemaye vilnykh")) return "bkNoSpots";
   if (m.includes("Vkazhit")) return "bkFillFields";
   if (m.includes("Nepravylna")) return "bkBadCount";
+  if (m.includes("Potriben kontakt")) return "bkNeedContact";
+  if (m.includes("Kontakt ne zbihaetsya")) return "bkWrongContact";
+  if (m.includes("Zapys ne znaideno")) return "bkNotFound";
   return "bkFailed";
 }
 
@@ -309,6 +316,13 @@ const T = {
   bkPersons: { uk: "осіб", en: "people", de: "Personen", ru: "человек" },
   bkLeave: { uk: "Зняти запис", en: "Cancel booking", de: "Anmeldung zurückziehen", ru: "Снять запись" },
   bkLeaveAsk: { uk: "Зняти свій запис? Місце звільниться для інших.", en: "Cancel your booking? The spot will be freed for others.", de: "Anmeldung zurückziehen? Der Platz wird für andere frei.", ru: "Снять свою запись? Место освободится для других." },
+  bkFindMine: { uk: "Ви вже записані? Знайти свій запис", en: "Already signed up? Find your booking", de: "Schon angemeldet? Anmeldung finden", ru: "Вы уже записаны? Найти свою запись" },
+  bkFindTitle: { uk: "Знайти свій запис", en: "Find your booking", de: "Anmeldung finden", ru: "Найти свою запись" },
+  bkFindNote: { uk: "Впишіть імʼя так, як вказували при записі. Якщо лишали контакт — вкажіть і його.", en: "Enter your name exactly as you did when signing up. If you left a contact, add it too.", de: "Namen genau wie bei der Anmeldung eingeben. Falls Sie einen Kontakt hinterlassen haben, ergänzen Sie ihn.", ru: "Впишите имя так, как указывали при записи. Если оставляли контакт — укажите и его." },
+  bkFindBtn: { uk: "Знайти", en: "Find", de: "Suchen", ru: "Найти" },
+  bkNotFound: { uk: "Запис із таким імʼям не знайдено. Перевірте написання або зверніться до організатора.", en: "No booking with that name. Check the spelling or contact the organiser.", de: "Keine Anmeldung mit diesem Namen. Bitte Schreibweise prüfen oder die Organisation fragen.", ru: "Запись с таким именем не найдена. Проверьте написание или обратитесь к организатору." },
+  bkNeedContact: { uk: "Таких імен кілька — вкажіть контакт, який залишали.", en: "There are several bookings with that name — please add the contact you left.", de: "Mehrere Anmeldungen mit diesem Namen — bitte den hinterlassenen Kontakt angeben.", ru: "Таких имён несколько — укажите контакт, который оставляли." },
+  bkWrongContact: { uk: "Контакт не збігається із записом.", en: "The contact does not match the booking.", de: "Der Kontakt stimmt nicht mit der Anmeldung überein.", ru: "Контакт не совпадает с записью." },
   bkLeftNote: { uk: "Ваш запис знято. Можете записатися знову, поки є місця.", en: "Your booking is cancelled. You can sign up again while spots last.", de: "Ihre Anmeldung wurde zurückgezogen. Sie können sich erneut anmelden.", ru: "Ваша запись снята. Можете записаться снова, пока есть места." },
   bkNobody: { uk: "Ще ніхто не записався — будьте першим.", en: "Nobody yet — be the first.", de: "Noch niemand — seien Sie die erste Person.", ru: "Пока никто не записался — будьте первым." },
   secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
@@ -1656,6 +1670,10 @@ function BookingSection({ trip, taken, onBooked }) {
   const [mine, setMine] = useState(() => myBooking(trip.id));
   const [editing, setEditing] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Пошук власного запису для тих, хто записався до появи ключів.
+  const [finding, setFinding] = useState(false);
+  const [fName, setFName] = useState("");
+  const [fContact, setFContact] = useState("");
 
   const spots = Number(trip.spots) || 0;
   const left = Math.max(0, spots - taken);
@@ -1682,6 +1700,25 @@ function BookingSection({ trip, taken, onBooked }) {
       setTimeout(() => setSaved(false), 2500);
       loadGuests();
       if (onBooked) onBooked();
+    } catch (e) {
+      setErr(t(bookErrorKey(e)));
+    } finally { setBusy(false); }
+  };
+
+  // Забрати свій запис на цей пристрій. Потрібно тим, хто записався
+  // до появи ключів, або хто відкрив застосунок з іншого телефона.
+  const claim = async () => {
+    if (fName.trim() === "") { setErr(t("bkFillFields")); return; }
+    setBusy(true); setErr("");
+    try {
+      const r = await sbClaimBooking(trip.id, fName.trim(), fContact.trim());
+      const rec = {
+        id: r.id, token: r.token, name: r.name,
+        contact: r.contact || "", people: Number(r.people) || 1,
+        showName: r.show_name !== false,
+      };
+      rememberBooking(trip.id, rec);
+      setMine(rec); setFinding(false); setFName(""); setFContact("");
     } catch (e) {
       setErr(t(bookErrorKey(e)));
     } finally { setBusy(false); }
@@ -1789,7 +1826,36 @@ function BookingSection({ trip, taken, onBooked }) {
       {!mine && closed && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkClosed") + " " + t("bkAskOrganizer"))}
       {!mine && !closed && full && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkNoSpots") + " " + t("bkAskOrganizer"))}
 
-      {!mine && !closed && !full && !open && (
+      {!mine && !open && !finding && guests && guests.length > 0 && (
+        <button onClick={() => { setFinding(true); setErr(""); }}
+          style={{ width: "100%", border: "none", background: "none", color: C.green, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: "4px 0 12px", textAlign: "left" }}>
+          {t("bkFindMine")}
+        </button>
+      )}
+
+      {finding && (
+        <div style={{ border: `1.5px solid ${C.green}`, borderRadius: 13, padding: 13, marginBottom: 11, background: "#fff" }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, marginBottom: 5 }}>{t("bkFindTitle")}</div>
+          <p style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5, margin: "0 0 10px" }}>{t("bkFindNote")}</p>
+          <input value={fName} onChange={(e) => { setFName(e.target.value); setErr(""); }} placeholder={t("bkName")}
+            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px", fontSize: 14, fontFamily: "inherit", marginBottom: 8 }} />
+          <input value={fContact} onChange={(e) => { setFContact(e.target.value); setErr(""); }} placeholder={t("bkContact")}
+            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px", fontSize: 14, fontFamily: "inherit", marginBottom: 10 }} />
+          {err !== "" && <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{err}</p>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => { setFinding(false); setErr(""); }}
+              style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.muted, borderRadius: 11, padding: "12px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              {t("bkCancelEdit")}
+            </button>
+            <button onClick={claim} disabled={busy}
+              style={{ flex: 1, border: "none", background: busy ? C.pageSoft : C.green, color: "#fff", borderRadius: 11, padding: "12px", fontSize: 13.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+              {busy ? t("bkSending") : t("bkFindBtn")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!mine && !closed && !full && !open && !finding && (
         <button onClick={() => setOpen(true)}
           style={{ width: "100%", border: "none", background: C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
           {t("bkJoin")}
