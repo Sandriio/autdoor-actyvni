@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v62";
+const APP_VERSION = "v63";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -2098,6 +2098,68 @@ function OrganizerBookings({ trip, pin, onChanged }) {
   );
 }
 
+// ── Перевірка сповіщень (режим організатора) ────────────────────────
+// Кнопка навмисно показує СИРУ відповідь сервера, а не «щось пішло не
+// так». Push проходить через шість ланок: дозвіл у браузері, фоновий
+// скрипт, підписка в базі, ключі у Vercel, серверна функція і сам
+// push-сервер Google чи Apple. Здогадуватись, яка з них мовчить, — це
+// щоразу година навмання. Відповідь називає ланку одразу.
+function PushDiagnostics() {
+  const [state, setState] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [subs, setSubs] = useState(null);
+
+  useEffect(() => {
+    if (!sbConfigured()) return;
+    sbRpc("push_count", {}).then((n) => setSubs(Number(n) || 0)).catch(() => setSubs(-1));
+  }, []);
+
+  const test = async () => {
+    setBusy(true); setState("");
+    const lines = [];
+    lines.push(`Підписок у базі: ${subs === null ? "…" : subs === -1 ? "не вдалося прочитати (немає функції push_count?)" : subs}`);
+    lines.push(`Дозвіл у цьому браузері: ${typeof Notification === "undefined" ? "не підтримується" : Notification.permission}`);
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      lines.push(`Фоновий скрипт: ${reg ? "зареєстровано" : "НЕМАЄ — перевірте, що sw.js лежить у папці public"}`);
+      const sub = reg ? await reg.pushManager.getSubscription() : null;
+      lines.push(`Підписка цього пристрою: ${sub ? "є" : "немає"}`);
+    } catch (e) {
+      lines.push(`Фоновий скрипт: помилка — ${String(e.message || e)}`);
+    }
+    try {
+      const r = await pushSend("Перевірка сповіщень", "Якщо ви це бачите — усе працює.", "/", "test");
+      lines.push(`Сервер відповів: надіслано ${r.sent}, не вдалось ${r.failed}${r.removed ? `, прибрано мертвих ${r.removed}` : ""}${r.note ? ` (${r.note})` : ""}`);
+    } catch (e) {
+      lines.push(`ПОМИЛКА СЕРВЕРА: ${String(e.message || e).slice(0, 220)}`);
+    }
+    setState(lines.join("\n"));
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.line}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+        <Signal size={16} style={{ color: C.rasp, flexShrink: 0 }} />
+        <span style={{ fontSize: 13, fontWeight: 800, color: C.ink, flex: 1 }}>Сповіщення</span>
+        <span style={{ fontSize: 11.5, color: C.muted }}>
+          {subs === null ? "…" : subs === -1 ? "?" : `${subs} підписок`}
+        </span>
+      </div>
+      <button onClick={test} disabled={busy}
+        style={{ width: "100%", border: `1.5px solid ${C.green}`, background: busy ? C.greenSoft : "transparent", color: C.greenDark, borderRadius: 10, padding: "11px", fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+        {busy ? "Перевіряю…" : "Надіслати тестове сповіщення"}
+      </button>
+      {state !== "" && (
+        <pre style={{ marginTop: 10, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, fontSize: 11, color: C.ink, lineHeight: 1.6, whiteSpace: "pre-wrap", fontFamily: "inherit", margin: "10px 0 0" }}>{state}</pre>
+      )}
+      <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.5, margin: "9px 0 0" }}>
+        Сповіщення отримають усі, хто його увімкнув, включно з вами.
+      </p>
+    </div>
+  );
+}
+
 // ── Detail view ────────────────────────────────────────────────────────
 function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSetPostponedDate, counts, onBooked, adminPin }) {
   // Одразу показуємо першу точку з координатами, щоб у розділі «Маршрут»
@@ -2503,6 +2565,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           <div style={{ background: C.card, borderRadius: 18, padding: 16, marginTop: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
             <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>{t("manageTrip")}</h3>
             <OrganizerBookings trip={trip} pin={adminPin} onChanged={onBooked} />
+            <PushDiagnostics />
             <div style={{ height: 16 }} />
             <label style={{ fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 6, display: "block" }}>{t("tripStatus")}</label>
             <select value={trip.status} onChange={(e) => onSetStatus(e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 11, padding: "12px", fontSize: 14, fontWeight: 700, fontFamily: "inherit", background: C.yellowSoft, color: C.yellowInk, cursor: "pointer", marginBottom: 6 }}>
@@ -2588,6 +2651,7 @@ const BLANK_TRIP = () => ({
   about: "",
   route: [],
   routeUrl: "",
+  returnTime: "",
   bonus: [],
   cafes: [],
   weather: { tempC: 15, feelsC: 14, condition: "", icon: "cloud", rainPct: 0, windKmh: 0, humidity: 50 },
