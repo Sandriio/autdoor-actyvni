@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v60";
+const APP_VERSION = "v61";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -151,6 +151,11 @@ const sbUpdateBooking = (id, token, name, contact, people, showName) =>
 // Правка будь-якого запису організатором, за PIN.
 const sbAdminUpdateBooking = (id, pin, name, contact, people, showName) =>
   sbRpc("admin_update_booking", { p_id: id, pin, p_name: name, p_contact: contact, p_people: people, p_show_name: showName });
+// Організатор вписує людину, яка звернулась поза застосунком.
+const sbAdminAddBooking = (pin, tripId, name, contact, people, showName) =>
+  sbRpc("admin_add_booking", { pin, p_trip_id: tripId, p_name: name, p_contact: contact, p_people: people, p_show_name: showName });
+// Учасник знімає себе сам, своїм ключем.
+const sbCancelBooking = (id, token) => sbRpc("cancel_booking", { p_id: id, p_token: token });
 
 // Ключі до власних записів зберігаються на пристрої. Обліковых записів
 // у застосунку немає, тож це єдиний спосіб упізнати «свій» запис.
@@ -302,6 +307,9 @@ const T = {
   bkCancelEdit: { uk: "Скасувати", en: "Cancel", de: "Abbrechen", ru: "Отмена" },
   bkSaved: { uk: "Зміни збережено", en: "Changes saved", de: "Änderungen gespeichert", ru: "Изменения сохранены" },
   bkPersons: { uk: "осіб", en: "people", de: "Personen", ru: "человек" },
+  bkLeave: { uk: "Зняти запис", en: "Cancel booking", de: "Anmeldung zurückziehen", ru: "Снять запись" },
+  bkLeaveAsk: { uk: "Зняти свій запис? Місце звільниться для інших.", en: "Cancel your booking? The spot will be freed for others.", de: "Anmeldung zurückziehen? Der Platz wird für andere frei.", ru: "Снять свою запись? Место освободится для других." },
+  bkLeftNote: { uk: "Ваш запис знято. Можете записатися знову, поки є місця.", en: "Your booking is cancelled. You can sign up again while spots last.", de: "Ihre Anmeldung wurde zurückgezogen. Sie können sich erneut anmelden.", ru: "Ваша запись снята. Можете записаться снова, пока есть места." },
   bkNobody: { uk: "Ще ніхто не записався — будьте першим.", en: "Nobody yet — be the first.", de: "Noch niemand — seien Sie die erste Person.", ru: "Пока никто не записался — будьте первым." },
   secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
   driveNote: { uk: "Спільний архів медіа з цієї поїздки. Додавайте свої — вони будуть доступні всій групі.", en: "A shared media archive from this trip. Add your own — everyone in the group will see them.", de: "Gemeinsames Medienarchiv dieses Ausflugs. Fügen Sie eigene hinzu — die ganze Gruppe sieht sie.", ru: "Общий архив медиа с этой поездки. Добавляйте свои — они будут доступны всей группе." },
@@ -1679,6 +1687,22 @@ function BookingSection({ trip, taken, onBooked }) {
     } finally { setBusy(false); }
   };
 
+  // Зняти свій запис. Ключ підтверджує, що це справді власний запис.
+  const leave = async () => {
+    if (!window.confirm(t("bkLeaveAsk"))) return;
+    setBusy(true); setErr("");
+    try {
+      await sbCancelBooking(mine.id, mine.token);
+      rememberBooking(trip.id, null);
+      setMine(null); setEditing(false); setOpen(false); setDone(false);
+      setName(""); setContact(""); setPeople(1);
+      loadGuests();
+      if (onBooked) onBooked();
+    } catch (e) {
+      setErr(t(bookErrorKey(e)));
+    } finally { setBusy(false); }
+  };
+
   // Відкрити форму на редагування з підставленими значеннями.
   const startEdit = () => {
     setName(mine.name || ""); setContact(mine.contact || "");
@@ -1755,7 +1779,10 @@ function BookingSection({ trip, taken, onBooked }) {
           {mine.contact && mine.contact.trim() !== "" && (
             <div style={{ fontSize: 12.5, color: C.muted, marginTop: 2 }}>{mine.contact}</div>
           )}
-          <div style={{ fontSize: 11.5, color: C.muted, marginTop: 9, lineHeight: 1.5 }}>{t("bkCancelNote")}</div>
+          <button onClick={leave} disabled={busy}
+            style={{ width: "100%", marginTop: 11, border: `1px solid ${C.rasp}`, background: "transparent", color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            {t("bkLeave")}
+          </button>
         </div>
       )}
 
@@ -1850,42 +1877,55 @@ function OrganizerBookings({ trip, pin, onChanged }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
   const [copied, setCopied] = useState("");
-  // Який запис зараз редагується і його чернетка.
   const [editId, setEditId] = useState(null);
+  const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ name: "", contact: "", people: 1 });
 
+  // Раніше при порожньому PIN функція мовчки виходила, і на екрані
+  // назавжди лишалось «Завантаження…» без жодного пояснення. Тепер
+  // кожен стан має свій видимий текст — не доводиться гадати, чому
+  // списку немає.
   const load = () => {
-    if (!sbConfigured() || !pin) return;
-    sbBookings(trip.id, pin).then((r) => { setRows(r || []); setErr(""); })
-      .catch(() => setErr("Не вдалося завантажити список."));
+    if (!sbConfigured()) { setErr("Базу не налаштовано."); setRows([]); return; }
+    if (!pin) { setErr("Введіть PIN організатора ще раз — без нього список не завантажується."); setRows([]); return; }
+    setErr("");
+    sbBookings(trip.id, pin)
+      .then((r) => { setRows(r || []); setErr(""); })
+      .catch((e) => { setRows([]); setErr("Не вдалося завантажити: " + String((e && e.message) || e).slice(0, 120)); });
   };
   useEffect(() => { load(); }, [trip.id, pin]);
 
   const total = (rows || []).reduce((a, r) => a + (Number(r.people) || 1), 0);
 
   const startEdit = (r) => {
-    setEditId(r.id);
+    setAdding(false); setEditId(r.id);
     setDraft({ name: r.name || "", contact: r.contact || "", people: Number(r.people) || 1 });
     setErr("");
   };
-  const saveEdit = async () => {
+  const startAdd = () => {
+    setEditId(null); setAdding(true);
+    setDraft({ name: "", contact: "", people: 1 });
+    setErr("");
+  };
+  const save = async () => {
     if (String(draft.name).trim() === "") { setErr("Вкажіть імʼя."); return; }
+    const n = Number(draft.people) || 1;
     try {
-      await sbAdminUpdateBooking(editId, pin, draft.name.trim(), draft.contact.trim(), Number(draft.people) || 1, true);
-      setEditId(null); load();
+      if (adding) await sbAdminAddBooking(pin, trip.id, draft.name.trim(), draft.contact.trim(), n, true);
+      else await sbAdminUpdateBooking(editId, pin, draft.name.trim(), draft.contact.trim(), n, true);
+      setEditId(null); setAdding(false); load();
       if (onChanged) onChanged();
     } catch (e) {
-      setErr("Не вдалося зберегти: " + String((e && e.message) || e).slice(0, 90));
+      setErr("Не вдалося зберегти: " + String((e && e.message) || e).slice(0, 120));
     }
   };
-
   const remove = async (id) => {
     if (!window.confirm("Зняти цей запис? Місце звільниться для інших.")) return;
     try {
       await sbDeleteBooking(id, pin);
       load();
       if (onChanged) onChanged();
-    } catch { setErr("Не вдалося зняти запис."); }
+    } catch (e) { setErr("Не вдалося зняти: " + String((e && e.message) || e).slice(0, 120)); }
   };
 
   const copy = (text, tag) => {
@@ -1893,95 +1933,101 @@ function OrganizerBookings({ trip, pin, onChanged }) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done).catch(() => {});
     } else {
-      // Запасний шлях для старих браузерів і незахищеного з'єднання.
       const ta = document.createElement("textarea");
       ta.value = text; document.body.appendChild(ta); ta.select();
       try { document.execCommand("copy"); done(); } catch {}
       document.body.removeChild(ta);
     }
   };
-
   const listText = () => (rows || [])
     .map((r, i) => `${i + 1}. ${r.name}${Number(r.people) > 1 ? ` (${r.people})` : ""}${r.contact && r.contact.trim() !== "" ? ` — ${r.contact}` : ""}`)
     .join("\n");
 
-  const btn = (label, tag, text, filled) => (
-    <button onClick={() => copy(text, tag)}
-      style={{ flex: 1, border: `1.5px solid ${C.green}`, background: filled ? C.green : "transparent", color: filled ? "#fff" : C.greenDark, borderRadius: 10, padding: "10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-      {copied === tag ? "Скопійовано ✓" : label}
-    </button>
+  const inputStyle = { width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 9, padding: "9px 10px", fontSize: 13, fontFamily: "inherit", marginBottom: 7 };
+
+  const form = (
+    <div style={{ border: `1.5px solid ${C.rasp}`, background: C.raspSoft, borderRadius: 11, padding: 11, marginBottom: 10 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: C.rasp, marginBottom: 8 }}>
+        {adding ? "Новий учасник" : "Редагування запису"}
+      </div>
+      <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Імʼя" style={{ ...inputStyle, background: "#fff" }} />
+      <input value={draft.contact} onChange={(e) => setDraft({ ...draft, contact: e.target.value })} placeholder="Контакт (необовʼязково)" style={{ ...inputStyle, background: "#fff" }} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 5, marginBottom: 9 }}>
+        {[1, 2, 3, 4, 5, 6].map((n) => (
+          <button key={n} onClick={() => setDraft({ ...draft, people: n })}
+            style={{ border: `1px solid ${draft.people === n ? C.rasp : C.line}`, background: draft.people === n ? C.rasp : "#fff", color: draft.people === n ? "#fff" : C.muted, borderRadius: 8, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{n}</button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 7 }}>
+        <button onClick={() => { setEditId(null); setAdding(false); setErr(""); }}
+          style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.muted, borderRadius: 9, padding: "9px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Скасувати</button>
+        <button onClick={save}
+          style={{ flex: 1, border: "none", background: C.green, color: "#fff", borderRadius: 9, padding: "9px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Зберегти</button>
+      </div>
+    </div>
   );
 
   return (
-    <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${C.line}` }}>
+    <div style={{ marginTop: 4, paddingBottom: 4 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-        <ClipboardCheck size={16} style={{ color: C.rasp }} />
-        <span style={{ fontSize: 13, fontWeight: 800, color: C.ink }}>
+        <ClipboardCheck size={16} style={{ color: C.rasp, flexShrink: 0 }} />
+        <span style={{ fontSize: 13, fontWeight: 800, color: C.ink, flex: 1 }}>
           Записалися · {total}{Number(trip.spots) > 0 ? ` з ${trip.spots}` : ""}
         </span>
+        <button onClick={load} style={{ border: "none", background: "none", color: C.green, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>оновити</button>
       </div>
       <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 11px" }}>
         {deadlineText(trip) ? (bookingClosed(trip) ? `Запис закрито ${deadlineText(trip)}` : `Запис до ${deadlineText(trip)}`) : "Дедлайн не встановлено"}
       </p>
 
-      {err !== "" && <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 10px" }}>{err}</p>}
-      {rows === null && err === "" && <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>Завантаження…</p>}
-      {rows && rows.length === 0 && <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>Поки ніхто не записався.</p>}
+      {err !== "" && (
+        <div style={{ background: C.raspSoft, borderRadius: 10, padding: "10px 12px", marginBottom: 10, fontSize: 12, color: C.rasp, lineHeight: 1.5 }}>{err}</div>
+      )}
+      {rows === null && <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>Завантаження…</p>}
+      {rows && rows.length === 0 && err === "" && <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>Поки ніхто не записався.</p>}
+
+      {(adding || editId) && form}
 
       {rows && rows.length > 0 && (
-        <>
-          <div style={{ background: "#fff", borderRadius: 11, padding: "2px 12px", marginBottom: 11 }}>
-            {rows.map((r, i) => (
-              <div key={r.id} style={{ padding: "9px 0", borderBottom: i === rows.length - 1 ? "none" : `1px solid ${C.line}` }}>
-                {editId === r.id ? (
-                  <div>
-                    <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Імʼя"
-                      style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 9, padding: "9px 10px", fontSize: 13, fontFamily: "inherit", marginBottom: 7 }} />
-                    <input value={draft.contact} onChange={(e) => setDraft({ ...draft, contact: e.target.value })} placeholder="Контакт (необовʼязково)"
-                      style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 9, padding: "9px 10px", fontSize: 13, fontFamily: "inherit", marginBottom: 7 }} />
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 5, marginBottom: 8 }}>
-                      {[1, 2, 3, 4, 5, 6].map((n) => (
-                        <button key={n} onClick={() => setDraft({ ...draft, people: n })}
-                          style={{ border: `1px solid ${draft.people === n ? C.rasp : C.line}`, background: draft.people === n ? C.rasp : "#fff", color: draft.people === n ? "#fff" : C.muted, borderRadius: 8, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{n}</button>
-                      ))}
-                    </div>
-                    <div style={{ display: "flex", gap: 7 }}>
-                      <button onClick={() => setEditId(null)}
-                        style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.muted, borderRadius: 9, padding: "9px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Скасувати</button>
-                      <button onClick={saveEdit}
-                        style={{ flex: 1, border: "none", background: C.green, color: "#fff", borderRadius: 9, padding: "9px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Зберегти</button>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, color: C.ink, fontWeight: 600 }}>
-                        {r.name}{Number(r.people) > 1 ? ` · ${r.people}` : ""}
-                        {!r.show_name && <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 400 }}> (прихований)</span>}
-                      </div>
-                      <div style={{ fontSize: 12, color: r.contact && r.contact.trim() !== "" ? C.muted : C.faint, marginTop: 1 }}>
-                        {r.contact && r.contact.trim() !== "" ? r.contact : "контакт не вказано"}
-                      </div>
-                    </div>
-                    <button onClick={() => startEdit(r)} aria-label="Змінити запис"
-                      style={{ border: "none", background: "none", color: C.green, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
-                      <Pencil size={15} />
-                    </button>
-                    <button onClick={() => remove(r.id)} aria-label="Зняти запис"
-                      style={{ border: "none", background: "none", color: C.rasp, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
-                )}
+        <div style={{ background: "#fff", borderRadius: 11, padding: "2px 12px", marginBottom: 10 }}>
+          {rows.map((r, i) => (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 0", borderBottom: i === rows.length - 1 ? "none" : `1px solid ${C.line}`, opacity: editId === r.id ? 0.45 : 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: C.ink, fontWeight: 600 }}>
+                  {r.name}{Number(r.people) > 1 ? ` · ${r.people}` : ""}
+                  {!r.show_name && <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 400 }}> (прихований)</span>}
+                </div>
+                <div style={{ fontSize: 12, color: r.contact && r.contact.trim() !== "" ? C.muted : C.faint, marginTop: 1 }}>
+                  {r.contact && r.contact.trim() !== "" ? r.contact : "контакт не вказано"}
+                </div>
               </div>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-            {btn("Скопіювати список", "list", listText(), false)}
-          </div>
-        </>
+              <button onClick={() => startEdit(r)} aria-label="Змінити запис"
+                style={{ border: "none", background: "none", color: C.green, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
+                <Pencil size={15} />
+              </button>
+              <button onClick={() => remove(r.id)} aria-label="Зняти запис"
+                style={{ border: "none", background: "none", color: C.rasp, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
+                <Trash2 size={15} />
+              </button>
+            </div>
+          ))}
+        </div>
       )}
 
+      <div style={{ display: "flex", gap: 8 }}>
+        {!adding && !editId && (
+          <button onClick={startAdd}
+            style={{ flex: 1, border: `1.5px dashed ${C.rasp}`, background: C.raspSoft, color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            + Додати учасника
+          </button>
+        )}
+        {rows && rows.length > 0 && (
+          <button onClick={() => copy(listText(), "list")}
+            style={{ flex: 1, border: `1.5px solid ${C.green}`, background: "transparent", color: C.greenDark, borderRadius: 10, padding: "10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            {copied === "list" ? "Скопійовано ✓" : "Скопіювати список"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
