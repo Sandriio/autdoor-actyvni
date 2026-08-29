@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v65";
+const APP_VERSION = "v66";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -501,6 +501,7 @@ const TRANSLATABLE = (trip) => {
   // збирає durationText() сам, без перекладача.
   push(() => trip.durationHrs, (v) => (trip.durationHrs = v));
   push(() => trip.meetingPoint, (v) => (trip.meetingPoint = v));
+  push(() => trip.returnTime, (v) => (trip.returnTime = v));
   (trip.route || []).forEach((st) => { push(() => st.name, (v) => (st.name = v)); push(() => st.note, (v) => (st.note = v)); push(() => st.info, (v) => (st.info = v)); });
   (trip.bonus || []).forEach((b) => { push(() => b.name, (v) => (b.name = v)); push(() => b.note, (v) => (b.note = v)); });
   (trip.cafes || []).forEach((c) => { push(() => c.note, (v) => (c.note = v)); push(() => c.tag, (v) => (c.tag = v)); });
@@ -2316,7 +2317,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                   {/* Зворотній поїзд навмисно спрощений: одна година без
                       станцій і пересадок. Час назад щоразу різний, тож
                       докладний ланцюжок лише вводив би в оману. */}
-                  {String(trip.returnTime || "").trim() !== "" && (
+                  {(String(trip.returnTime || "").trim() !== "" || String(trip.returnFrom || "").trim() !== "") && (
                     <div style={{ marginTop: 10, border: `1px solid ${C.greenLine}`, borderRadius: 13, padding: 13, background: "#fff" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ width: 32, height: 32, borderRadius: 10, background: C.greenSoft, color: C.greenDark, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transform: "scaleX(-1)" }}>
@@ -2324,7 +2325,19 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                         </span>
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ display: "block", fontSize: 12, color: C.muted, fontWeight: 700 }}>{t("retTitle")}</span>
-                          <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: C.ink, marginTop: 2, lineHeight: 1.4 }}>{String(trip.returnTime).trim()}</span>
+                          {/* Збираємо рядок із окремих полів, а не з вільного
+                              тексту. Слово «колія» береться зі словника
+                              застосунку — те саме, що в розкладі поїздів.
+                              Машинний переклад тут не потрібен узагалі. */}
+                          <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: C.ink, marginTop: 2, lineHeight: 1.4 }}>
+                            {[String(trip.returnFrom || "").trim(), tc(trip.returnTime).trim()]
+                              .filter((x) => x !== "").join(", ")}
+                            {String(trip.returnPlatform || "").trim() !== "" && (
+                              <span style={{ color: C.rasp, fontWeight: 700 }}>
+                                {"  "}{t("jpTrack")} {String(trip.returnPlatform).trim()}
+                              </span>
+                            )}
+                          </span>
                         </span>
                       </div>
                       <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.5, margin: "9px 0 0" }}>{t("retNote")}</p>
@@ -2670,7 +2683,9 @@ const BLANK_TRIP = () => ({
   about: "",
   route: [],
   routeUrl: "",
+  returnFrom: "",
   returnTime: "",
+  returnPlatform: "",
   bonus: [],
   cafes: [],
   weather: { tempC: 15, feelsC: 14, condition: "", icon: "cloud", rainPct: 0, windKmh: 0, humidity: 50 },
@@ -3079,10 +3094,15 @@ function TripForm({ initial, onSave, onCancel }) {
           {/* Одне поле часу — свідомо, без станцій і пересадок. */}
           <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 12, background: "#fff" }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: C.rasp, marginBottom: 7 }}>Відправлення назад</div>
-            <input style={{ ...inp, marginBottom: 7 }} value={t.returnTime || ""} onChange={(e) => set({ returnTime: e.target.value })} placeholder="напр. 17:32 або Würzburg Hbf, 17:41, кол. 2" />
+            <input style={{ ...inp, marginBottom: 7 }} value={t.returnFrom || ""} onChange={(e) => set({ returnFrom: e.target.value })} placeholder="Станція (Würzburg Hbf)" />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <input style={{ ...inp, marginBottom: 7 }} value={t.returnTime || ""} onChange={(e) => set({ returnTime: e.target.value })} placeholder="Час (17:41)" />
+              <input style={{ ...inp, marginBottom: 7 }} value={t.returnPlatform || ""} onChange={(e) => set({ returnPlatform: e.target.value })} placeholder="Колія (2)" />
+            </div>
             <p style={{ fontSize: 11.5, color: C.muted, margin: 0, lineHeight: 1.45 }}>
-              Порожнє поле — блок не показується. Під часом учасник побачить примітку,
-              що час орієнтовний і залежить від ситуації.
+              Три окремі поля навмисно: слово «колія» підставляє сам застосунок
+              потрібною мовою. Якщо вписати все одним рядком, воно лишиться
+              українським для англомовних. Порожні поля — блок не показується.
             </p>
           </div>
           <button onClick={() => { const n = journeys.length; set({ journeys: [...journeys, { legs: [blankLeg()] }] }); setOpenJourney(n); setOpenLeg(n + ":0"); }}
