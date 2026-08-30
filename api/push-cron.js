@@ -85,6 +85,11 @@ async function sendPush(origin, msgs, tag) {
 // ── Тексти сповіщень трьома мовами ──────────────────────────────────
 function build(kind, tr, extra) {
   const out = {};
+  // Об'єкт нижче будується ЦІЛКОМ на кожному виклику, тож рядки для
+  // «meet» обчислюються навіть тоді, коли потрібен «open». Без цієї
+  // заглушки extra.place кидав помилку й валив усю функцію — саме тому
+  // годинник віддавав 500, щойно якесь сповіщення ставало на часі.
+  const e = extra || {};
   for (const lang of ["uk", "en", "ru"]) {
     const name = tx(tr.title, lang);
     const when = tx(tr.dateLabel, lang) || tr.date;
@@ -95,9 +100,9 @@ function build(kind, tr, extra) {
         ru: { title: "Открыта запись в группу", body: `Запись в группу на ${when} — ${name} открыта. Успейте записаться!` },
       },
       low: {
-        uk: { title: "Лишається мало місць", body: `Залишилось всього ${extra} місць у набір до ${when} — ${name}!` },
-        en: { title: "Only a few spots left", body: `Only ${extra} spots left for ${when} — ${name}!` },
-        ru: { title: "Остаётся мало мест", body: `Осталось всего ${extra} мест в набор на ${when} — ${name}!` },
+        uk: { title: "Лишається мало місць", body: `Залишилось всього ${e.n} місць у набір до ${when} — ${name}!` },
+        en: { title: "Only a few spots left", body: `Only ${e.n} spots left for ${when} — ${name}!` },
+        ru: { title: "Остаётся мало мест", body: `Осталось всего ${e.n} мест в набор на ${when} — ${name}!` },
       },
       close: {
         uk: { title: "Набір завершено", body: `Набір у групу на ${when} — ${name} завершений.` },
@@ -105,9 +110,9 @@ function build(kind, tr, extra) {
         ru: { title: "Набор завершён", body: `Набор в группу на ${when} — ${name} завершён.` },
       },
       meet: {
-        uk: { title: "Нагадування про збір", body: `Місце зустрічі: ${extra.place}, ${extra.time}. Приходьте вчасно.` },
-        en: { title: "Meeting reminder", body: `Meeting point: ${extra.place}, ${extra.time}. Please be on time.` },
-        ru: { title: "Напоминание о сборе", body: `Место встречи: ${extra.place}, ${extra.time}. Приходите вовремя.` },
+        uk: { title: "Нагадування про збір", body: `Місце зустрічі: ${e.place}, ${e.time}. Приходьте вчасно.` },
+        en: { title: "Meeting reminder", body: `Meeting point: ${e.place}, ${e.time}. Please be on time.` },
+        ru: { title: "Напоминание о сборе", body: `Место встречи: ${e.place}, ${e.time}. Приходите вовремя.` },
       },
       end: {
         uk: { title: "Поїздка завершена", body: `Поїздка ${name} завершена. До нових зустрічей!` },
@@ -179,7 +184,7 @@ export default async function handler(req, res) {
     const spots = Number(tr.spots) || 0;
     const left = spots - (taken[id] || 0);
     if (days >= 0 && spots > 0 && left > 0 && left <= LOW_SPOTS) {
-      planned.push({ key: `low:${id}`, tag, msgs: build("low", tr, left) });
+      planned.push({ key: `low:${id}`, tag, msgs: build("low", tr, { n: left }) });
     } else why.push(`low — треба вільних 1–${LOW_SPOTS} · зараз ${left} з ${spots}`);
 
     // ③ Напередодні о 22:00 — набір завершено. Або пізніше, при першій
@@ -239,7 +244,7 @@ export default async function handler(req, res) {
   if (debug) {
     res.status(200).json({
       berlin: nowText,
-      window: `${WINDOW} хв`,
+      window: "від моменту й пізніше",
       trips: report,
       planned: planned.map((p) => p.key),
       note: "РЕЖИМ ЗВІТУ — нічого не надіслано",
@@ -253,7 +258,11 @@ export default async function handler(req, res) {
     try { fresh = await sb("push_log_claim", { p_key: p.key }); }
     catch (e) { skipped.push(`${p.key}: журнал — ${e.message}`); continue; }
     if (!fresh) { skipped.push(`${p.key}: вже надсилалось`); continue; }
-    const ok = await sendPush(origin, p.msgs, p.tag);
+    // Якщо надсилання впаде, це не має валити весь прохід: решта
+    // сповіщень мусить дійти.
+    let ok = false;
+    try { ok = await sendPush(origin, p.msgs, p.tag); }
+    catch (e) { ok = false; }
     (ok ? sent : skipped).push(p.key + (ok ? "" : ": помилка надсилання"));
   }
 
