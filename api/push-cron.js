@@ -25,7 +25,14 @@
 // ═══════════════════════════════════════════════════════════════════
 
 const TZ = "Europe/Berlin";
-const WINDOW = 20;        // хвилин на спрацювання: сервіс будить нас раз на 15
+// Раніше кожне сповіщення мало вікно завширшки 20 хвилин: «рівно о 09:00
+// плюс двадцять». Якщо годинник у ці хвилини не викликався — сервіс лежав,
+// телефон спав, деплой ішов — момент втрачався НАЗАВЖДИ, бо наступна
+// перевірка вже виходила за межі вікна.
+// Тепер умова інша: «настав час АБО вже пізніше». Сповіщення піде при
+// першій же нагоді після потрібного моменту, а від повторів захищає
+// журнал push_log — там ключ можна зайняти лише один раз.
+const CATCHUP = true;
 const LOW_SPOTS = 5;      // коли лишається стільки місць — попереджаємо
 
 function berlinParts(d) {
@@ -162,9 +169,11 @@ export default async function handler(req, res) {
     const days = daysBetween(nowB.date, date);
     const tag = `trip-${id}`;
 
-    // ① За 7 днів о 09:00 — набір відкрито.
-    if (days === 7 && dueAt(9, 0)) planned.push({ key: `open:${id}`, tag, msgs: build("open", tr) });
-    else why.push(`open — треба днів 7 і час 09:00–09:20 · зараз днів ${days}, ${hhmm(nowMin)}`);
+    // ① За 7 днів о 09:00 — набір відкрито. Або будь-коли пізніше,
+    //    якщо той момент проґавили.
+    const openDue = days >= 0 && (days < 7 || (days === 7 && nowMin >= 9 * 60));
+    if (openDue) planned.push({ key: `open:${id}`, tag, msgs: build("open", tr) });
+    else why.push(`open — треба день 7 після 09:00 або ближче · зараз днів ${days}, ${hhmm(nowMin)}`);
 
     // ② Лишається мало місць. Перевіряється щоразу, надсилається один раз.
     const spots = Number(tr.spots) || 0;
@@ -173,9 +182,11 @@ export default async function handler(req, res) {
       planned.push({ key: `low:${id}`, tag, msgs: build("low", tr, left) });
     } else why.push(`low — треба вільних 1–${LOW_SPOTS} · зараз ${left} з ${spots}`);
 
-    // ③ Напередодні о 22:00 — набір завершено.
-    if (days === 1 && dueAt(22, 0)) planned.push({ key: `close:${id}`, tag, msgs: build("close", tr) });
-    else why.push(`close — треба днів 1 і час 22:00–22:20 · зараз днів ${days}, ${hhmm(nowMin)}`);
+    // ③ Напередодні о 22:00 — набір завершено. Або пізніше, при першій
+    //    нагоді: краще з запізненням, ніж ніколи.
+    const closeDue = days >= 0 && (days < 1 || (days === 1 && nowMin >= 22 * 60));
+    if (closeDue) planned.push({ key: `close:${id}`, tag, msgs: build("close", tr) });
+    else why.push(`close — треба день 1 після 22:00 або пізніше · зараз днів ${days}, ${hhmm(nowMin)}`);
 
     if (days === 0) {
       const legs = Array.isArray(tr.journeys) && tr.journeys.length > 0
@@ -190,19 +201,24 @@ export default async function handler(req, res) {
       if (meetMin == null) {
         why.push("meet — час зустрічі не заповнено: нема від чого відлічувати дві години");
       } else {
-        const remindAt = meetMin - 120;
+        const remindAt = Math.max(0, meetMin - 120);
         const place = tx(tr.meetingPoint, "uk") || (firstLeg ? firstLeg.from : "");
-        if (remindAt >= 0 && nowMin >= remindAt && nowMin < remindAt + WINDOW) {
+        // Вікно від «за 2 години» до самого часу збору. Після збору
+        // нагадування вже безглузде, тому далі не надсилаємо.
+        if (nowMin >= remindAt && nowMin < meetMin) {
           planned.push({ key: `meet:${id}`, tag, msgs: build("meet", tr, { place, time: hhmm(meetMin) }) });
         } else {
-          why.push(`meet — збір ${hhmm(meetMin)}, нагадування о ${hhmm(Math.max(0, remindAt))} · зараз ${hhmm(nowMin)}`);
+          why.push(`meet — збір ${hhmm(meetMin)}, вікно ${hhmm(remindAt)}–${hhmm(meetMin)} · зараз ${hhmm(nowMin)}`);
         }
       }
-      // ⑤ О 21:00 — поїздка завершена.
-      if (dueAt(21, 0)) planned.push({ key: `end:${id}`, tag, msgs: build("end", tr) });
-      else why.push(`end — треба час 21:00–21:20 · зараз ${hhmm(nowMin)}`);
+      // ⑤ О 21:00 — поїздка завершена. Або пізніше того ж вечора.
+      if (nowMin >= 21 * 60) planned.push({ key: `end:${id}`, tag, msgs: build("end", tr) });
+      else why.push(`end — треба після 21:00 · зараз ${hhmm(nowMin)}`);
+    } else if (days < 0 && days >= -2) {
+      // Поїздка вже минула, а «завершено» так і не пішло — надолужуємо.
+      planned.push({ key: `end:${id}`, tag, msgs: build("end", tr) });
     } else {
-      why.push(`meet і end — тільки в день поїздки · зараз днів ${days}`);
+      why.push(`meet — тільки в день поїздки · зараз днів ${days}`);
     }
 
     report.push({
