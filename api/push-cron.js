@@ -95,19 +95,25 @@ function build(kind, tr, extra) {
     const when = tx(tr.dateLabel, lang) || tr.date;
     out[lang] = ({
       open: {
-        uk: { title: "Відкрито запис у групу", body: `Запис у групу на ${when} — ${name} відкритий. Встигніть записатися!` },
-        en: { title: "Sign-up is open", body: `Sign-up for ${when} — ${name} is open. Grab your spot!` },
-        ru: { title: "Открыта запись в группу", body: `Запись в группу на ${when} — ${name} открыта. Успейте записаться!` },
+        uk: { title: "Відкрито запис у групу", body: `Запис у групу на ${when} до ${name} відкритий. Встигніть записатися!` },
+        en: { title: "Sign-up is open", body: `Sign-up for the trip to ${name} on ${when} is open. Grab your spot!` },
+        ru: { title: "Открыта запись в группу", body: `Запись в группу на ${when} до ${name} открыта. Успейте записаться!` },
       },
       low: {
-        uk: { title: "Лишається мало місць", body: `Залишилось всього ${e.n} місць у набір до ${when} — ${name}!` },
-        en: { title: "Only a few spots left", body: `Only ${e.n} spots left for ${when} — ${name}!` },
-        ru: { title: "Остаётся мало мест", body: `Осталось всего ${e.n} мест в набор на ${when} — ${name}!` },
+        uk: { title: "Лишається мало місць", body: `Залишилось всього ${e.n} місць у набір до ${when} ${name}!` },
+        en: { title: "Only a few spots left", body: `Only ${e.n} spots left for the trip to ${name} on ${when}!` },
+        ru: { title: "Остаётся мало мест", body: `Осталось всего ${e.n} мест в набор до ${when} ${name}!` },
+      },
+      // Місць немає — окреме сповіщення від «мало місць».
+      full: {
+        uk: { title: "Місця закінчились", body: `Місця на ${when} до ${name} закінчились. Зв'яжіться з організатором, можливо є вільне місце.` },
+        en: { title: "No spots left", body: `The trip to ${name} on ${when} is full. Contact the organiser — a spot may free up.` },
+        ru: { title: "Места закончились", body: `Места на ${when} до ${name} закончились. Свяжитесь с организатором, возможно есть свободное место.` },
       },
       close: {
-        uk: { title: "Набір завершено", body: `Набір у групу на ${when} — ${name} завершений.` },
-        en: { title: "Sign-up closed", body: `Sign-up for ${when} — ${name} is closed.` },
-        ru: { title: "Набор завершён", body: `Набор в группу на ${when} — ${name} завершён.` },
+        uk: { title: "Набір завершено", body: `Набір у групу на ${when} до ${name} завершений.` },
+        en: { title: "Sign-up closed", body: `Sign-up for the trip to ${name} on ${when} is closed.` },
+        ru: { title: "Набор завершён", body: `Набор в группу на ${when} до ${name} завершён.` },
       },
       meet: {
         uk: { title: "Нагадування про збір", body: `Місце зустрічі: ${e.place}, ${e.time}. Приходьте вчасно.` },
@@ -176,9 +182,9 @@ export default async function handler(req, res) {
 
     // ① За 7 днів о 09:00 — набір відкрито. Або будь-коли пізніше,
     //    якщо той момент проґавили.
-    const openDue = days >= 0 && (days < 7 || (days === 7 && nowMin >= 9 * 60));
+    const openDue = days >= 0 && (days < 7 || (days === 7 && nowMin >= 18 * 60));
     if (openDue) planned.push({ key: `open:${id}`, tag, msgs: build("open", tr) });
-    else why.push(`open — треба день 7 після 09:00 або ближче · зараз днів ${days}, ${hhmm(nowMin)}`);
+    else why.push(`open — треба день 7 після 18:00 або ближче · зараз днів ${days}, ${hhmm(nowMin)}`);
 
     // ② Лишається мало місць. Перевіряється щоразу, надсилається один раз.
     const spots = Number(tr.spots) || 0;
@@ -186,6 +192,10 @@ export default async function handler(req, res) {
     if (days >= 0 && spots > 0 && left > 0 && left <= LOW_SPOTS) {
       planned.push({ key: `low:${id}`, tag, msgs: build("low", tr, { n: left }) });
     } else why.push(`low — треба вільних 1–${LOW_SPOTS} · зараз ${left} з ${spots}`);
+    // Місць не лишилось узагалі — інше сповіщення, свій ключ.
+    if (days >= 0 && spots > 0 && left <= 0) {
+      planned.push({ key: `full:${id}`, tag, msgs: build("full", tr) });
+    } else why.push(`full — треба 0 вільних · зараз ${left} з ${spots}`);
 
     // ③ Напередодні о 22:00 — набір завершено. Або пізніше, при першій
     //    нагоді: краще з запізненням, ніж ніколи.
