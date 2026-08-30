@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v67";
+const APP_VERSION = "v68";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -323,6 +323,7 @@ const T = {
   bkNotFound: { uk: "Запис із таким імʼям не знайдено. Перевірте написання або зверніться до організатора.", en: "No booking with that name. Check the spelling or contact the organiser.", de: "Keine Anmeldung mit diesem Namen. Bitte Schreibweise prüfen oder die Organisation fragen.", ru: "Запись с таким именем не найдена. Проверьте написание или обратитесь к организатору." },
   bkNeedContact: { uk: "Таких імен кілька — вкажіть контакт, який залишали.", en: "There are several bookings with that name — please add the contact you left.", de: "Mehrere Anmeldungen mit diesem Namen — bitte den hinterlassenen Kontakt angeben.", ru: "Таких имён несколько — укажите контакт, который оставляли." },
   bkWrongContact: { uk: "Контакт не збігається із записом.", en: "The contact does not match the booking.", de: "Der Kontakt stimmt nicht mit der Anmeldung überein.", ru: "Контакт не совпадает с записью." },
+  bkLockedNote: { uk: "Набір закрито, тож змінити чи зняти запис самостійно вже не можна. Якщо ви хочете змінити чи видалити свій запис — повідомте організатора та опишіть причину.", en: "Sign-up is closed, so you can no longer edit or cancel your booking yourself. If you need to change or remove it, message the organiser and explain why.", de: "Die Anmeldung ist geschlossen, Änderungen sind selbst nicht mehr möglich. Wenn Sie etwas ändern oder stornieren möchten, schreiben Sie der Organisation und nennen Sie den Grund.", ru: "Набор закрыт, поэтому изменить или снять запись самостоятельно уже нельзя. Если вы хотите изменить или удалить свою запись — сообщите организатору и опишите причину." },
   bkLeftNote: { uk: "Ваш запис знято. Можете записатися знову, поки є місця.", en: "Your booking is cancelled. You can sign up again while spots last.", de: "Ihre Anmeldung wurde zurückgezogen. Sie können sich erneut anmelden.", ru: "Ваша запись снята. Можете записаться снова, пока есть места." },
   bkNobody: { uk: "Ще ніхто не записався — будьте першим.", en: "Nobody yet — be the first.", de: "Noch niemand — seien Sie die erste Person.", ru: "Пока никто не записался — будьте первым." },
   secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
@@ -1808,10 +1809,15 @@ function BookingSection({ trip, taken, onBooked }) {
             <span style={{ fontSize: 13, fontWeight: 800, color: C.greenDark, flex: 1 }}>
               {saved ? t("bkSaved") : t("bkMine")}
             </span>
-            <button onClick={startEdit}
-              style={{ border: `1px solid ${C.green}`, background: "#fff", color: C.greenDark, borderRadius: 9, padding: "6px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
-              {t("bkEdit")}
-            </button>
+            {/* Після дедлайну редагування закривається: список уже пішов
+                організаторові, і тиха зміна за його спиною зіпсувала б
+                розрахунок. Те саме перевіряє й база — не лише екран. */}
+            {!closed && (
+              <button onClick={startEdit}
+                style={{ border: `1px solid ${C.green}`, background: "#fff", color: C.greenDark, borderRadius: 9, padding: "6px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+                {t("bkEdit")}
+              </button>
+            )}
           </div>
           <div style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>
             {mine.name}{Number(mine.people) > 1 ? ` · ${mine.people} ${t("bkPersons")}` : ""}
@@ -1819,10 +1825,17 @@ function BookingSection({ trip, taken, onBooked }) {
           {mine.contact && mine.contact.trim() !== "" && (
             <div style={{ fontSize: 12.5, color: C.muted, marginTop: 2 }}>{mine.contact}</div>
           )}
-          <button onClick={leave} disabled={busy}
-            style={{ width: "100%", marginTop: 11, border: `1px solid ${C.rasp}`, background: "transparent", color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-            {t("bkLeave")}
-          </button>
+          {closed ? (
+            <div style={{ marginTop: 11, background: C.yellowSoft, borderRadius: 10, padding: "10px 12px", display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <Info size={14} style={{ color: C.yellowInk, flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 11.5, color: C.yellowInk, lineHeight: 1.5 }}>{t("bkLockedNote")}</span>
+            </div>
+          ) : (
+            <button onClick={leave} disabled={busy}
+              style={{ width: "100%", marginTop: 11, border: `1px solid ${C.rasp}`, background: "transparent", color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              {t("bkLeave")}
+            </button>
+          )}
         </div>
       )}
 
@@ -2350,8 +2363,8 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                             {[String(trip.returnFrom || "").trim(), tc(trip.returnTime).trim()]
                               .filter((x) => x !== "").join(", ")}
                             {String(trip.returnPlatform || "").trim() !== "" && (
-                              <span style={{ color: C.rasp, fontWeight: 700 }}>
-                                {"  "}{t("jpTrack")} {String(trip.returnPlatform).trim()}
+                              <span style={{ color: C.ink, fontWeight: 700 }}>
+                                , {t("jpTrack")} {String(trip.returnPlatform).trim()}
                               </span>
                             )}
                           </span>
