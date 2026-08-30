@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v66";
+const APP_VERSION = "v67";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -2107,15 +2107,28 @@ function OrganizerBookings({ trip, pin, onChanged }) {
 // скрипт, підписка в базі, ключі у Vercel, серверна функція і сам
 // push-сервер Google чи Apple. Здогадуватись, яка з них мовчить, — це
 // щоразу година навмання. Відповідь називає ланку одразу.
-function PushDiagnostics() {
+function PushDiagnostics({ pin }) {
   const [state, setState] = useState("");
   const [busy, setBusy] = useState(false);
   const [subs, setSubs] = useState(null);
+  const [beat, setBeat] = useState(null);
 
   useEffect(() => {
     if (!sbConfigured()) return;
     sbRpc("push_count", {}).then((n) => setSubs(Number(n) || 0)).catch(() => setSubs(-1));
-  }, []);
+    if (pin) sbRpc("cron_last", { pin }).then(setBeat).catch(() => setBeat({ last_run: null }));
+  }, [pin]);
+
+  // Пульс годинника. Це головна відповідь на питання «чому не приходять
+  // сповіщення за розкладом»: якщо годинник мовчить, справа не в текстах.
+  const beatLine = () => {
+    if (!beat) return "…";
+    if (!beat.last_run) return "жодного разу — cron-job.org не викликає адресу";
+    const d = new Date(beat.last_run);
+    const minAgo = Math.round((Date.now() - d.getTime()) / 60000);
+    const when = d.toLocaleString("uk-UA", { timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
+    return `${when} (${minAgo} хв тому)${minAgo > 40 ? " — ЗАДОВГО, годинник стоїть" : ""}`;
+  };
 
   const test = async () => {
     setBusy(true); setState("");
@@ -2148,6 +2161,10 @@ function PushDiagnostics() {
         <span style={{ fontSize: 11.5, color: C.muted }}>
           {subs === null ? "…" : subs === -1 ? "?" : `${subs} підписок`}
         </span>
+      </div>
+      <div style={{ background: (beat && beat.last_run) ? C.greenSoft : C.raspSoft, borderRadius: 10, padding: "9px 11px", marginBottom: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>Годинник озивався</div>
+        <div style={{ fontSize: 12.5, color: (beat && beat.last_run) ? C.greenDark : C.rasp, lineHeight: 1.45 }}>{beatLine()}</div>
       </div>
       <button onClick={test} disabled={busy}
         style={{ width: "100%", border: `1.5px solid ${C.green}`, background: busy ? C.greenSoft : "transparent", color: C.greenDark, borderRadius: 10, padding: "11px", fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
@@ -2597,7 +2614,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           <div style={{ background: C.card, borderRadius: 18, padding: 16, marginTop: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
             <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>{t("manageTrip")}</h3>
             <OrganizerBookings trip={trip} pin={adminPin} onChanged={onBooked} />
-            <PushDiagnostics />
+            <PushDiagnostics pin={adminPin} />
             <div style={{ height: 16 }} />
             <label style={{ fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 6, display: "block" }}>{t("tripStatus")}</label>
             <select value={trip.status} onChange={(e) => onSetStatus(e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 11, padding: "12px", fontSize: 14, fontWeight: 700, fontFamily: "inherit", background: C.yellowSoft, color: C.yellowInk, cursor: "pointer", marginBottom: 6 }}>
@@ -2678,6 +2695,7 @@ const BLANK_TRIP = () => ({
   heroGradient: "linear-gradient(120deg, #1b92dc 0%, #38a3e0 32%, #5fb0c8 56%, #8fbf8a 78%, #aece5f 100%)",
   coords: { lat: 47.5, lng: 11.0 },
   meetingPoint: "",
+  meetTime: "",
   image: "",
   placeType: "mountain",
   about: "",
@@ -3115,6 +3133,22 @@ function TripForm({ initial, onSave, onCancel }) {
         {/* Meeting point */}
         <div style={card}>
           <h3 style={cardTitle}><MapPin size={15} /> Точка збору</h3>
+          {/* Час збору окремим полем. Від нього відлічуються дві години
+              для нагадування. Без нього годинник брав час відправлення
+              найдальшого міста — а це зовсім інша година. */}
+          <Field label="Час збору">
+            <input style={{ ...inp, marginBottom: 6 }} value={t.meetTime || ""} onChange={(e) => set({ meetTime: e.target.value })} placeholder="напр. 08:15" />
+            <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 12px", lineHeight: 1.45 }}>
+              {String(t.meetTime || "").match(/(\d{1,2}):(\d{2})/)
+                ? <>Нагадування учасникам надійде за дві години — приблизно о{" "}
+                    <b style={{ color: C.greenDark }}>{(() => {
+                      const m = String(t.meetTime).match(/(\d{1,2}):(\d{2})/);
+                      const mins = Math.max(0, Number(m[1]) * 60 + Number(m[2]) - 120);
+                      return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+                    })()}</b>.</>
+                : <>Заповніть — інакше нагадування про збір не надійде: нема від чого відлічувати дві години.</>}
+            </p>
+          </Field>
           <Field label="Місце зустрічі (текстом)">
             <textarea style={{ ...inp, minHeight: 70, resize: "vertical" }} value={t.meetingPoint} onChange={(e) => set({ meetingPoint: e.target.value })} placeholder="Наприклад: біля головного входу München Hbf, під табло. Шукайте жовтий прапорець." />
           </Field>
