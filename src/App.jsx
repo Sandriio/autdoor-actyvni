@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v68";
+const APP_VERSION = "v69";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -92,6 +92,16 @@ async function pushSend(title, body, url, tag) {
   const r = await fetch("/api/push", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ secret: PUSH_SECRET, title, body, url: url || "/", tag: tag || "autdoor" }),
+  });
+  const j0 = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j0.error || `HTTP ${r.status}`);
+  return j0;
+}
+// Те саме, але з готовими текстами по мовах: кожен пристрій отримає свою.
+async function pushSendMsgs(msgs, tag) {
+  const r = await fetch("/api/push", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ secret: PUSH_SECRET, msgs, url: "/", tag: tag || "autdoor" }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
@@ -438,6 +448,12 @@ const T = {
   stDone: { uk: "Завершено", en: "Done", de: "Abgeschlossen", ru: "Завершено" },
   stCancelled: { uk: "Скасовано", en: "Cancelled", de: "Abgesagt", ru: "Отменено" },
   stUpcoming: { uk: "Майбутня", en: "Upcoming", de: "Kommend", ru: "Предстоящая" },
+  // Дві форми: українською причина стоїть після «через» (знахідний
+  // відмінок), російською — після «из-за» (родовий). «через погодних
+  // умов» було б помилкою.
+  rsPersonal: { uk: "особисті обставини організатора", en: "the organiser's personal circumstances", de: "persönlicher Umstände der Organisation", ru: "личных обстоятельств организатора" },
+  rsForce: { uk: "форс-мажор", en: "force majeure", de: "höherer Gewalt", ru: "форс-мажора" },
+  rsWeather: { uk: "погодні умови", en: "the weather", de: "des Wetters", ru: "погодных условий" },
   stPostponedTo: { uk: "Перенесено на", en: "Postponed to", de: "Verschoben auf", ru: "Перенесено на" },
   stPostponed: { uk: "Перенесено", en: "Postponed", de: "Verschoben", ru: "Перенесено" },
   fotoAdded: { uk: "Фото додається", en: "Photo coming", de: "Foto folgt", ru: "Фото добавляется" },
@@ -2114,6 +2130,95 @@ function OrganizerBookings({ trip, pin, onChanged }) {
   );
 }
 
+// Вибір причини й кнопка розсилки. Показується лише коли поїздку
+// перенесено або скасовано.
+function SituationPush({ trip, kind }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState("");
+
+  const send = async () => {
+    if (reason === "") return;
+    if (!window.confirm("Надіслати сповіщення всім, хто увімкнув сповіщення?")) return;
+    setBusy(true); setDone("");
+    try {
+      const msgs = situationMsgs(kind, trip, reason, trip.postponedTo);
+      const r = await pushSendMsgs(msgs, `trip-${trip.id}`);
+      setDone(`Надіслано: ${r.sent}${r.failed ? `, не вдалось ${r.failed}` : ""}`);
+    } catch (e) {
+      setDone("Помилка: " + String((e && e.message) || e).slice(0, 120));
+    } finally { setBusy(false); }
+  };
+
+  const preview = reason !== "" ? situationMsgs(kind, trip, reason, trip.postponedTo).uk : null;
+
+  return (
+    <div style={{ border: `1.5px solid ${C.rasp}`, background: C.raspSoft, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: C.rasp, marginBottom: 8 }}>
+        Причина {kind === "postponed" ? "перенесення" : "скасування"}
+      </div>
+      <div style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+        {REASONS.map((r) => (
+          <button key={r.code} onClick={() => { setReason(r.code); setDone(""); }}
+            style={{ textAlign: "left", border: `1px solid ${reason === r.code ? C.rasp : C.line}`, background: reason === r.code ? C.rasp : "#fff", color: reason === r.code ? "#fff" : C.ink, borderRadius: 9, padding: "10px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+            {{ personal: "Особисті обставини організатора", force: "Форс-мажор", weather: "Погода" }[r.code]}
+          </button>
+        ))}
+      </div>
+      {preview && (
+        <div style={{ background: "#fff", borderRadius: 9, padding: 10, fontSize: 12, color: C.ink, lineHeight: 1.5, marginBottom: 10 }}>
+          <div style={{ fontWeight: 800, marginBottom: 3 }}>{preview.title}</div>
+          {preview.body}
+        </div>
+      )}
+      <button onClick={send} disabled={reason === "" || busy}
+        style={{ width: "100%", border: "none", background: reason === "" || busy ? C.pageSoft : C.green, color: "#fff", borderRadius: 10, padding: "12px", fontSize: 13.5, fontWeight: 700, cursor: reason === "" || busy ? "default" : "pointer", fontFamily: "inherit" }}>
+        {busy ? "Надсилаю…" : "Повідомити учасників"}
+      </button>
+      {done !== "" && <p style={{ fontSize: 12, color: C.greenDark, margin: "8px 0 0" }}>{done}</p>}
+      <p style={{ fontSize: 11, color: C.muted, margin: "8px 0 0", lineHeight: 1.5 }}>
+        Сповіщення піде кожному своєю мовою. Надсилається лише після натискання — зміна стану сама нічого не розсилає.
+      </p>
+    </div>
+  );
+}
+
+// ── Ситуативні сповіщення: перенесення й скасування ─────────────────
+// Ці два не мають розкладу — їх запускає дія організатора. Тому текст
+// збирається тут, у застосунку, а не в годиннику: лише тут відомо, яку
+// причину щойно обрали.
+const REASONS = [
+  { code: "personal", tkey: "rsPersonal" },
+  { code: "force", tkey: "rsForce" },
+  { code: "weather", tkey: "rsWeather" },
+];
+// Дата й назва потрібні кожною мовою окремо, бо «Субота» німець не читає.
+function situationMsgs(kind, trip, reasonCode, newDate) {
+  const reason = REASONS.find((r) => r.code === reasonCode);
+  const out = {};
+  const prev = CURRENT_LANG;
+  for (const lang of ["uk", "en", "ru"]) {
+    CURRENT_LANG = lang;
+    const name = tc(trip.title);
+    const when = tc(trip.dateLabel) || trip.date || "";
+    const why = reason ? t(reason.tkey) : "";
+    const to = String(newDate || "").trim();
+    out[lang] = kind === "postponed"
+      ? {
+          uk: { title: "Поїздку перенесено", body: `Поїздка на ${when} до ${name} через ${why} переноситься${to ? ` на ${to}` : ""}. Для додаткової інформації зверніться до організатора.` },
+          en: { title: "Trip postponed", body: `The trip to ${name} on ${when} is postponed due to ${why}${to ? `, new date: ${to}` : ""}. Contact the organiser for details.` },
+          ru: { title: "Поездка перенесена", body: `Поездка на ${when} до ${name} из-за ${why} переносится${to ? ` на ${to}` : ""}. За дополнительной информацией обратитесь к организатору.` },
+        }[lang]
+      : {
+          uk: { title: "Поїздку скасовано", body: `Поїздка на ${when} до ${name} через ${why} відміняється. Просимо вибачення за незручності!` },
+          en: { title: "Trip cancelled", body: `The trip to ${name} on ${when} is cancelled due to ${why}. We apologise for the inconvenience!` },
+          ru: { title: "Поездка отменена", body: `Поездка на ${when} до ${name} из-за ${why} отменяется. Приносим извинения за неудобства!` },
+        }[lang];
+  }
+  CURRENT_LANG = prev;
+  return out;
+}
+
 // ── Перевірка сповіщень (режим організатора) ────────────────────────
 // Кнопка навмисно показує СИРУ відповідь сервера, а не «щось пішло не
 // так». Push проходить через шість ланок: дозвіл у браузері, фоновий
@@ -2648,6 +2753,13 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                   Якщо порожнє — напис буде просто «Перенесено».
                 </p>
               </div>
+            )}
+            {/* Перенесення й скасування не мають розкладу: їх запускаєте
+                ви. Тому сповіщення НЕ йде саме при зміні стану — спершу
+                треба обрати причину й натиснути кнопку. Інакше випадковий
+                дотик до списку станів розсилав би тривогу всій групі. */}
+            {(trip.status === "postponed" || trip.status === "cancelled") && (
+              <SituationPush trip={trip} kind={trip.status} />
             )}
             <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 4px", lineHeight: 1.45 }}>
               «Завершено» і «Скасовано» переносять поїздку в розділ «Минулі». Решта лишаються в «Найближчі».
