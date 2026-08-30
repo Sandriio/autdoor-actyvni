@@ -4,19 +4,24 @@
 // Цю адресу смикає cron-job.org кожні 15 хвилин. Функція дивиться на
 // всі поїздки й вирішує, чи настав час якогось зі сповіщень.
 //
+// ДВА РЕЖИМИ
+//   ?secret=...            — робочий: надсилає те, що на часі
+//   ?secret=...&debug=1    — звіт: НІЧОГО не надсилає, але пояснює
+//                            по кожній поїздці, що спрацює й чому ні
+//
+// ПУЛЬС
+// Кожен виклик лишає відмітку часу в базі. У режимі організатора видно,
+// коли годинник озивався востаннє. Якщо «ніколи» — cron-job.org не
+// працює, і шукати помилку в текстах сповіщень немає сенсу.
+//
 // ЗАХИСТ ВІД ПОВТОРІВ
-// Сама адреса нічого не памʼятає між викликами, тож кожна відправка
-// позначається унікальним ключем у таблиці push_log. Друга спроба з
-// тим самим ключем нічого не робить.
+// Кожна відправка позначається унікальним ключем у таблиці push_log.
+// Друга спроба з тим самим ключем нічого не робить.
 //
 // ЧАС
 // Сервер працює за UTC, поїздки — за німецьким часом. Усі порівняння
-// робимо в поясі Europe/Berlin, інакше влітку все приїжджало б на дві
-// години раніше.
-//
-// МОВИ
-// Кожне сповіщення готується трьома мовами й надсилається кожному
-// пристрою тією, яку людина обрала в застосунку.
+// в поясі Europe/Berlin, інакше влітку все приїжджало б на дві години
+// раніше.
 // ═══════════════════════════════════════════════════════════════════
 
 const TZ = "Europe/Berlin";
@@ -35,10 +40,11 @@ function berlinParts(d) {
 const daysBetween = (a, b) =>
   Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86400000);
 const minutesOf = (v) => {
-  const m = String(v || "").match(/(\d{1,2}):(\d{2})/);
+  const m = String(v == null ? "" : v).match(/(\d{1,2}):(\d{2})/);
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 };
-// Багатомовне поле поїздки: беремо потрібну мову, інакше українську.
+const hhmm = (min) =>
+  `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 const tx = (v, lang) => {
   if (v == null) return "";
   if (typeof v === "string") return v;
@@ -69,9 +75,7 @@ async function sendPush(origin, msgs, tag) {
   return r.ok;
 }
 
-// ── Тексти сповіщень ────────────────────────────────────────────────
-// Кожен пункт віддає готовий набір { uk, en, ru }. Назва поїздки й дата
-// беруться відповідною мовою, тож у німця не буде українського «Субота».
+// ── Тексти сповіщень трьома мовами ──────────────────────────────────
 function build(kind, tr, extra) {
   const out = {};
   for (const lang of ["uk", "en", "ru"]) {
@@ -116,8 +120,10 @@ export default async function handler(req, res) {
   }
 
   const origin = `https://${req.headers.host}`;
+  const debug = String((req.query && req.query.debug) || "") === "1";
   const nowB = berlinParts(new Date());
   const nowMin = nowB.hour * 60 + nowB.minute;
+  const nowText = `${nowB.date} ${hhmm(nowMin)}`;
   const dueAt = (h, m) => nowMin >= h * 60 + m && nowMin < h * 60 + m + WINDOW;
 
   let trips = [], taken = {};
@@ -134,65 +140,99 @@ export default async function handler(req, res) {
   }
 
   const planned = [];
+  const report = [];
 
   for (const row of trips || []) {
     const tr = row.data || {};
     const id = row.id;
+    const name = tx(tr.title, "uk");
     const date = String(tr.date || "").trim();
-    if (!date) continue;
-    const status = String(tr.status || "");
-    if (status === "cancelled" || status === "done") continue;
+    const status = String(tr.status || "upcoming");
+    const why = [];
+
+    if (!date) {
+      report.push({ id, name, skip: "немає календарної дати — жодне сповіщення неможливе" });
+      continue;
+    }
+    if (status === "cancelled" || status === "done") {
+      report.push({ id, name, date, skip: `стан «${status}» — сповіщення вимкнені` });
+      continue;
+    }
 
     const days = daysBetween(nowB.date, date);
     const tag = `trip-${id}`;
 
     // ① За 7 днів о 09:00 — набір відкрито.
-    if (days === 7 && dueAt(9, 0)) {
-      planned.push({ key: `open:${id}`, tag, msgs: build("open", tr) });
-    }
+    if (days === 7 && dueAt(9, 0)) planned.push({ key: `open:${id}`, tag, msgs: build("open", tr) });
+    else why.push(`open — треба днів 7 і час 09:00–09:20 · зараз днів ${days}, ${hhmm(nowMin)}`);
 
-    // ② Лишається мало місць. Перевіряється щоразу, поки запис триває,
-    //    і надсилається один раз — далі спрацьовує журнал.
+    // ② Лишається мало місць. Перевіряється щоразу, надсилається один раз.
     const spots = Number(tr.spots) || 0;
     const left = spots - (taken[id] || 0);
     if (days >= 0 && spots > 0 && left > 0 && left <= LOW_SPOTS) {
       planned.push({ key: `low:${id}`, tag, msgs: build("low", tr, left) });
-    }
+    } else why.push(`low — треба вільних 1–${LOW_SPOTS} · зараз ${left} з ${spots}`);
 
     // ③ Напередодні о 22:00 — набір завершено.
-    if (days === 1 && dueAt(22, 0)) {
-      planned.push({ key: `close:${id}`, tag, msgs: build("close", tr) });
-    }
+    if (days === 1 && dueAt(22, 0)) planned.push({ key: `close:${id}`, tag, msgs: build("close", tr) });
+    else why.push(`close — треба днів 1 і час 22:00–22:20 · зараз днів ${days}, ${hhmm(nowMin)}`);
 
     if (days === 0) {
-      // ④ За 2 години до збору.
       const legs = Array.isArray(tr.journeys) && tr.journeys.length > 0
         ? (tr.journeys[0].legs || []) : (tr.legs || []);
       const firstLeg = legs.find((l) => l && String(l.fromTime || "").trim() !== "");
-      const meetMin = minutesOf(tr.meetTime) || (firstLeg ? minutesOf(firstLeg.fromTime) : null);
-      if (meetMin != null) {
+      // Пріоритет: окреме поле часу зустрічі → час у точці збору →
+      // відправлення першого поїзда. Останнє найгірше: це час найдальшого
+      // міста, а не збору групи.
+      const meetMin = minutesOf(tr.meetTime)
+        || minutesOf(tr.from && tr.from.time)
+        || (firstLeg ? minutesOf(firstLeg.fromTime) : null);
+      if (meetMin == null) {
+        why.push("meet — час зустрічі не заповнено: нема від чого відлічувати дві години");
+      } else {
         const remindAt = meetMin - 120;
-        const hh = String(Math.floor(meetMin / 60)).padStart(2, "0");
-        const mm = String(meetMin % 60).padStart(2, "0");
+        const place = tx(tr.meetingPoint, "uk") || (firstLeg ? firstLeg.from : "");
         if (remindAt >= 0 && nowMin >= remindAt && nowMin < remindAt + WINDOW) {
-          const place = tx(tr.meetingPoint, "uk") || (firstLeg ? firstLeg.from : "");
-          planned.push({
-            key: `meet:${id}`, tag,
-            msgs: build("meet", tr, { place, time: `${hh}:${mm}` }),
-          });
+          planned.push({ key: `meet:${id}`, tag, msgs: build("meet", tr, { place, time: hhmm(meetMin) }) });
+        } else {
+          why.push(`meet — збір ${hhmm(meetMin)}, нагадування о ${hhmm(Math.max(0, remindAt))} · зараз ${hhmm(nowMin)}`);
         }
       }
       // ⑤ О 21:00 — поїздка завершена.
-      if (dueAt(21, 0)) {
-        planned.push({ key: `end:${id}`, tag, msgs: build("end", tr) });
-      }
+      if (dueAt(21, 0)) planned.push({ key: `end:${id}`, tag, msgs: build("end", tr) });
+      else why.push(`end — треба час 21:00–21:20 · зараз ${hhmm(nowMin)}`);
+    } else {
+      why.push(`meet і end — тільки в день поїздки · зараз днів ${days}`);
     }
+
+    report.push({
+      id, name, date, days, status,
+      spots, taken: taken[id] || 0,
+      meetTime: tr.meetTime || (tr.from && tr.from.time) || "не задано",
+      why,
+    });
+  }
+
+  // Пульс. Ставимо ДО надсилання: навіть якщо далі щось впаде, буде
+  // видно, що годинник живий і о котрій озивався.
+  await sb("cron_ping", {
+    p_secret: process.env.CRON_SECRET,
+    p_note: `${nowText} · поїздок ${(trips || []).length} · на часі ${planned.length}`,
+  }).catch(() => {});
+
+  if (debug) {
+    res.status(200).json({
+      berlin: nowText,
+      window: `${WINDOW} хв`,
+      trips: report,
+      planned: planned.map((p) => p.key),
+      note: "РЕЖИМ ЗВІТУ — нічого не надіслано",
+    });
+    return;
   }
 
   const sent = [], skipped = [];
   for (const p of planned) {
-    // Спочатку позначаємо в журналі, потім надсилаємо: якщо функцію
-    // обірве на півдорозі, краще не надіслати, ніж надіслати двічі.
     let fresh = false;
     try { fresh = await sb("push_log_claim", { p_key: p.key }); }
     catch (e) { skipped.push(`${p.key}: журнал — ${e.message}`); continue; }
@@ -201,8 +241,5 @@ export default async function handler(req, res) {
     (ok ? sent : skipped).push(p.key + (ok ? "" : ": помилка надсилання"));
   }
 
-  res.status(200).json({
-    berlin: `${nowB.date} ${String(nowB.hour).padStart(2, "0")}:${String(nowB.minute).padStart(2, "0")}`,
-    planned: planned.length, sent, skipped,
-  });
+  res.status(200).json({ berlin: nowText, planned: planned.length, sent, skipped });
 }
