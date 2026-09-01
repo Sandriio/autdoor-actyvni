@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v72";
+const APP_VERSION = "v73";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -362,7 +362,7 @@ const T = {
   wWind: { uk: "Вітер", en: "Wind", de: "Wind", ru: "Ветер" },
   wHumidity: { uk: "Вологість", en: "Humidity", de: "Luftfeuchte", ru: "Влажность" },
   wDemo: { uk: "Демо-дані. Підключається до Open-Meteo для реального прогнозу.", en: "Demo data. Connects to Open-Meteo for a real forecast.", de: "Demodaten. Verbindet sich mit Open-Meteo für echte Vorhersage.", ru: "Демоданные. Подключается к Open-Meteo для реального прогноза." },
-  wLive: { uk: "Живий прогноз Open-Meteo на дату поїздки.", en: "Live Open-Meteo forecast for the trip date.", de: "Live-Prognose von Open-Meteo.", ru: "Живой прогноз Open-Meteo на дату поездки." },
+  wLive: { uk: "Прогноз німецької метеослужби DWD на дату поїздки.", en: "Forecast from the German weather service (DWD) for the trip date.", de: "Vorhersage des Deutschen Wetterdienstes für den Ausflugstag.", ru: "Прогноз немецкой метеослужбы DWD на дату поездки." },
   wNoDate: { uk: "Це орієнтовні дані. Вкажіть дату поїздки в редакторі — і тут з'явиться живий прогноз.", en: "Sample data. Set the trip date in the editor to see a live forecast.", de: "Beispieldaten. Datum setzen für Live-Prognose.", ru: "Это ориентировочные данные. Укажите дату поездки в редакторе — появится живой прогноз." },
   wNoCoords: { uk: "Це орієнтовні дані. Додайте координати точки збору — і тут з'явиться живий прогноз.", en: "Sample data. Add meeting point coordinates to see a live forecast.", de: "Beispieldaten. Koordinaten setzen für Live-Prognose.", ru: "Это ориентировочные данные. Добавьте координаты точки сбора — появится живой прогноз." },
   wClimate: { uk: "Типова погода для цієї дати за минулі роки. Справжній прогноз з'явиться за 16 днів до поїздки.", en: "Typical weather for this date based on past years. A real forecast appears 16 days before the trip.", de: "Typisches Wetter für dieses Datum.", ru: "Типичная погода для этой даты за прошлые годы. Настоящий прогноз появится за 16 дней до поездки." },
@@ -1546,6 +1546,50 @@ const WMO_MAP = [
 ];
 const wmoInfo = (code) => WMO_MAP.find((m) => m.codes.includes(code)) || WMO_MAP[2];
 
+// Bright Sky віддає стан неба словом, а не числовим кодом WMO.
+// Зводимо до тих самих підписів, щоб решта картки не мінялась.
+const BS_MAP = {
+  "clear-day": { icon: "sun", uk: "Ясно", en: "Clear", ru: "Ясно" },
+  "clear-night": { icon: "sun", uk: "Ясно", en: "Clear", ru: "Ясно" },
+  "partly-cloudy-day": { icon: "sun", uk: "Мінлива хмарність", en: "Partly cloudy", ru: "Переменная облачность" },
+  "partly-cloudy-night": { icon: "sun", uk: "Мінлива хмарність", en: "Partly cloudy", ru: "Переменная облачность" },
+  cloudy: { icon: "cloud", uk: "Хмарно", en: "Cloudy", ru: "Облачно" },
+  fog: { icon: "cloud", uk: "Туман", en: "Fog", ru: "Туман" },
+  wind: { icon: "cloud", uk: "Вітряно", en: "Windy", ru: "Ветрено" },
+  rain: { icon: "rain", uk: "Дощ", en: "Rain", ru: "Дождь" },
+  sleet: { icon: "snow", uk: "Мокрий сніг", en: "Sleet", ru: "Мокрый снег" },
+  snow: { icon: "snow", uk: "Сніг", en: "Snow", ru: "Снег" },
+  hail: { icon: "rain", uk: "Град", en: "Hail", ru: "Град" },
+  thunderstorm: { icon: "rain", uk: "Гроза", en: "Thunderstorm", ru: "Гроза" },
+};
+// Стан дня визначає найпомітніше явище вдень, а не о 03:00. Порядок
+// важливості — від грози до ясного неба.
+const BS_RANK = ["thunderstorm", "hail", "snow", "sleet", "rain", "fog", "cloudy", "wind", "partly-cloudy-day", "clear-day"];
+function brightSkyDay(rows) {
+  const day = rows.filter((r) => {
+    const h = Number(String(r.timestamp || "").slice(11, 13));
+    return h >= 8 && h <= 20;
+  });
+  const use = day.length > 0 ? day : rows;
+  const nums = (key) => use.map((r) => r[key]).filter((x) => typeof x === "number");
+  const max = (a) => (a.length ? Math.max(...a) : null);
+  const min = (a) => (a.length ? Math.min(...a) : null);
+  const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
+  // Температурний максимум і мінімум рахуємо за ВСІ доби, як роблять
+  // погодні сервіси; решту показників — за світлу частину дня.
+  const allT = rows.map((r) => r.temperature).filter((x) => typeof x === "number");
+  const icons = use.map((r) => String(r.icon || "").replace("-night", "-day")).filter(Boolean);
+  const worst = BS_RANK.find((k) => icons.includes(k)) || "cloudy";
+  return {
+    tMax: max(allT), tMin: min(allT),
+    rain: max(nums("precipitation_probability")),
+    wind: max(nums("wind_speed")),
+    hum: avg(nums("relative_humidity")),
+    info: BS_MAP[worst] || BS_MAP.cloudy,
+    hours: use.length,
+  };
+}
+
 function LiveWeather({ trip, isAdmin }) {
   const [live, setLive] = useState(null);
   const [mode, setMode] = useState("fallback"); // fallback | loading | live
@@ -1629,16 +1673,43 @@ function LiveWeather({ trip, isAdmin }) {
       // Мітка часу проти кешу браузера: без неї оновлення кожні 15 хвилин
       // поверталося б тим самим збереженим відповіддю.
       `&_t=${Math.floor(Date.now() / 60000)}`;
-    // ICON — модель німецької метеослужби DWD. Саме на ній тримаються
-    // німецькі сервіси, з якими люди звіряються. Без цього параметра
-    // Open-Meteo змішує кілька світових моделей і дає інший результат:
-    // для Баварії різниця сягала восьми градусів.
-    const urlIcon = `${url}&models=icon_seamless`;
-    // Якщо модель раптом недоступна, тихо повертаємось до типової.
-    fetch(urlIcon)
-      .then((r) => (r.ok ? r.json() : fetch(url).then((r2) => r2.json())))
+    // Головне джерело — Bright Sky: прямий доступ до офіційних даних
+    // німецької метеослужби DWD, без ключа. Для застосунку, який працює
+    // виключно по Баварії, це те саме джерело, з якого беруть числа
+    // німецькі сервіси. Open-Meteo лишається запасним: якщо Bright Sky
+    // не відповість, картка не спорожніє.
+    const bsUrl = `https://api.brightsky.dev/weather?lat=${lat}&lon=${lng}` +
+      `&date=${d}&last_date=${d}&tz=Europe%2FBerlin`;
+    fetch(bsUrl)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((bs) => {
+        if (cancelled) return true;
+        const rows = bs && Array.isArray(bs.weather) ? bs.weather : [];
+        if (rows.length === 0) return false;   // немає даних — беремо запасне
+        const w = brightSkyDay(rows);
+        if (w.tMax == null) return false;
+        setLive({
+          tempC: Math.round(w.tMax),
+          tempMin: w.tMin != null ? Math.round(w.tMin) : null,
+          feelsC: Math.round(w.tMax),
+          rainPct: w.rain != null ? Math.round(w.rain) : 0,
+          windKmh: w.wind != null ? Math.round(w.wind) : 0,
+          humidity: w.hum != null ? Math.round(w.hum) : trip.weather.humidity,
+          icon: w.info.icon, cond: w.info,
+        });
+        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · Bright Sky / DWD · ${d} · max ${w.tMax}° / min ${w.tMin}° · ${w.info.uk} · опади ${w.rain != null ? w.rain + "%" : "н/д"} · годин ${w.hours}`);
+        setMode("live");
+        return true;
+      })
+      .catch(() => false)
+      .then((ok) => {
+        if (cancelled || ok === true) return null;
+        // Запасний шлях: Open-Meteo з моделлю ICON.
+        return fetch(`${url}&models=icon_seamless`)
+          .then((r) => (r.ok ? r.json() : fetch(url).then((r2) => r2.json())));
+      })
       .then((j) => {
-        if (cancelled) return;
+        if (cancelled || j == null) return;
         const dl = j && j.daily;
         if (j && j.error) { setRaw(`ПОМИЛКА СЕРВІСУ: ${j.reason || "невідома"}`); setReason("error"); setMode("fallback"); return; }
         if (!dl || !dl.time || dl.time.length === 0 || dl.temperature_2m_max == null) {
@@ -1657,7 +1728,7 @@ function LiveWeather({ trip, isAdmin }) {
           humidity: Math.round(one(dl.relative_humidity_2m_mean, trip.weather.humidity)),
           icon: info.icon, cond: info,
         });
-        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · ICON/DWD · ${dl.time[0]} · max ${dl.temperature_2m_max[0]}° / min ${dl.temperature_2m_min && dl.temperature_2m_min[0]}° · код ${dl.weather_code && dl.weather_code[0]} · опади ${dl.precipitation_probability_max && dl.precipitation_probability_max[0]}%`);
+        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · ЗАПАСНЕ Open-Meteo ICON · ${dl.time[0]} · max ${dl.temperature_2m_max[0]}° / min ${dl.temperature_2m_min && dl.temperature_2m_min[0]}° · код ${dl.weather_code && dl.weather_code[0]} · опади ${dl.precipitation_probability_max && dl.precipitation_probability_max[0]}%`);
         setMode("live");
       })
       .catch(() => { if (!cancelled) { setReason("error"); setMode("fallback"); } });
