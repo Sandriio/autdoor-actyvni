@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v74";
+const APP_VERSION = "v75";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1686,17 +1686,20 @@ function LiveWeather({ trip, isAdmin }) {
     const dNext = nextDay.toISOString().slice(0, 10);
     const bsUrl = `https://api.brightsky.dev/weather?lat=${lat}&lon=${lng}` +
       `&date=${d}&last_date=${dNext}&tz=Europe%2FBerlin`;
+    // Стан спроби Bright Sky — потрапляє в діагностику навіть тоді, коли
+    // ми його відхилили. Інакше неможливо зрозуміти, чому в картці числа
+    // від запасного джерела.
+    let bsNote = "не відповів";
     fetch(bsUrl)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
       .then((bs) => {
         if (cancelled) return true;
-        // Беремо лише години потрібної доби: у відповідь потрапляє й
-        // початок наступної.
         const all = bs && Array.isArray(bs.weather) ? bs.weather : [];
         const rows = all.filter((r) => String(r.timestamp || "").slice(0, 10) === d);
-        // Менше половини доби — даним не довіряємо, краще запасне джерело,
-        // ніж максимум, порахований з трьох годин.
-        if (rows.length < 12) return false;
+        if (rows.length < 12) {
+          bsNote = `віддав ${all.length} записів, з них потрібної доби ${rows.length} — замало`;
+          return false;
+        }
         const w = brightSkyDay(rows);
         if (w.tMax == null) return false;
         setLive({
@@ -1712,7 +1715,7 @@ function LiveWeather({ trip, isAdmin }) {
         setMode("live");
         return true;
       })
-      .catch(() => false)
+      .catch((e) => { bsNote = "помилка: " + String((e && e.message) || e).slice(0, 60); return false; })
       .then((ok) => {
         if (cancelled || ok === true) return null;
         // Запасний шлях: Open-Meteo з моделлю ICON.
@@ -1739,7 +1742,7 @@ function LiveWeather({ trip, isAdmin }) {
           humidity: Math.round(one(dl.relative_humidity_2m_mean, trip.weather.humidity)),
           icon: info.icon, cond: info,
         });
-        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · ЗАПАСНЕ Open-Meteo ICON · ${dl.time[0]} · max ${dl.temperature_2m_max[0]}° / min ${dl.temperature_2m_min && dl.temperature_2m_min[0]}° · код ${dl.weather_code && dl.weather_code[0]} · опади ${dl.precipitation_probability_max && dl.precipitation_probability_max[0]}%`);
+        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · ${dl.time[0]}\nОсновне (Bright Sky/DWD): ${bsNote}\nПоказано ЗАПАСНЕ (Open-Meteo ICON): max ${dl.temperature_2m_max[0]}° / min ${dl.temperature_2m_min && dl.temperature_2m_min[0]}° · код ${dl.weather_code && dl.weather_code[0]} · опади ${dl.precipitation_probability_max && dl.precipitation_probability_max[0]}%`);
         setMode("live");
       })
       .catch(() => { if (!cancelled) { setReason("error"); setMode("fallback"); } });
@@ -1795,8 +1798,8 @@ function LiveWeather({ trip, isAdmin }) {
           : t("wDemo")}
       </div>
       {isAdmin && raw !== "" && (
-        <div style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "8px 10px", fontSize: 10.5, color: C.muted, lineHeight: 1.5, wordBreak: "break-word" }}>
-          <b style={{ color: C.ink }}>Що прийшло від Open-Meteo:</b><br />{raw}
+        <div style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "8px 10px", fontSize: 10.5, color: C.muted, lineHeight: 1.5, wordBreak: "break-word", whiteSpace: "pre-line" }}>
+          <b style={{ color: C.ink }}>Джерело погоди:</b>{"\n"}{raw}
         </div>
       )}
     </>
@@ -2460,7 +2463,11 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
 
   return (
     <div style={{ paddingBottom: 30 }}>
-      <div style={{ background: trip.heroGradient, padding: "16px 18px 26px", color: "#fff", position: "relative" }}>
+      {/* На айфоні верх екрана зайнятий вирізом і рядком стану. Без
+          відступу env(safe-area-inset-top) кнопка «Усі поїздки» лізла
+          під годинник — саме це видно на скріншоті. На Android відступ
+          дорівнює нулю, тож нічого не змінюється. */}
+      <div style={{ background: trip.heroGradient, padding: "calc(16px + env(safe-area-inset-top)) 18px 26px", color: "#fff", position: "relative" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <button onClick={onBack} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", borderRadius: 12, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>
             <ArrowLeft size={16} /> {t("allTrips")}
@@ -3786,7 +3793,7 @@ function TripForm({ initial, onSave, onCancel }) {
 
       {/* Sticky save bar */}
       {!canSave && (
-        <div style={{ position: "fixed", bottom: 68, left: 0, right: 0, maxWidth: 440, margin: "0 auto", padding: "0 14px", zIndex: 5 }}>
+        <div style={{ position: "fixed", bottom: "calc(68px + env(safe-area-inset-bottom))", left: 0, right: 0, maxWidth: 440, margin: "0 auto", padding: "0 14px", zIndex: 5 }}>
           <div style={{ background: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: 12, padding: "9px 13px", fontSize: 12.5, lineHeight: 1.45 }}>
             Щоб зберегти, заповніть у блоці «Основне»:{" "}
             {ukOf(t.title).trim() === "" ? "«Назва»" : ""}
