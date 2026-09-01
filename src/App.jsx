@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v71";
+const APP_VERSION = "v72";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1565,8 +1565,16 @@ function LiveWeather({ trip, isAdmin }) {
     const d = (trip.date || "").trim();
     // Координати могли зберегтися як текст — приводимо до чисел, щоб живий
     // прогноз не «зривався» мовчки в демо.
-    const lat = parseFloat(trip.coords && trip.coords.lat);
-    const lng = parseFloat(trip.coords && trip.coords.lng);
+    // Погода потрібна там, КУДИ їдемо, а не там, де сідаємо в поїзд.
+    // Раніше бралися координати точки збору — для Штарнберга це був
+    // Пасінг у Мюнхені, за 30 км від озера. Тепер спершу шукаємо першу
+    // точку маршруту з координатами, і лише як запасний варіант беремо
+    // точку збору.
+    const spot = (trip.route || []).find((st) =>
+      st && !isNaN(parseFloat(st.lat)) && !isNaN(parseFloat(st.lng)));
+    const src = spot ? "маршрут" : "точка збору";
+    const lat = parseFloat(spot ? spot.lat : (trip.coords && trip.coords.lat));
+    const lng = parseFloat(spot ? spot.lng : (trip.coords && trip.coords.lng));
     if (!d) { setReason("nodate"); setMode("fallback"); return; }
     if (isNaN(lat) || isNaN(lng)) { setReason("nocoords"); setMode("fallback"); return; }
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -1621,8 +1629,14 @@ function LiveWeather({ trip, isAdmin }) {
       // Мітка часу проти кешу браузера: без неї оновлення кожні 15 хвилин
       // поверталося б тим самим збереженим відповіддю.
       `&_t=${Math.floor(Date.now() / 60000)}`;
-    fetch(url)
-      .then((r) => r.json())
+    // ICON — модель німецької метеослужби DWD. Саме на ній тримаються
+    // німецькі сервіси, з якими люди звіряються. Без цього параметра
+    // Open-Meteo змішує кілька світових моделей і дає інший результат:
+    // для Баварії різниця сягала восьми градусів.
+    const urlIcon = `${url}&models=icon_seamless`;
+    // Якщо модель раптом недоступна, тихо повертаємось до типової.
+    fetch(urlIcon)
+      .then((r) => (r.ok ? r.json() : fetch(url).then((r2) => r2.json())))
       .then((j) => {
         if (cancelled) return;
         const dl = j && j.daily;
@@ -1643,7 +1657,7 @@ function LiveWeather({ trip, isAdmin }) {
           humidity: Math.round(one(dl.relative_humidity_2m_mean, trip.weather.humidity)),
           icon: info.icon, cond: info,
         });
-        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} · ${dl.time[0]} · max ${dl.temperature_2m_max[0]}° / min ${dl.temperature_2m_min && dl.temperature_2m_min[0]}° · код ${dl.weather_code && dl.weather_code[0]} · опади ${dl.precipitation_probability_max && dl.precipitation_probability_max[0]}%`);
+        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · ICON/DWD · ${dl.time[0]} · max ${dl.temperature_2m_max[0]}° / min ${dl.temperature_2m_min && dl.temperature_2m_min[0]}° · код ${dl.weather_code && dl.weather_code[0]} · опади ${dl.precipitation_probability_max && dl.precipitation_probability_max[0]}%`);
         setMode("live");
       })
       .catch(() => { if (!cancelled) { setReason("error"); setMode("fallback"); } });
