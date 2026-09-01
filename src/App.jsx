@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v76";
+const APP_VERSION = "v77";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1667,13 +1667,22 @@ function LiveWeather({ trip, isAdmin }) {
     return () => { cancelled = true; };
   }, [trip.id, trip.date, tick]);
 
+  // Стан неба зберігається кодом WMO, а не текстом. Тоді підпис
+  // перекладається сам усіма мовами й не залежить від автоперекладу —
+  // те саме рішення, що з колією у поїздах.
+  const manualInfo = wmoInfo(Number(trip.weather.code));
   const w = (mode === "live" || mode === "climate") && live ? live : {
-    tempC: trip.weather.tempC, feelsC: trip.weather.feelsC, rainPct: trip.weather.rainPct,
-    windKmh: trip.weather.windKmh, humidity: trip.weather.humidity, icon: trip.weather.icon,
-    tempMin: null, cond: null,
+    tempC: trip.weather.tempC,
+    tempMin: trip.weather.tempMin != null && trip.weather.tempMin !== "" ? Number(trip.weather.tempMin) : null,
+    feelsC: trip.weather.feelsC, rainPct: trip.weather.rainPct,
+    windKmh: trip.weather.windKmh, humidity: trip.weather.humidity,
+    icon: trip.weather.code != null ? manualInfo.icon : trip.weather.icon,
+    cond: null,
   };
   const condText = mode === "live" && live && live.cond ? (live.cond[CURRENT_LANG] || live.cond.uk)
-    : mode === "climate" ? t("wClimateCond") : tc(trip.weather.condition);
+    : mode === "climate" ? t("wClimateCond")
+    : trip.weather.code != null ? (manualInfo[CURRENT_LANG] || manualInfo.uk)
+    : tc(trip.weather.condition);
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
@@ -2889,7 +2898,7 @@ const BLANK_TRIP = () => ({
   returnPlatform: "",
   bonus: [],
   cafes: [],
-  weather: { tempC: 15, feelsC: 14, condition: "", icon: "cloud", rainPct: 0, windKmh: 0, humidity: 50 },
+  weather: { tempC: 15, tempMin: null, feelsC: 14, condition: "", code: 3, icon: "cloud", rainPct: 0, windKmh: 0, humidity: 50 },
   packing: [],
   sections: DEFAULT_SECTIONS.map((s) => ({ ...s, visible: true })),
 });
@@ -3032,6 +3041,46 @@ function TripForm({ initial, onSave, onCancel }) {
               </span>
             </span>
           </button>
+          {t.weatherManual && (() => {
+            const wx = t.weather || {};
+            const setW = (patch) => set({ weather: { ...wx, ...patch } });
+            const numField = (label, key, hint) => (
+              <div>
+                <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 4 }}>{label}</div>
+                <input style={{ ...inp, marginBottom: 0 }} type="number" value={wx[key] != null ? wx[key] : ""}
+                  onChange={(e) => setW({ [key]: e.target.value === "" ? null : Number(e.target.value) })}
+                  placeholder={hint} />
+              </div>
+            );
+            return (
+              <div style={{ border: `1.5px solid ${C.yellow}`, background: C.yellowSoft, borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: C.yellowInk, marginBottom: 9 }}>
+                  Погода, яку побачать учасники
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 9 }}>
+                  {numField("Максимум, °C", "tempC", "28")}
+                  {numField("Мінімум, °C", "tempMin", "16")}
+                  {numField("Опади, %", "rainPct", "20")}
+                  {numField("Вітер, км/год", "windKmh", "12")}
+                  {numField("Вологість, %", "humidity", "60")}
+                  {numField("Відчувається, °C", "feelsC", "28")}
+                </div>
+                <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, marginBottom: 5 }}>Стан неба</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                  {WMO_MAP.map((m) => (
+                    <button key={m.codes[0]} onClick={() => setW({ code: m.codes[0], icon: m.icon })}
+                      style={{ border: `1px solid ${Number(wx.code) === m.codes[0] ? C.yellowInk : C.line}`, background: Number(wx.code) === m.codes[0] ? C.yellowInk : "#fff", color: Number(wx.code) === m.codes[0] ? "#fff" : C.ink, borderRadius: 9, padding: "9px 8px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                      {m.uk}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ fontSize: 11, color: C.muted, margin: "9px 0 0", lineHeight: 1.5 }}>
+                  Стан неба перекладається сам усіма мовами — вписувати текст не треба.
+                  Порожні числові поля просто не показуються.
+                </p>
+              </div>
+            );
+          })()}
           {(() => {
             if (t.weatherManual) return null;
             // Живий прогноз одразу в редакторі — щойно вказані дата й координати.
