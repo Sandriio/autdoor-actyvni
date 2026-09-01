@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v70";
+const APP_VERSION = "v71";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1546,10 +1546,20 @@ const WMO_MAP = [
 ];
 const wmoInfo = (code) => WMO_MAP.find((m) => m.codes.includes(code)) || WMO_MAP[2];
 
-function LiveWeather({ trip }) {
+function LiveWeather({ trip, isAdmin }) {
   const [live, setLive] = useState(null);
   const [mode, setMode] = useState("fallback"); // fallback | loading | live
   const [reason, setReason] = useState("nodate"); // nodate | nocoords | past | far | error
+  // Що саме прийшло від сервісу. Показується лише організаторові — щоб
+  // не гадати, а бачити координати, дату й сирі числа.
+  const [raw, setRaw] = useState("");
+  // Лічильник перезапитів: змінюється кожні 15 хвилин і тим самим
+  // перезапускає завантаження.
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 15 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
   useEffect(() => {
     let cancelled = false;
     const d = (trip.date || "").trim();
@@ -1607,13 +1617,20 @@ function LiveWeather({ trip }) {
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
       `&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,` +
       `precipitation_probability_max,wind_speed_10m_max,relative_humidity_2m_mean` +
-      `&timezone=Europe%2FBerlin&start_date=${d}&end_date=${d}`;
+      `&timezone=Europe%2FBerlin&start_date=${d}&end_date=${d}` +
+      // Мітка часу проти кешу браузера: без неї оновлення кожні 15 хвилин
+      // поверталося б тим самим збереженим відповіддю.
+      `&_t=${Math.floor(Date.now() / 60000)}`;
     fetch(url)
       .then((r) => r.json())
       .then((j) => {
         if (cancelled) return;
         const dl = j && j.daily;
-        if (!dl || !dl.time || dl.time.length === 0 || dl.temperature_2m_max == null) { setReason("error"); setMode("fallback"); return; }
+        if (j && j.error) { setRaw(`ПОМИЛКА СЕРВІСУ: ${j.reason || "невідома"}`); setReason("error"); setMode("fallback"); return; }
+        if (!dl || !dl.time || dl.time.length === 0 || dl.temperature_2m_max == null) {
+          setRaw(`Відповідь без денних даних. Отримано ключі: ${Object.keys(j || {}).join(", ") || "нічого"}`);
+          setReason("error"); setMode("fallback"); return;
+        }
         const one = (arr, fb) => (arr && arr[0] != null ? arr[0] : fb);
         const info = wmoInfo(one(dl.weather_code, 3));
         const tmax = Math.round(one(dl.temperature_2m_max, 0));
@@ -1626,11 +1643,12 @@ function LiveWeather({ trip }) {
           humidity: Math.round(one(dl.relative_humidity_2m_mean, trip.weather.humidity)),
           icon: info.icon, cond: info,
         });
+        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} · ${dl.time[0]} · max ${dl.temperature_2m_max[0]}° / min ${dl.temperature_2m_min && dl.temperature_2m_min[0]}° · код ${dl.weather_code && dl.weather_code[0]} · опади ${dl.precipitation_probability_max && dl.precipitation_probability_max[0]}%`);
         setMode("live");
       })
       .catch(() => { if (!cancelled) { setReason("error"); setMode("fallback"); } });
     return () => { cancelled = true; };
-  }, [trip.id, trip.date]);
+  }, [trip.id, trip.date, tick]);
 
   const w = (mode === "live" || mode === "climate") && live ? live : {
     tempC: trip.weather.tempC, feelsC: trip.weather.feelsC, rainPct: trip.weather.rainPct,
@@ -1678,6 +1696,11 @@ function LiveWeather({ trip }) {
           : reason === "past" ? t("wPast")
           : t("wDemo")}
       </div>
+      {isAdmin && raw !== "" && (
+        <div style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "8px 10px", fontSize: 10.5, color: C.muted, lineHeight: 1.5, wordBreak: "break-word" }}>
+          <b style={{ color: C.ink }}>Що прийшло від Open-Meteo:</b><br />{raw}
+        </div>
+      )}
     </>
   );
 }
@@ -2415,7 +2438,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
             },
             weather: {
               icon: weatherIcon(trip.weather.icon, 17), accent: C.green,
-              body: <LiveWeather trip={trip} />,
+              body: <LiveWeather trip={trip} isAdmin={isAdmin} />,
             },
             travel: {
               icon: <Train size={17} />, accent: C.rasp,
