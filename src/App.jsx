@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v75";
+const APP_VERSION = "v76";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -362,6 +362,7 @@ const T = {
   wWind: { uk: "Вітер", en: "Wind", de: "Wind", ru: "Ветер" },
   wHumidity: { uk: "Вологість", en: "Humidity", de: "Luftfeuchte", ru: "Влажность" },
   wDemo: { uk: "Демо-дані. Підключається до Open-Meteo для реального прогнозу.", en: "Demo data. Connects to Open-Meteo for a real forecast.", de: "Demodaten. Verbindet sich mit Open-Meteo für echte Vorhersage.", ru: "Демоданные. Подключается к Open-Meteo для реального прогноза." },
+  wManual: { uk: "Дані вказані організатором.", en: "Entered by the organiser.", de: "Von der Organisation eingetragen.", ru: "Данные указаны организатором." },
   wLive: { uk: "Прогноз німецької метеослужби DWD на дату поїздки.", en: "Forecast from the German weather service (DWD) for the trip date.", de: "Vorhersage des Deutschen Wetterdienstes für den Ausflugstag.", ru: "Прогноз немецкой метеослужбы DWD на дату поездки." },
   wNoDate: { uk: "Це орієнтовні дані. Вкажіть дату поїздки в редакторі — і тут з'явиться живий прогноз.", en: "Sample data. Set the trip date in the editor to see a live forecast.", de: "Beispieldaten. Datum setzen für Live-Prognose.", ru: "Это ориентировочные данные. Укажите дату поездки в редакторе — появится живой прогноз." },
   wNoCoords: { uk: "Це орієнтовні дані. Додайте координати точки збору — і тут з'явиться живий прогноз.", en: "Sample data. Add meeting point coordinates to see a live forecast.", de: "Beispieldaten. Koordinaten setzen für Live-Prognose.", ru: "Это ориентировочные данные. Добавьте координаты точки сбора — появится живой прогноз." },
@@ -1546,50 +1547,6 @@ const WMO_MAP = [
 ];
 const wmoInfo = (code) => WMO_MAP.find((m) => m.codes.includes(code)) || WMO_MAP[2];
 
-// Bright Sky віддає стан неба словом, а не числовим кодом WMO.
-// Зводимо до тих самих підписів, щоб решта картки не мінялась.
-const BS_MAP = {
-  "clear-day": { icon: "sun", uk: "Ясно", en: "Clear", ru: "Ясно" },
-  "clear-night": { icon: "sun", uk: "Ясно", en: "Clear", ru: "Ясно" },
-  "partly-cloudy-day": { icon: "sun", uk: "Мінлива хмарність", en: "Partly cloudy", ru: "Переменная облачность" },
-  "partly-cloudy-night": { icon: "sun", uk: "Мінлива хмарність", en: "Partly cloudy", ru: "Переменная облачность" },
-  cloudy: { icon: "cloud", uk: "Хмарно", en: "Cloudy", ru: "Облачно" },
-  fog: { icon: "cloud", uk: "Туман", en: "Fog", ru: "Туман" },
-  wind: { icon: "cloud", uk: "Вітряно", en: "Windy", ru: "Ветрено" },
-  rain: { icon: "rain", uk: "Дощ", en: "Rain", ru: "Дождь" },
-  sleet: { icon: "snow", uk: "Мокрий сніг", en: "Sleet", ru: "Мокрый снег" },
-  snow: { icon: "snow", uk: "Сніг", en: "Snow", ru: "Снег" },
-  hail: { icon: "rain", uk: "Град", en: "Hail", ru: "Град" },
-  thunderstorm: { icon: "rain", uk: "Гроза", en: "Thunderstorm", ru: "Гроза" },
-};
-// Стан дня визначає найпомітніше явище вдень, а не о 03:00. Порядок
-// важливості — від грози до ясного неба.
-const BS_RANK = ["thunderstorm", "hail", "snow", "sleet", "rain", "fog", "cloudy", "wind", "partly-cloudy-day", "clear-day"];
-function brightSkyDay(rows) {
-  const day = rows.filter((r) => {
-    const h = Number(String(r.timestamp || "").slice(11, 13));
-    return h >= 8 && h <= 20;
-  });
-  const use = day.length > 0 ? day : rows;
-  const nums = (key) => use.map((r) => r[key]).filter((x) => typeof x === "number");
-  const max = (a) => (a.length ? Math.max(...a) : null);
-  const min = (a) => (a.length ? Math.min(...a) : null);
-  const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
-  // Температурний максимум і мінімум рахуємо за ВСІ доби, як роблять
-  // погодні сервіси; решту показників — за світлу частину дня.
-  const allT = rows.map((r) => r.temperature).filter((x) => typeof x === "number");
-  const icons = use.map((r) => String(r.icon || "").replace("-night", "-day")).filter(Boolean);
-  const worst = BS_RANK.find((k) => icons.includes(k)) || "cloudy";
-  return {
-    tMax: max(allT), tMin: min(allT),
-    rain: max(nums("precipitation_probability")),
-    wind: max(nums("wind_speed")),
-    hum: avg(nums("relative_humidity")),
-    info: BS_MAP[worst] || BS_MAP.cloudy,
-    hours: use.length,
-  };
-}
-
 function LiveWeather({ trip, isAdmin }) {
   const [live, setLive] = useState(null);
   const [mode, setMode] = useState("fallback"); // fallback | loading | live
@@ -1606,6 +1563,11 @@ function LiveWeather({ trip, isAdmin }) {
   }, []);
   useEffect(() => {
     let cancelled = false;
+    // Погода, вписана організатором, має перевагу над будь-яким
+    // прогнозом. Причина проста: жоден сервіс не можна перевірити
+    // зсередини застосунку, а організатор дивиться той прогноз, якому
+    // довіряє, і бачить розбіжність раніше за всіх.
+    if (trip.weatherManual) { setReason("manual"); setMode("fallback"); return; }
     const d = (trip.date || "").trim();
     // Координати могли зберегтися як текст — приводимо до чисел, щоб живий
     // прогноз не «зривався» мовчки в демо.
@@ -1673,55 +1635,11 @@ function LiveWeather({ trip, isAdmin }) {
       // Мітка часу проти кешу браузера: без неї оновлення кожні 15 хвилин
       // поверталося б тим самим збереженим відповіддю.
       `&_t=${Math.floor(Date.now() / 60000)}`;
-    // Головне джерело — Bright Sky: прямий доступ до офіційних даних
-    // німецької метеослужби DWD, без ключа. Для застосунку, який працює
-    // виключно по Баварії, це те саме джерело, з якого беруть числа
-    // німецькі сервіси. Open-Meteo лишається запасним: якщо Bright Sky
-    // не відповість, картка не спорожніє.
-    // last_date мусить бути НАСТУПНОЮ добою. Я вказав ту саму дату — і
-    // сервіс чесно повернув один запис, опівнічний: звідси «18° / 18°»,
-    // де максимум дорівнював мінімуму. Тепер беремо повні 24 години.
-    const nextDay = new Date(d + "T00:00:00");
-    nextDay.setDate(nextDay.getDate() + 1);
-    const dNext = nextDay.toISOString().slice(0, 10);
-    const bsUrl = `https://api.brightsky.dev/weather?lat=${lat}&lon=${lng}` +
-      `&date=${d}&last_date=${dNext}&tz=Europe%2FBerlin`;
-    // Стан спроби Bright Sky — потрапляє в діагностику навіть тоді, коли
-    // ми його відхилили. Інакше неможливо зрозуміти, чому в картці числа
-    // від запасного джерела.
-    let bsNote = "не відповів";
-    fetch(bsUrl)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
-      .then((bs) => {
-        if (cancelled) return true;
-        const all = bs && Array.isArray(bs.weather) ? bs.weather : [];
-        const rows = all.filter((r) => String(r.timestamp || "").slice(0, 10) === d);
-        if (rows.length < 12) {
-          bsNote = `віддав ${all.length} записів, з них потрібної доби ${rows.length} — замало`;
-          return false;
-        }
-        const w = brightSkyDay(rows);
-        if (w.tMax == null) return false;
-        setLive({
-          tempC: Math.round(w.tMax),
-          tempMin: w.tMin != null ? Math.round(w.tMin) : null,
-          feelsC: Math.round(w.tMax),
-          rainPct: w.rain != null ? Math.round(w.rain) : 0,
-          windKmh: w.wind != null ? Math.round(w.wind) : 0,
-          humidity: w.hum != null ? Math.round(w.hum) : trip.weather.humidity,
-          icon: w.info.icon, cond: w.info,
-        });
-        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · Bright Sky / DWD · ${d} · max ${w.tMax}° / min ${w.tMin}° · ${w.info.uk} · опади ${w.rain != null ? w.rain + "%" : "н/д"} · записів ${rows.length}, з них удень ${w.hours}`);
-        setMode("live");
-        return true;
-      })
-      .catch((e) => { bsNote = "помилка: " + String((e && e.message) || e).slice(0, 60); return false; })
-      .then((ok) => {
-        if (cancelled || ok === true) return null;
-        // Запасний шлях: Open-Meteo з моделлю ICON.
-        return fetch(`${url}&models=icon_seamless`)
-          .then((r) => (r.ok ? r.json() : fetch(url).then((r2) => r2.json())));
-      })
+    // Bright Sky прибрано: для точок у Баварії він віддавав один запис
+    // замість доби, і полагодити це наосліп неможливо. Лишається
+    // Open-Meteo з моделлю ICON німецької метеослужби.
+    fetch(`${url}&models=icon_seamless`)
+      .then((r) => (r.ok ? r.json() : fetch(url).then((r2) => r2.json())))
       .then((j) => {
         if (cancelled || j == null) return;
         const dl = j && j.daily;
@@ -1742,7 +1660,7 @@ function LiveWeather({ trip, isAdmin }) {
           humidity: Math.round(one(dl.relative_humidity_2m_mean, trip.weather.humidity)),
           icon: info.icon, cond: info,
         });
-        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · ${dl.time[0]}\nОсновне (Bright Sky/DWD): ${bsNote}\nПоказано ЗАПАСНЕ (Open-Meteo ICON): max ${dl.temperature_2m_max[0]}° / min ${dl.temperature_2m_min && dl.temperature_2m_min[0]}° · код ${dl.weather_code && dl.weather_code[0]} · опади ${dl.precipitation_probability_max && dl.precipitation_probability_max[0]}%`);
+        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · ${dl.time[0]} · ICON/DWD\nmax ${dl.temperature_2m_max[0]}° / min ${dl.temperature_2m_min && dl.temperature_2m_min[0]}° · код ${dl.weather_code && dl.weather_code[0]} · опади ${dl.precipitation_probability_max && dl.precipitation_probability_max[0]}%`);
         setMode("live");
       })
       .catch(() => { if (!cancelled) { setReason("error"); setMode("fallback"); } });
@@ -1794,6 +1712,7 @@ function LiveWeather({ trip, isAdmin }) {
           : reason === "nodate" ? t("wNoDate")
           : reason === "nocoords" ? t("wNoCoords")
           : reason === "far" ? t("wFar")
+          : reason === "manual" ? t("wManual")
           : reason === "past" ? t("wPast")
           : t("wDemo")}
       </div>
@@ -3095,7 +3014,26 @@ function TripForm({ initial, onSave, onCancel }) {
             </p>
           </Field>
           <Field label="Google Диск для цієї поїздки (необов'язково)"><input style={inp} value={t.driveUrl || ""} onChange={(e) => set({ driveUrl: e.target.value })} placeholder="Порожньо — показується спільний архів" /></Field>
+          {/* Перемикач ручної погоди. Прогноз — зручність, а не істина:
+              сервіси розходяться між собою, і перевірити їх зсередини
+              застосунку неможливо. Тому останнє слово лишається за
+              організатором, який дивиться той прогноз, якому довіряє. */}
+          <button onClick={() => set({ weatherManual: !t.weatherManual })}
+            style={{ width: "100%", textAlign: "left", background: t.weatherManual ? C.yellowSoft : "#fff", border: `1.5px solid ${t.weatherManual ? C.yellow : C.line}`, borderRadius: 11, padding: 12, display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>
+            <span style={{ width: 20, height: 20, borderRadius: 6, background: t.weatherManual ? C.yellowInk : "#fff", border: `1.5px solid ${t.weatherManual ? C.yellowInk : C.line}`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
+              {t.weatherManual && <ClipboardCheck size={12} />}
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.ink }}>Вписати погоду вручну</span>
+              <span style={{ display: "block", fontSize: 11.5, color: C.muted, lineHeight: 1.5, marginTop: 3 }}>
+                {t.weatherManual
+                  ? "Учасники побачать саме ті числа, які ви вкажете нижче. Прогноз не завантажується."
+                  : "Зараз показується автоматичний прогноз. Увімкніть, якщо він розходиться з тим, якому ви довіряєте."}
+              </span>
+            </span>
+          </button>
           {(() => {
+            if (t.weatherManual) return null;
             // Живий прогноз одразу в редакторі — щойно вказані дата й координати.
             const la = parseFloat(t.coords && t.coords.lat), ln = parseFloat(t.coords && t.coords.lng);
             if (!t.date || isNaN(la) || isNaN(ln)) {
