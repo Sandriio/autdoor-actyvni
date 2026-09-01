@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v69";
+const APP_VERSION = "v70";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1584,6 +1584,7 @@ function LiveWeather({ trip }) {
           const rain = avg((dd) => dd.precipitation_sum && dd.precipitation_sum[0]);
           setLive({
             tempC: Math.round(avg((dd) => dd.temperature_2m_max[0]) || 0),
+            tempMin: null,
             feelsC: Math.round(avg((dd) => dd.apparent_temperature_max && dd.apparent_temperature_max[0]) || 0),
             rainPct: rain != null ? Math.min(100, Math.round(rain * 20)) : 0,
             windKmh: Math.round(avg((dd) => dd.wind_speed_10m_max && dd.wind_speed_10m_max[0]) || 0),
@@ -1597,28 +1598,32 @@ function LiveWeather({ trip }) {
       setReason("far"); setMode("fallback"); return;
     }
     setMode("loading");
+    // Просимо ДЕННІ показники, а не погодинні. Раніше бралася температура
+    // рівно о 13:00 — і застосунок показував 18°, коли всі інші сервіси
+    // показували 29°. Обидва числа були правдиві, але означали різне:
+    // одне — температуру в конкретну годину під хмарою, друге — максимум
+    // за день. Люди звіряють із WetterOnline і Google, а ті показують
+    // максимум і мінімум. Тепер і ми показуємо те саме.
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
-      `&daily=weather_code,precipitation_probability_max` +
-      `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code` +
+      `&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,` +
+      `precipitation_probability_max,wind_speed_10m_max,relative_humidity_2m_mean` +
       `&timezone=Europe%2FBerlin&start_date=${d}&end_date=${d}`;
     fetch(url)
       .then((r) => r.json())
       .then((j) => {
         if (cancelled) return;
-        const dl = j && j.daily, hr = j && j.hourly;
-        if (!dl || !dl.time || dl.time.length === 0 || !hr || !hr.temperature_2m) { setReason("error"); setMode("fallback"); return; }
-        // Беремо показники на середину дня (13:00) — це відповідає часу
-        // прогулянки. Денні максимуми давали завищені й неправдоподібні числа.
-        const H = 13;
-        const at = (arr, fb) => (arr && arr[H] != null ? arr[H] : fb);
-        const code = at(hr.weather_code, dl.weather_code[0]);
-        const info = wmoInfo(code);
+        const dl = j && j.daily;
+        if (!dl || !dl.time || dl.time.length === 0 || dl.temperature_2m_max == null) { setReason("error"); setMode("fallback"); return; }
+        const one = (arr, fb) => (arr && arr[0] != null ? arr[0] : fb);
+        const info = wmoInfo(one(dl.weather_code, 3));
+        const tmax = Math.round(one(dl.temperature_2m_max, 0));
         setLive({
-          tempC: Math.round(at(hr.temperature_2m, 0)),
-          feelsC: Math.round(at(hr.apparent_temperature, at(hr.temperature_2m, 0))),
-          rainPct: dl.precipitation_probability_max[0] ?? 0,
-          windKmh: Math.round(at(hr.wind_speed_10m, 0)),
-          humidity: Math.round(at(hr.relative_humidity_2m, trip.weather.humidity)),
+          tempC: tmax,
+          tempMin: dl.temperature_2m_min && dl.temperature_2m_min[0] != null ? Math.round(dl.temperature_2m_min[0]) : null,
+          feelsC: Math.round(one(dl.apparent_temperature_max, tmax)),
+          rainPct: Math.round(one(dl.precipitation_probability_max, 0)),
+          windKmh: Math.round(one(dl.wind_speed_10m_max, 0)),
+          humidity: Math.round(one(dl.relative_humidity_2m_mean, trip.weather.humidity)),
           icon: info.icon, cond: info,
         });
         setMode("live");
@@ -1629,7 +1634,8 @@ function LiveWeather({ trip }) {
 
   const w = (mode === "live" || mode === "climate") && live ? live : {
     tempC: trip.weather.tempC, feelsC: trip.weather.feelsC, rainPct: trip.weather.rainPct,
-    windKmh: trip.weather.windKmh, humidity: trip.weather.humidity, icon: trip.weather.icon, cond: null,
+    windKmh: trip.weather.windKmh, humidity: trip.weather.humidity, icon: trip.weather.icon,
+    tempMin: null, cond: null,
   };
   const condText = mode === "live" && live && live.cond ? (live.cond[CURRENT_LANG] || live.cond.uk)
     : mode === "climate" ? t("wClimateCond") : tc(trip.weather.condition);
@@ -1639,7 +1645,12 @@ function LiveWeather({ trip }) {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ color: C.green }}>{weatherIcon(w.icon, 44)}</div>
           <div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: C.ink, lineHeight: 1 }}>{w.tempC}°</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
+              <span style={{ fontSize: 32, fontWeight: 800, color: C.ink, lineHeight: 1 }}>{w.tempC}°</span>
+              {w.tempMin != null && (
+                <span style={{ fontSize: 19, fontWeight: 700, color: C.muted, lineHeight: 1 }}>/ {w.tempMin}°</span>
+              )}
+            </div>
             <div style={{ fontSize: 12.5, color: C.muted }}>{t("wFeels")} {w.feelsC}°</div>
           </div>
         </div>
