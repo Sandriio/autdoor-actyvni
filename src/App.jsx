@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v73";
+const APP_VERSION = "v74";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1678,14 +1678,25 @@ function LiveWeather({ trip, isAdmin }) {
     // виключно по Баварії, це те саме джерело, з якого беруть числа
     // німецькі сервіси. Open-Meteo лишається запасним: якщо Bright Sky
     // не відповість, картка не спорожніє.
+    // last_date мусить бути НАСТУПНОЮ добою. Я вказав ту саму дату — і
+    // сервіс чесно повернув один запис, опівнічний: звідси «18° / 18°»,
+    // де максимум дорівнював мінімуму. Тепер беремо повні 24 години.
+    const nextDay = new Date(d + "T00:00:00");
+    nextDay.setDate(nextDay.getDate() + 1);
+    const dNext = nextDay.toISOString().slice(0, 10);
     const bsUrl = `https://api.brightsky.dev/weather?lat=${lat}&lon=${lng}` +
-      `&date=${d}&last_date=${d}&tz=Europe%2FBerlin`;
+      `&date=${d}&last_date=${dNext}&tz=Europe%2FBerlin`;
     fetch(bsUrl)
       .then((r) => (r.ok ? r.json() : null))
       .then((bs) => {
         if (cancelled) return true;
-        const rows = bs && Array.isArray(bs.weather) ? bs.weather : [];
-        if (rows.length === 0) return false;   // немає даних — беремо запасне
+        // Беремо лише години потрібної доби: у відповідь потрапляє й
+        // початок наступної.
+        const all = bs && Array.isArray(bs.weather) ? bs.weather : [];
+        const rows = all.filter((r) => String(r.timestamp || "").slice(0, 10) === d);
+        // Менше половини доби — даним не довіряємо, краще запасне джерело,
+        // ніж максимум, порахований з трьох годин.
+        if (rows.length < 12) return false;
         const w = brightSkyDay(rows);
         if (w.tMax == null) return false;
         setLive({
@@ -1697,7 +1708,7 @@ function LiveWeather({ trip, isAdmin }) {
           humidity: w.hum != null ? Math.round(w.hum) : trip.weather.humidity,
           icon: w.info.icon, cond: w.info,
         });
-        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · Bright Sky / DWD · ${d} · max ${w.tMax}° / min ${w.tMin}° · ${w.info.uk} · опади ${w.rain != null ? w.rain + "%" : "н/д"} · годин ${w.hours}`);
+        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · Bright Sky / DWD · ${d} · max ${w.tMax}° / min ${w.tMin}° · ${w.info.uk} · опади ${w.rain != null ? w.rain + "%" : "н/д"} · записів ${rows.length}, з них удень ${w.hours}`);
         setMode("live");
         return true;
       })
@@ -1754,7 +1765,9 @@ function LiveWeather({ trip, isAdmin }) {
                 <span style={{ fontSize: 19, fontWeight: 700, color: C.muted, lineHeight: 1 }}>/ {w.tempMin}°</span>
               )}
             </div>
-            <div style={{ fontSize: 12.5, color: C.muted }}>{t("wFeels")} {w.feelsC}°</div>
+            {w.feelsC !== w.tempC && (
+              <div style={{ fontSize: 12.5, color: C.muted }}>{t("wFeels")} {w.feelsC}°</div>
+            )}
           </div>
         </div>
         <div style={{ fontSize: 14, color: "#4a4a42", fontWeight: 600 }}>{condText}</div>
