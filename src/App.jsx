@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v78";
+const APP_VERSION = "v79";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -85,23 +85,24 @@ async function pushUnsubscribe() {
   await sbRpc("push_unsubscribe", { p_endpoint: sub.endpoint }).catch(() => {});
   await sub.unsubscribe();
 }
-// Надсилання — лише з режиму організатора. Слово-пароль спільне з
-// серверною функцією; без нього надіслати сповіщення неможливо.
-const PUSH_SECRET = "IVLmioo5R7-ZNLiNh-0P52nWEB8oSwWG";
-async function pushSend(title, body, url, tag) {
+// Надсилання — лише з режиму організатора. Раніше тут лежало спільне
+// слово-пароль, і будь-хто, відкривши код, міг розіслати сповіщення на
+// всі телефони. Тепер надсилання підтверджується PIN організатора, який
+// сервер перевіряє в базі. У коді не лишається нічого таємного.
+async function pushSend(pin, title, body, url, tag) {
   const r = await fetch("/api/push", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret: PUSH_SECRET, title, body, url: url || "/", tag: tag || "autdoor" }),
+    body: JSON.stringify({ pin, title, body, url: url || "/", tag: tag || "autdoor" }),
   });
   const j0 = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j0.error || `HTTP ${r.status}`);
   return j0;
 }
 // Те саме, але з готовими текстами по мовах: кожен пристрій отримає свою.
-async function pushSendMsgs(msgs, tag) {
+async function pushSendMsgs(pin, msgs, tag) {
   const r = await fetch("/api/push", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret: PUSH_SECRET, msgs, url: "/", tag: tag || "autdoor" }),
+    body: JSON.stringify({ pin, msgs, url: "/", tag: tag || "autdoor" }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
@@ -439,6 +440,8 @@ const T = {
   newDate: { uk: "Нова дата, напр.: 12 липня", en: "New date, e.g. July 12", de: "Neues Datum, z.B. 12. Juli", ru: "Новая дата, напр.: 12 июля" },
   // PIN
   pinTitle: { uk: "Режим організатора", en: "Organizer mode", de: "Organisator-Modus", ru: "Режим организатора" },
+  pinWrong: { uk: "Невірний PIN.", en: "Wrong PIN.", de: "Falscher PIN.", ru: "Неверный PIN." },
+  pinFailed: { uk: "Не вдалося перевірити. Спробуйте ще раз.", en: "Could not verify. Please try again.", de: "Prüfung fehlgeschlagen. Bitte erneut versuchen.", ru: "Не удалось проверить. Попробуйте ещё раз." },
   pinDesc: { uk: "Введіть PIN-код, щоб додавати й редагувати поїздки.", en: "Enter the PIN to add and edit trips.", de: "PIN eingeben, um Ausflüge hinzuzufügen und zu bearbeiten.", ru: "Введите PIN-код, чтобы добавлять и редактировать поездки." },
   cancel: { uk: "Скасувати", en: "Cancel", de: "Abbrechen", ru: "Отмена" },
   enter: { uk: "Увійти", en: "Enter", de: "Eintreten", ru: "Войти" },
@@ -2203,7 +2206,7 @@ function OrganizerBookings({ trip, pin, onChanged }) {
 
 // Вибір причини й кнопка розсилки. Показується лише коли поїздку
 // перенесено або скасовано.
-function SituationPush({ trip, kind }) {
+function SituationPush({ trip, kind, pin }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState("");
@@ -2214,7 +2217,7 @@ function SituationPush({ trip, kind }) {
     setBusy(true); setDone("");
     try {
       const msgs = situationMsgs(kind, trip, reason, trip.postponedTo);
-      const r = await pushSendMsgs(msgs, `trip-${trip.id}`);
+      const r = await pushSendMsgs(pin, msgs, `trip-${trip.id}`);
       setDone(`Надіслано: ${r.sent}${r.failed ? `, не вдалось ${r.failed}` : ""}`);
     } catch (e) {
       setDone("Помилка: " + String((e && e.message) || e).slice(0, 120));
@@ -2333,7 +2336,7 @@ function PushDiagnostics({ pin }) {
       lines.push(`Фоновий скрипт: помилка — ${String(e.message || e)}`);
     }
     try {
-      const r = await pushSend("Перевірка сповіщень", "Якщо ви це бачите — усе працює.", "/", "test");
+      const r = await pushSend(pin, "Перевірка сповіщень", "Якщо ви це бачите — усе працює.", "/", "test");
       lines.push(`Сервер відповів: надіслано ${r.sent}, не вдалось ${r.failed}${r.removed ? `, прибрано мертвих ${r.removed}` : ""}${r.note ? ` (${r.note})` : ""}`);
     } catch (e) {
       lines.push(`ПОМИЛКА СЕРВЕРА: ${String(e.message || e).slice(0, 220)}`);
@@ -2834,7 +2837,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                 треба обрати причину й натиснути кнопку. Інакше випадковий
                 дотик до списку станів розсилав би тривогу всій групі. */}
             {(trip.status === "postponed" || trip.status === "cancelled") && (
-              <SituationPush trip={trip} kind={trip.status} />
+              <SituationPush trip={trip} kind={trip.status} pin={adminPin} />
             )}
             <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 4px", lineHeight: 1.45 }}>
               «Завершено» і «Скасовано» переносять поїздку в розділ «Минулі». Решта лишаються в «Найближчі».
@@ -3937,7 +3940,23 @@ export default function App() {
   // ⚠️ Той самий PIN мусить стояти у ДВОХ функціях Supabase
   // (save_trip і delete_trip) — інакше збереження мовчки перестане
   // працювати, хоча вхід у режим організатора буде проходити.
-  const ADMIN_PIN = "A7391.1305";
+  // PIN у коді більше НЕМАЄ. Код застосунку завантажується на телефон
+  // кожного відвідувача повністю — усе, що в ньому написано, видно всім.
+  // Тому введене надсилається в базу, і база відповідає «так» або «ні».
+  // У коді лишається запитання, а не відповідь.
+  const [pinBusy, setPinBusy] = useState(false);
+  const [pinErr, setPinErr] = useState("");
+  const tryPin = async (value) => {
+    if (String(value).trim() === "") return;
+    setPinBusy(true); setPinErr("");
+    try {
+      const ok = await sbRpc("check_pin", { pin: value });
+      if (ok === true) { setIsAdmin(true); setAdminPin(value); setPinOpen(false); setPin(""); }
+      else { setPin(""); setPinErr(t("pinWrong")); }
+    } catch (e) {
+      setPinErr(t("pinFailed"));
+    } finally { setPinBusy(false); }
+  };
 
   // Group trips by their status group. "done"/"cancelled" → Минулі; the rest
   // (upcoming, recruiting, ongoing, postponed) → Найближчі. At the start of a
@@ -4216,9 +4235,9 @@ export default function App() {
                   autoFocus type={pinVisible ? "text" : "password"} inputMode="text"
                   autoCapitalize="off" autoCorrect="off" spellCheck={false}
                   value={pin}
-                  onChange={(e) => setPin(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { if (pin === ADMIN_PIN) { setIsAdmin(true); setAdminPin(pin); setPinOpen(false); } else setPin(""); } }}
-                  placeholder="••••••••••"
+                  onChange={(e) => { setPin(e.target.value); setPinErr(""); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") tryPin(pin); }}
+                  placeholder="••••••••"
                   style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 44px 12px 12px", fontSize: 18, textAlign: "center", letterSpacing: 2, fontFamily: "inherit" }}
                 />
                 {/* Показати введене. Для PIN із літер і символів це не
@@ -4230,9 +4249,15 @@ export default function App() {
                   {pinVisible ? "СХОВАТИ" : "ПОКАЗАТИ"}
                 </button>
               </div>
+              {/* Помилка входу тепер видима. Раніше поле просто мовчки
+                  очищалось, і було незрозуміло, чи PIN невірний, чи
+                  застосунок не достукався до бази. */}
+              {pinErr !== "" && (
+                <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 12px", textAlign: "center", lineHeight: 1.45 }}>{pinErr}</p>
+              )}
               <div style={{ display: "flex", gap: 10 }}>
                 <button onClick={() => setPinOpen(false)} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, color: C.muted, borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{t("cancel")}</button>
-                <button onClick={() => { if (pin === ADMIN_PIN) { setIsAdmin(true); setAdminPin(pin); setPinOpen(false); } else setPin(""); }} style={{ flex: 1, background: C.green, border: "none", color: "#fff", borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{t("enter")}</button>
+                <button onClick={() => tryPin(pin)} disabled={pinBusy} style={{ flex: 1, background: pinBusy ? C.pageSoft : C.green, border: "none", color: "#fff", borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 700, cursor: pinBusy ? "default" : "pointer" }}>{pinBusy ? "…" : t("enter")}</button>
               </div>
             </div>
           </div>
