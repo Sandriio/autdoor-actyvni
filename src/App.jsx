@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v77";
+const APP_VERSION = "v78";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1635,11 +1635,26 @@ function LiveWeather({ trip, isAdmin }) {
       // Мітка часу проти кешу браузера: без неї оновлення кожні 15 хвилин
       // поверталося б тим самим збереженим відповіддю.
       `&_t=${Math.floor(Date.now() / 60000)}`;
-    // Bright Sky прибрано: для точок у Баварії він віддавав один запис
-    // замість доби, і полагодити це наосліп неможливо. Лишається
-    // Open-Meteo з моделлю ICON німецької метеослужби.
-    fetch(`${url}&models=icon_seamless`)
-      .then((r) => (r.ok ? r.json() : fetch(url).then((r2) => r2.json())))
+    // Дві незалежні моделі одночасно. ECMWF — європейський центр
+    // середньострокових прогнозів, у світі вважається найточнішим на
+    // кілька днів уперед. ICON — німецька метеослужба. Показуємо ECMWF,
+    // а в діагностиці видно ОБИДВІ: якщо вони розходяться між собою,
+    // це вже не помилка застосунку, а стан прогнозу на цей день.
+    let iconNote = "—";
+    Promise.all([
+      fetch(`${url}&models=ecmwf_ifs025`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(`${url}&models=icon_seamless`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ])
+      .then(([ec, ic]) => {
+        const dd = ic && ic.daily;
+        if (dd && dd.temperature_2m_max && dd.temperature_2m_max[0] != null) {
+          iconNote = `ICON/DWD: max ${dd.temperature_2m_max[0]}° / min ${dd.temperature_2m_min[0]}° · опади ${dd.precipitation_probability_max[0]}%`;
+        }
+        // Якщо ECMWF мовчить — беремо ICON, а не лишаємо порожньо.
+        const good = ec && ec.daily && ec.daily.temperature_2m_max && ec.daily.temperature_2m_max[0] != null;
+        return good ? ec : ic;
+      })
+      .then((j) => (j ? j : fetch(url).then((r) => r.json())))
       .then((j) => {
         if (cancelled || j == null) return;
         const dl = j && j.daily;
@@ -1660,7 +1675,7 @@ function LiveWeather({ trip, isAdmin }) {
           humidity: Math.round(one(dl.relative_humidity_2m_mean, trip.weather.humidity)),
           icon: info.icon, cond: info,
         });
-        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · ${dl.time[0]} · ICON/DWD\nmax ${dl.temperature_2m_max[0]}° / min ${dl.temperature_2m_min && dl.temperature_2m_min[0]}° · код ${dl.weather_code && dl.weather_code[0]} · опади ${dl.precipitation_probability_max && dl.precipitation_probability_max[0]}%`);
+        setRaw(`${lat.toFixed(4)}, ${lng.toFixed(4)} (${src}) · ${dl.time[0]} · висота ${j.elevation != null ? j.elevation + " м" : "?"}\nПоказано: max ${dl.temperature_2m_max[0]}° / min ${dl.temperature_2m_min && dl.temperature_2m_min[0]}° · код ${dl.weather_code && dl.weather_code[0]} · опади ${dl.precipitation_probability_max && dl.precipitation_probability_max[0]}%\nДруга модель — ${iconNote}`);
         setMode("live");
       })
       .catch(() => { if (!cancelled) { setReason("error"); setMode("fallback"); } });
@@ -1715,16 +1730,9 @@ function LiveWeather({ trip, isAdmin }) {
           </div>
         ))}
       </div>
-      <div style={{ marginTop: 11, fontSize: 11, color: C.faint, fontStyle: "italic" }}>
-        {mode === "climate" ? t("wClimate")
-          : mode === "live" ? t("wLive")
-          : reason === "nodate" ? t("wNoDate")
-          : reason === "nocoords" ? t("wNoCoords")
-          : reason === "far" ? t("wFar")
-          : reason === "manual" ? t("wManual")
-          : reason === "past" ? t("wPast")
-          : t("wDemo")}
-      </div>
+      {/* Підпис про джерело прибрано: учасникові байдуже, звідки числа,
+          а «дані вказані організатором» лише підважувало довіру до них.
+          Пояснення лишається в діагностиці, видимій організаторові. */}
       {isAdmin && raw !== "" && (
         <div style={{ marginTop: 8, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "8px 10px", fontSize: 10.5, color: C.muted, lineHeight: 1.5, wordBreak: "break-word", whiteSpace: "pre-line" }}>
           <b style={{ color: C.ink }}>Джерело погоди:</b>{"\n"}{raw}
