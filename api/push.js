@@ -154,7 +154,12 @@ export default async function handler(req, res) {
     const pack = (msgs && typeof msgs === "object") ? msgs : null;
     if (!title && !pack) { res.status(400).json({ error: "no title" }); return; }
 
-    const subs = await sb("push_list", { p_secret: secret });
+    // Список підписок читається СЕРВЕРНИМ словом, а не тим, чим
+    // авторизувався той, хто просить надіслати. Право надсилати вже
+    // підтверджено вище — або словом годинника, або PIN у базі.
+    // Раніше сюди підставлявся secret; коли застосунок перейшов на PIN,
+    // secret став порожнім, і в базу йшов виклик без аргументів.
+    const subs = await sb("push_list", { p_secret: process.env.PUSH_SECRET });
     if (!subs || subs.length === 0) {
       res.status(200).json({ sent: 0, failed: 0, note: "no subscribers" });
       return;
