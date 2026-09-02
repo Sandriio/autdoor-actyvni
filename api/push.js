@@ -132,13 +132,23 @@ export default async function handler(req, res) {
     // msgs — тексти по мовах: { uk: {title, body}, en: {...}, ru: {...} }.
     // Кожен пристрій отримує свою мову: вона збережена в підписці ще
     // при вмиканні сповіщень. Старий формат title/body теж працює.
-    const { secret, title, body, url, tag, msgs } = req.body || {};
+    // Два способи довести право надсилати:
+    //   secret — для годинника (push-cron), він серверний і в код не потрапляє;
+    //   pin    — для застосунку в руках організатора; перевіряється в базі.
+    // Раніше застосунок надсилав secret, і той лежав у відкритому коді:
+    // будь-хто міг розіслати сповіщення на всі телефони.
+    const { secret, pin, title, body, url, tag, msgs } = req.body || {};
     if (!process.env.VAPID_PRIVATE_KEY) {
       res.status(500).json({ error: "VAPID_PRIVATE_KEY not set in Vercel" });
       return;
     }
-    if (!secret || secret !== process.env.PUSH_SECRET) {
-      res.status(403).json({ error: "bad secret" });
+    let allowed = Boolean(secret) && secret === process.env.PUSH_SECRET;
+    if (!allowed && pin) {
+      try { allowed = (await sb("check_pin", { pin })) === true; }
+      catch (e) { allowed = false; }
+    }
+    if (!allowed) {
+      res.status(403).json({ error: "not allowed" });
       return;
     }
     const pack = (msgs && typeof msgs === "object") ? msgs : null;
