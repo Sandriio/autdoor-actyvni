@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v82";
+const APP_VERSION = "v83";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -2158,6 +2158,19 @@ function OrganizerBookings({ trip, pin, onChanged }) {
       setErr("Не вдалося зберегти: " + String((e && e.message) || e).slice(0, 120));
     }
   };
+  // Підтвердити або відхилити заявку. Раніше кнопки викликали функцію,
+  // якої в цьому компоненті не існувало, — натискання не давало нічого.
+  const applyStatus = async (id, status) => {
+    setErr("");
+    try {
+      await sbSetBookingStatus(id, pin, status);
+      load();
+      if (onChanged) onChanged();
+    } catch (e) {
+      setErr("Не вдалося: " + String((e && e.message) || e).slice(0, 140));
+    }
+  };
+
   const remove = async (id) => {
     if (!window.confirm("Зняти цей запис? Місце звільниться для інших.")) return;
     try {
@@ -2253,9 +2266,9 @@ function OrganizerBookings({ trip, pin, onChanged }) {
               </div>
               {r.status === "pending" ? (
                 <>
-                  <button onClick={() => setStatus(r.id, "confirmed")}
+                  <button onClick={() => applyStatus(r.id, "confirmed")}
                     style={{ border: "none", background: C.green, color: "#fff", borderRadius: 8, padding: "7px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>Прийняти</button>
-                  <button onClick={() => setStatus(r.id, "declined")}
+                  <button onClick={() => applyStatus(r.id, "declined")}
                     style={{ border: `1px solid ${C.rasp}`, background: "#fff", color: C.rasp, borderRadius: 8, padding: "7px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>Ні</button>
                 </>
               ) : (
@@ -2391,12 +2404,32 @@ function PushDiagnostics({ pin }) {
   const [busy, setBusy] = useState(false);
   const [subs, setSubs] = useState(null);
   const [beat, setBeat] = useState(null);
+  const [mine, setMine] = useState(null); // true | false | null (невідомо)
 
   useEffect(() => {
     if (!sbConfigured()) return;
     sbRpc("push_count", {}).then((n) => setSubs(Number(n) || 0)).catch(() => setSubs(-1));
     if (pin) sbRpc("cron_last", { pin }).then(setBeat).catch(() => setBeat({ last_run: null }));
+    checkMine();
   }, [pin]);
+
+  // Чи позначений САМЕ цей пристрій як пристрій організатора. Сповіщення
+  // про нові заявки йдуть лише на нього, тож без позначки вони просто
+  // нікуди не надсилаються — і досі це відбувалось мовчки.
+  const checkMine = async () => {
+    if (!pushSupported() || !sbConfigured() || !pin) { setMine(null); return; }
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (!sub) { setMine(false); return; }
+      const r = await sbRpc("push_is_admin", { p_endpoint: sub.toJSON().endpoint, pin });
+      setMine(r === true);
+    } catch (e) { setMine(null); }
+  };
+  const markMine = async () => {
+    try { await sbMarkAdminDevice(pin); await checkMine(); }
+    catch (e) { setState("Не вдалося позначити: " + String((e && e.message) || e).slice(0, 120)); }
+  };
 
   // Пульс годинника. Це головна відповідь на питання «чому не приходять
   // сповіщення за розкладом»: якщо годинник мовчить, справа не в текстах.
@@ -2444,6 +2477,21 @@ function PushDiagnostics({ pin }) {
       <div style={{ background: (beat && beat.last_run) ? C.greenSoft : C.raspSoft, borderRadius: 10, padding: "9px 11px", marginBottom: 10 }}>
         <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>Годинник озивався</div>
         <div style={{ fontSize: 12.5, color: (beat && beat.last_run) ? C.greenDark : C.rasp, lineHeight: 1.45 }}>{beatLine()}</div>
+      </div>
+      <div style={{ background: mine === true ? C.greenSoft : C.raspSoft, borderRadius: 10, padding: "9px 11px", marginBottom: 10, display: "flex", alignItems: "center", gap: 9 }}>
+        <span style={{ flex: 1, fontSize: 12, color: mine === true ? C.greenDark : C.rasp, lineHeight: 1.45 }}>
+          {mine === true
+            ? "Сповіщення про нові заявки приходять на цей пристрій"
+            : mine === false
+              ? "Цей пристрій НЕ позначений — сповіщення про заявки нікуди не йдуть"
+              : "Позначку пристрою не вдалося перевірити"}
+        </span>
+        {mine !== true && (
+          <button onClick={markMine}
+            style={{ border: `1px solid ${C.rasp}`, background: "#fff", color: C.rasp, borderRadius: 8, padding: "7px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+            Позначити
+          </button>
+        )}
       </div>
       <button onClick={test} disabled={busy}
         style={{ width: "100%", border: `1.5px solid ${C.green}`, background: busy ? C.greenSoft : "transparent", color: C.greenDark, borderRadius: 10, padding: "11px", fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
