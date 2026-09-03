@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v81";
+const APP_VERSION = "v82";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -3327,22 +3327,6 @@ function TripForm({ initial, onSave, onCancel }) {
           <Field label="Пояснення складності"><input style={inp} value={t.difficultyNote} onChange={(e) => set({ difficultyNote: e.target.value })} placeholder="Для кого підходить, що врахувати" /></Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <Field label="Всього місць"><input style={inp} type="number" value={t.spots} onChange={(e) => set({ spots: e.target.value })} /></Field>
-            {/* Підтвердження вручну. Головний захист від жартівливих
-                заявок: місце не рахується, поки ви не сказали «так». */}
-            <button onClick={() => set({ requireApproval: !t.requireApproval })}
-              style={{ width: "100%", textAlign: "left", background: t.requireApproval ? C.yellowSoft : "#fff", border: `1.5px solid ${t.requireApproval ? C.yellow : C.line}`, borderRadius: 11, padding: 12, display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>
-              <span style={{ width: 20, height: 20, borderRadius: 6, background: t.requireApproval ? C.yellowInk : "#fff", border: `1.5px solid ${t.requireApproval ? C.yellowInk : C.line}`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
-                {t.requireApproval && <ClipboardCheck size={12} />}
-              </span>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.ink }}>Я підтверджую кожен запис</span>
-                <span style={{ display: "block", fontSize: 11.5, color: C.muted, lineHeight: 1.5, marginTop: 3 }}>
-                  {t.requireApproval
-                    ? "Заявка не займає місце, поки ви не підтвердили. Про кожну нову прийде сповіщення на ваш телефон."
-                    : "Зараз місце займається одразу. Увімкніть, якщо є ризик випадкових або жартівливих записів."}
-                </span>
-              </span>
-            </button>
             <Field label="Запис до (дедлайн)">
               <input style={{ ...inp, marginBottom: 6 }} type="datetime-local" value={t.deadline || ""} onChange={(e) => set({ deadline: e.target.value })} />
               <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 12px", lineHeight: 1.45 }}>
@@ -3356,6 +3340,23 @@ function TripForm({ initial, onSave, onCancel }) {
               </p>
             </Field>
           </div>
+          {/* Підтвердження вручну. Стоїть НА ВСЮ ШИРИНУ під сіткою:
+              всередині двоколонкової сітки цей блок стискався в половину
+              рядка й переставав читатись як галочка. */}
+          <button onClick={() => set({ requireApproval: !t.requireApproval })}
+            style={{ width: "100%", textAlign: "left", background: t.requireApproval ? C.yellowSoft : "#fff", border: `1.5px solid ${t.requireApproval ? C.yellow : C.line}`, borderRadius: 11, padding: 12, display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontFamily: "inherit", marginTop: 4 }}>
+            <span style={{ width: 20, height: 20, borderRadius: 6, background: t.requireApproval ? C.yellowInk : "#fff", border: `1.5px solid ${t.requireApproval ? C.yellowInk : C.line}`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
+              {t.requireApproval && <ClipboardCheck size={12} />}
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.ink }}>Я підтверджую кожен запис</span>
+              <span style={{ display: "block", fontSize: 11.5, color: C.muted, lineHeight: 1.5, marginTop: 3 }}>
+                {t.requireApproval
+                  ? "Заявка не займає місце, поки ви не підтвердили. Про кожну нову прийде сповіщення на ваш телефон."
+                  : "Зараз місце займається одразу. Увімкніть, якщо є ризик випадкових або жартівливих записів."}
+              </span>
+            </span>
+          </button>
         </div>
 
         {/* Train */}
