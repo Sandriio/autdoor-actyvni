@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v79";
+const APP_VERSION = "v81";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -167,8 +167,30 @@ const sbAdminAddBooking = (pin, tripId, name, contact, people, showName) =>
   sbRpc("admin_add_booking", { pin, p_trip_id: tripId, p_name: name, p_contact: contact, p_people: people, p_show_name: showName });
 // Учасник знімає себе сам, своїм ключем.
 const sbCancelBooking = (id, token) => sbRpc("cancel_booking", { p_id: id, p_token: token });
+// Стан власної заявки: чекає, підтверджена чи відхилена.
+const sbMyBooking = (id, token) => sbRpc("my_booking", { p_id: id, p_token: token });
+// Організатор підтверджує або відхиляє заявку.
+const sbSetBookingStatus = (id, pin, status) =>
+  sbRpc("set_booking_status", { p_id: id, pin, p_status: status });
 // Забрати ключ до запису, зробленого до появи ключів або з іншого
 // пристрою. Доводити «це я» доводиться імʼям і контактом.
+// Позначити цей пристрій як пристрій організатора: сповіщення про нові
+// заявки мають приходити лише сюди, а не всім підписаним.
+const sbMarkAdminDevice = async (pin) => {
+  if (!pushSupported() || !sbConfigured()) return;
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (!sub) return;
+  await sbRpc("push_mark_admin", { p_endpoint: sub.toJSON().endpoint, pin });
+};
+// Сповістити організатора про нову заявку. Ключ заявки замінює тут
+// авторизацію: він доводить, що заявка справді щойно створена.
+const notifyOrganizer = (id, token) =>
+  fetch("/api/push", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notifyBooking: { id, token } }),
+  }).catch(() => {});
+
 const sbClaimBooking = (tripId, name, contact) =>
   sbRpc("claim_booking", { p_trip_id: tripId, p_name: name, p_contact: contact });
 
@@ -334,6 +356,11 @@ const T = {
   bkNotFound: { uk: "Запис із таким імʼям не знайдено. Перевірте написання або зверніться до організатора.", en: "No booking with that name. Check the spelling or contact the organiser.", de: "Keine Anmeldung mit diesem Namen. Bitte Schreibweise prüfen oder die Organisation fragen.", ru: "Запись с таким именем не найдена. Проверьте написание или обратитесь к организатору." },
   bkNeedContact: { uk: "Таких імен кілька — вкажіть контакт, який залишали.", en: "There are several bookings with that name — please add the contact you left.", de: "Mehrere Anmeldungen mit diesem Namen — bitte den hinterlassenen Kontakt angeben.", ru: "Таких имён несколько — укажите контакт, который оставляли." },
   bkWrongContact: { uk: "Контакт не збігається із записом.", en: "The contact does not match the booking.", de: "Der Kontakt stimmt nicht mit der Anmeldung überein.", ru: "Контакт не совпадает с записью." },
+  bkPending: { uk: "Заявку надіслано", en: "Request sent", de: "Anfrage gesendet", ru: "Заявка отправлена" },
+  bkPendingNote: { uk: "Організатор підтвердить вашу участь. Місце буде за вами лише після підтвердження — зазирніть сюди пізніше.", en: "The organiser will confirm your place. The spot is only yours once confirmed — check back later.", de: "Die Organisation bestätigt Ihren Platz. Der Platz gilt erst nach der Bestätigung — schauen Sie später noch einmal vorbei.", ru: "Организатор подтвердит ваше участие. Место будет за вами только после подтверждения — загляните сюда позже." },
+  bkDeclined: { uk: "Заявку відхилено", en: "Request declined", de: "Anfrage abgelehnt", ru: "Заявка отклонена" },
+  bkDeclinedNote: { uk: "На жаль, цього разу не вийшло. Зверніться до організатора — можливо, місце ще звільниться.", en: "Unfortunately it did not work out this time. Contact the organiser — a spot may still free up.", de: "Diesmal hat es leider nicht geklappt. Wenden Sie sich an die Organisation — vielleicht wird noch ein Platz frei.", ru: "К сожалению, в этот раз не получилось. Обратитесь к организатору — возможно, место ещё освободится." },
+  bkNeedsApproval: { uk: "Записи підтверджує організатор", en: "Bookings are confirmed by the organiser", de: "Anmeldungen werden von der Organisation bestätigt", ru: "Записи подтверждает организатор" },
   bkLockedNote: { uk: "Набір закрито, тож змінити чи зняти запис самостійно вже не можна. Якщо ви хочете змінити чи видалити свій запис — повідомте організатора та опишіть причину.", en: "Sign-up is closed, so you can no longer edit or cancel your booking yourself. If you need to change or remove it, message the organiser and explain why.", de: "Die Anmeldung ist geschlossen, Änderungen sind selbst nicht mehr möglich. Wenn Sie etwas ändern oder stornieren möchten, schreiben Sie der Organisation und nennen Sie den Grund.", ru: "Набор закрыт, поэтому изменить или снять запись самостоятельно уже нельзя. Если вы хотите изменить или удалить свою запись — сообщите организатору и опишите причину." },
   bkLeftNote: { uk: "Ваш запис знято. Можете записатися знову, поки є місця.", en: "Your booking is cancelled. You can sign up again while spots last.", de: "Ihre Anmeldung wurde zurückgezogen. Sie können sich erneut anmelden.", ru: "Ваша запись снята. Можете записаться снова, пока есть места." },
   bkNobody: { uk: "Ще ніхто не записався — будьте першим.", en: "Nobody yet — be the first.", de: "Noch niemand — seien Sie die erste Person.", ru: "Пока никто не записался — будьте первым." },
@@ -1775,6 +1802,20 @@ function BookingSection({ trip, taken, onBooked }) {
   const full = spots > 0 && left <= 0;
   const dl = deadlineText(trip);
 
+  // Стан власної заявки перепитуємо щоразу: організатор міг підтвердити
+  // або відхилити її, поки застосунок був закритий.
+  useEffect(() => {
+    if (!mine || !mine.id || !mine.token || !sbConfigured()) return;
+    sbMyBooking(mine.id, mine.token)
+      .then((r) => {
+        if (!r) { rememberBooking(trip.id, null); setMine(null); return; }
+        const rec = { ...mine, status: r.status, name: r.name,
+                      contact: r.contact || "", people: Number(r.people) || 1 };
+        rememberBooking(trip.id, rec); setMine(rec);
+      })
+      .catch(() => {});
+  }, [trip.id]);
+
   const loadGuests = () => {
     if (!sbConfigured()) return;
     sbGuests(trip.id).then((g) => setGuests(g || [])).catch(() => setGuests([]));
@@ -1851,10 +1892,13 @@ function BookingSection({ trip, taken, onBooked }) {
       // виправити свій запис і муситиме писати організаторові.
       const saveRec = {
         id: rec && rec.id, token: rec && rec.token,
+        status: (rec && rec.status) || "confirmed",
         name: name.trim(), contact: contact.trim(), people, showName,
       };
       rememberBooking(trip.id, saveRec);
       setMine(saveRec);
+      // Заявка, що чекає, — привід одразу постукати організаторові.
+      if (saveRec.status === "pending" && saveRec.id) notifyOrganizer(saveRec.id, saveRec.token);
       setDone(true); setOpen(false);
       if (onBooked) onBooked();
     } catch (e) {
@@ -1880,6 +1924,12 @@ function BookingSection({ trip, taken, onBooked }) {
         </div>
       )}
 
+      {trip.needsApproval && !mine && !closed && (
+        <div style={{ background: C.yellowSoft, borderRadius: 11, padding: "10px 12px", display: "flex", gap: 9, alignItems: "flex-start", marginBottom: 11 }}>
+          <Info size={15} style={{ color: C.yellowInk, flexShrink: 0, marginTop: 1 }} />
+          <span style={{ fontSize: 12.5, color: C.yellowInk, lineHeight: 1.5 }}>{t("bkNeedsApproval")}</span>
+        </div>
+      )}
       {spots > 0 && !done && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
           <Users size={16} style={{ color: full ? C.rasp : C.green, flexShrink: 0 }} />
@@ -1893,11 +1943,14 @@ function BookingSection({ trip, taken, onBooked }) {
           людина може зайти через тиждень і виправити ім'я чи кількість
           осіб, не звертаючись до організатора. */}
       {mine && !editing && (
-        <div style={{ border: `1.5px solid ${C.green}`, background: C.greenSoft, borderRadius: 13, padding: 13, marginBottom: 11 }}>
+        <div style={{ border: `1.5px solid ${mine.status === "pending" ? C.yellow : mine.status === "declined" ? C.rasp : C.green}`, background: mine.status === "pending" ? C.yellowSoft : mine.status === "declined" ? C.raspSoft : C.greenSoft, borderRadius: 13, padding: 13, marginBottom: 11 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <ClipboardCheck size={16} style={{ color: C.greenDark, flexShrink: 0 }} />
             <span style={{ fontSize: 13, fontWeight: 800, color: C.greenDark, flex: 1 }}>
-              {saved ? t("bkSaved") : t("bkMine")}
+              {saved ? t("bkSaved")
+                : mine.status === "pending" ? t("bkPending")
+                : mine.status === "declined" ? t("bkDeclined")
+                : t("bkMine")}
             </span>
             {/* Після дедлайну редагування закривається: список уже пішов
                 організаторові, і тиха зміна за його спиною зіпсувала б
@@ -1914,6 +1967,18 @@ function BookingSection({ trip, taken, onBooked }) {
           </div>
           {mine.contact && mine.contact.trim() !== "" && (
             <div style={{ fontSize: 12.5, color: C.muted, marginTop: 2 }}>{mine.contact}</div>
+          )}
+          {mine.status === "pending" && (
+            <div style={{ marginTop: 9, background: C.yellowSoft, borderRadius: 10, padding: "10px 12px", display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <Clock size={14} style={{ color: C.yellowInk, flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 11.5, color: C.yellowInk, lineHeight: 1.5 }}>{t("bkPendingNote")}</span>
+            </div>
+          )}
+          {mine.status === "declined" && (
+            <div style={{ marginTop: 9, background: C.raspSoft, borderRadius: 10, padding: "10px 12px", display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <Info size={14} style={{ color: C.rasp, flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 11.5, color: C.rasp, lineHeight: 1.5 }}>{t("bkDeclinedNote")}</span>
+            </div>
           )}
           {closed ? (
             <div style={{ marginTop: 11, background: C.yellowSoft, borderRadius: 10, padding: "10px 12px", display: "flex", gap: 8, alignItems: "flex-start" }}>
@@ -2067,7 +2132,9 @@ function OrganizerBookings({ trip, pin, onChanged }) {
   };
   useEffect(() => { load(); }, [trip.id, pin]);
 
-  const total = (rows || []).reduce((a, r) => a + (Number(r.people) || 1), 0);
+  // Рахуємо лише підтверджені — так само, як це робить база.
+  const total = (rows || []).filter((r) => r.status !== "pending" && r.status !== "declined")
+    .reduce((a, r) => a + (Number(r.people) || 1), 0);
 
   const startEdit = (r) => {
     setAdding(false); setEditId(r.id);
@@ -2145,6 +2212,11 @@ function OrganizerBookings({ trip, pin, onChanged }) {
         <ClipboardCheck size={16} style={{ color: C.rasp, flexShrink: 0 }} />
         <span style={{ fontSize: 13, fontWeight: 800, color: C.ink, flex: 1 }}>
           Записалися · {total}{Number(trip.spots) > 0 ? ` з ${trip.spots}` : ""}
+          {(rows || []).some((r) => r.status === "pending") && (
+            <span style={{ fontSize: 11, fontWeight: 800, color: C.yellowInk, background: C.yellowSoft, padding: "2px 8px", borderRadius: 20, marginLeft: 7 }}>
+              чекають: {(rows || []).filter((r) => r.status === "pending").length}
+            </span>
+          )}
         </span>
         <button onClick={load} style={{ border: "none", background: "none", color: C.green, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>оновити</button>
       </div>
@@ -2163,20 +2235,35 @@ function OrganizerBookings({ trip, pin, onChanged }) {
       {rows && rows.length > 0 && (
         <div style={{ background: "#fff", borderRadius: 11, padding: "2px 12px", marginBottom: 10 }}>
           {rows.map((r, i) => (
-            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 0", borderBottom: i === rows.length - 1 ? "none" : `1px solid ${C.line}`, opacity: editId === r.id ? 0.45 : 1 }}>
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 0", borderBottom: i === rows.length - 1 ? "none" : `1px solid ${C.line}`, opacity: editId === r.id || r.status === "declined" ? 0.45 : 1 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, color: C.ink, fontWeight: 600 }}>
                   {r.name}{Number(r.people) > 1 ? ` · ${r.people}` : ""}
+                  {r.status === "pending" && (
+                    <span style={{ fontSize: 10, fontWeight: 800, color: C.yellowInk, background: C.yellowSoft, padding: "2px 7px", borderRadius: 20, marginLeft: 6 }}>ЧЕКАЄ</span>
+                  )}
+                  {r.status === "declined" && (
+                    <span style={{ fontSize: 10, fontWeight: 800, color: C.rasp, background: C.raspSoft, padding: "2px 7px", borderRadius: 20, marginLeft: 6 }}>ВІДХИЛЕНО</span>
+                  )}
                   {!r.show_name && <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 400 }}> (прихований)</span>}
                 </div>
                 <div style={{ fontSize: 12, color: r.contact && r.contact.trim() !== "" ? C.muted : C.faint, marginTop: 1 }}>
                   {r.contact && r.contact.trim() !== "" ? r.contact : "контакт не вказано"}
                 </div>
               </div>
-              <button onClick={() => startEdit(r)} aria-label="Змінити запис"
-                style={{ border: "none", background: "none", color: C.green, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
-                <Pencil size={15} />
-              </button>
+              {r.status === "pending" ? (
+                <>
+                  <button onClick={() => setStatus(r.id, "confirmed")}
+                    style={{ border: "none", background: C.green, color: "#fff", borderRadius: 8, padding: "7px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>Прийняти</button>
+                  <button onClick={() => setStatus(r.id, "declined")}
+                    style={{ border: `1px solid ${C.rasp}`, background: "#fff", color: C.rasp, borderRadius: 8, padding: "7px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>Ні</button>
+                </>
+              ) : (
+                <button onClick={() => startEdit(r)} aria-label="Змінити запис"
+                  style={{ border: "none", background: "none", color: C.green, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
+                  <Pencil size={15} />
+                </button>
+              )}
               <button onClick={() => remove(r.id)} aria-label="Зняти запис"
                 style={{ border: "none", background: "none", color: C.rasp, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
                 <Trash2 size={15} />
@@ -2889,6 +2976,7 @@ const BLANK_TRIP = () => ({
   spots: 12,
   spotsTaken: 0,
   deadline: "",
+  requireApproval: false,
   from: { name: "München Hbf", time: "", platform: "" },
   to: { name: "", time: "" },
   trainLine: "",
@@ -3239,6 +3327,22 @@ function TripForm({ initial, onSave, onCancel }) {
           <Field label="Пояснення складності"><input style={inp} value={t.difficultyNote} onChange={(e) => set({ difficultyNote: e.target.value })} placeholder="Для кого підходить, що врахувати" /></Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <Field label="Всього місць"><input style={inp} type="number" value={t.spots} onChange={(e) => set({ spots: e.target.value })} /></Field>
+            {/* Підтвердження вручну. Головний захист від жартівливих
+                заявок: місце не рахується, поки ви не сказали «так». */}
+            <button onClick={() => set({ requireApproval: !t.requireApproval })}
+              style={{ width: "100%", textAlign: "left", background: t.requireApproval ? C.yellowSoft : "#fff", border: `1.5px solid ${t.requireApproval ? C.yellow : C.line}`, borderRadius: 11, padding: 12, display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>
+              <span style={{ width: 20, height: 20, borderRadius: 6, background: t.requireApproval ? C.yellowInk : "#fff", border: `1.5px solid ${t.requireApproval ? C.yellowInk : C.line}`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
+                {t.requireApproval && <ClipboardCheck size={12} />}
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.ink }}>Я підтверджую кожен запис</span>
+                <span style={{ display: "block", fontSize: 11.5, color: C.muted, lineHeight: 1.5, marginTop: 3 }}>
+                  {t.requireApproval
+                    ? "Заявка не займає місце, поки ви не підтвердили. Про кожну нову прийде сповіщення на ваш телефон."
+                    : "Зараз місце займається одразу. Увімкніть, якщо є ризик випадкових або жартівливих записів."}
+                </span>
+              </span>
+            </button>
             <Field label="Запис до (дедлайн)">
               <input style={{ ...inp, marginBottom: 6 }} type="datetime-local" value={t.deadline || ""} onChange={(e) => set({ deadline: e.target.value })} />
               <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 12px", lineHeight: 1.45 }}>
@@ -3951,7 +4055,10 @@ export default function App() {
     setPinBusy(true); setPinErr("");
     try {
       const ok = await sbRpc("check_pin", { pin: value });
-      if (ok === true) { setIsAdmin(true); setAdminPin(value); setPinOpen(false); setPin(""); }
+      if (ok === true) {
+        setIsAdmin(true); setAdminPin(value); setPinOpen(false); setPin("");
+        sbMarkAdminDevice(value).catch(() => {});
+      }
       else { setPin(""); setPinErr(t("pinWrong")); }
     } catch (e) {
       setPinErr(t("pinFailed"));
