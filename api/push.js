@@ -137,7 +137,37 @@ export default async function handler(req, res) {
     //   pin    — для застосунку в руках організатора; перевіряється в базі.
     // Раніше застосунок надсилав secret, і той лежав у відкритому коді:
     // будь-хто міг розіслати сповіщення на всі телефони.
-    const { secret, pin, title, body, url, tag, msgs } = req.body || {};
+    const { secret, pin, title, body, url, tag, msgs, notifyBooking, onlyAdmin } = req.body || {};
+
+    // Окремий режим: сповістити ЛИШЕ організатора про новий запис.
+    // Авторизації тут немає — її замінює ключ самого запису. Він
+    // видається в момент запису й доводить, що запис справді щойно
+    // створено. Без цього адресою можна було б засипати організатора
+    // вигаданими сповіщеннями.
+    if (notifyBooking && notifyBooking.id && notifyBooking.token) {
+      let info;
+      try {
+        info = await sb("booking_notify", { p_id: notifyBooking.id, p_token: notifyBooking.token });
+      } catch (e) {
+        res.status(403).json({ error: "bad booking" });
+        return;
+      }
+      if (!info || info.status !== "pending") { res.status(200).json({ sent: 0, note: "no approval needed" }); return; }
+      const who = `${info.name}${Number(info.people) > 1 ? ` (${info.people} осіб)` : ""}`;
+      const m = {
+        title: "Новий запис — потрібне підтвердження",
+        body: `${who} записався на «${info.title}». Очікує підтвердження: ${info.pending}.`,
+      };
+      const subs = await sb("push_list", { p_secret: process.env.PUSH_SECRET, p_only_admin: true });
+      if (!subs || subs.length === 0) { res.status(200).json({ sent: 0, note: "no admin device" }); return; }
+      const payload = JSON.stringify({ ...m, url: "/", tag: "booking" });
+      let ok = 0;
+      for (const sub of subs) {
+        try { if ((await sendOne(sub, payload)).ok) ok++; } catch (e) {}
+      }
+      res.status(200).json({ sent: ok });
+      return;
+    }
     if (!process.env.VAPID_PRIVATE_KEY) {
       res.status(500).json({ error: "VAPID_PRIVATE_KEY not set in Vercel" });
       return;
@@ -159,7 +189,10 @@ export default async function handler(req, res) {
     // підтверджено вище — або словом годинника, або PIN у базі.
     // Раніше сюди підставлявся secret; коли застосунок перейшов на PIN,
     // secret став порожнім, і в базу йшов виклик без аргументів.
-    const subs = await sb("push_list", { p_secret: process.env.PUSH_SECRET });
+    const subs = await sb("push_list", {
+      p_secret: process.env.PUSH_SECRET,
+      p_only_admin: Boolean(onlyAdmin),
+    });
     if (!subs || subs.length === 0) {
       res.status(200).json({ sent: 0, failed: 0, note: "no subscribers" });
       return;
