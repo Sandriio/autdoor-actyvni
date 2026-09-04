@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v83";
+const APP_VERSION = "v84";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -2304,6 +2304,25 @@ function OrganizerBookings({ trip, pin, onChanged }) {
   );
 }
 
+// Сповіщення про зміну часу. Складається тут, а не в годиннику: лише
+// застосунок знає, коли саме ви вирішили, що зміна варта розсилки.
+function timeChangeMsgs(trip) {
+  const out = {};
+  const prev = CURRENT_LANG;
+  for (const lang of ["uk", "en", "ru"]) {
+    CURRENT_LANG = lang;
+    const name = tc(trip.title);
+    const when = tc(trip.dateLabel) || trip.date || "";
+    out[lang] = {
+      uk: { title: "Змінився час поїздки", body: `${name}, ${when}. Час відправлення та час зустрічі змінився. Перевірте інформацію ще раз.` },
+      en: { title: "Trip times changed", body: `${name}, ${when}. The departure and meeting times have changed. Please check the details again.` },
+      ru: { title: "Изменилось время поездки", body: `${name}, ${when}. Время отправления и время встречи изменилось. Проверьте информацию ещё раз.` },
+    }[lang];
+  }
+  CURRENT_LANG = prev;
+  return out;
+}
+
 // Вибір причини й кнопка розсилки. Показується лише коли поїздку
 // перенесено або скасовано.
 function SituationPush({ trip, kind, pin }) {
@@ -2399,7 +2418,7 @@ function situationMsgs(kind, trip, reasonCode, newDate) {
 // скрипт, підписка в базі, ключі у Vercel, серверна функція і сам
 // push-сервер Google чи Apple. Здогадуватись, яка з них мовчить, — це
 // щоразу година навмання. Відповідь називає ланку одразу.
-function PushDiagnostics({ pin }) {
+function PushDiagnostics({ pin, trip }) {
   const [state, setState] = useState("");
   const [busy, setBusy] = useState(false);
   const [subs, setSubs] = useState(null);
@@ -2440,6 +2459,17 @@ function PushDiagnostics({ pin }) {
     const minAgo = Math.round((Date.now() - d.getTime()) / 60000);
     const when = d.toLocaleString("uk-UA", { timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
     return `${when} (${minAgo} хв тому)${minAgo > 40 ? " — ЗАДОВГО, годинник стоїть" : ""}`;
+  };
+
+  const sendTimeChange = async () => {
+    if (!window.confirm("Надіслати всім сповіщення про зміну часу?")) return;
+    setBusy(true); setState("");
+    try {
+      const r = await pushSendMsgs(pin, timeChangeMsgs(trip), `trip-${trip.id}`);
+      setState(`Про зміну часу: надіслано ${r.sent}${r.failed ? `, не вдалось ${r.failed}` : ""}`);
+    } catch (e) {
+      setState("Помилка: " + String((e && e.message) || e).slice(0, 200));
+    } finally { setBusy(false); }
   };
 
   const test = async () => {
@@ -2497,6 +2527,22 @@ function PushDiagnostics({ pin }) {
         style={{ width: "100%", border: `1.5px solid ${C.green}`, background: busy ? C.greenSoft : "transparent", color: C.greenDark, borderRadius: 10, padding: "11px", fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
         {busy ? "Перевіряю…" : "Надіслати тестове сповіщення"}
       </button>
+      {/* Розсилка про зміну часу. Кнопкою, а не автоматично при правці
+          поля: під час редагування час міняється кілька разів, і кожна
+          проміжна правка підняла б тривогу всій групі. Момент, коли
+          зміна остаточна, знаєте тільки ви. */}
+      {trip && (
+        <div style={{ marginTop: 10, border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, background: "#fff" }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: C.ink, marginBottom: 6 }}>Змінився час</div>
+          <p style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5, margin: "0 0 9px" }}>
+            Надішліть, коли поправили час відправлення або час збору й хочете, щоб усі перевірили розклад.
+          </p>
+          <button onClick={sendTimeChange} disabled={busy}
+            style={{ width: "100%", border: `1.5px solid ${C.yellowInk}`, background: busy ? C.pageSoft : C.yellowSoft, color: C.yellowInk, borderRadius: 10, padding: "11px", fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+            {busy ? "Надсилаю…" : "Повідомити про зміну часу"}
+          </button>
+        </div>
+      )}
       {state !== "" && (
         <pre style={{ marginTop: 10, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, fontSize: 11, color: C.ink, lineHeight: 1.6, whiteSpace: "pre-wrap", fontFamily: "inherit", margin: "10px 0 0" }}>{state}</pre>
       )}
@@ -2945,7 +2991,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           <div style={{ background: C.card, borderRadius: 18, padding: 16, marginTop: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
             <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>{t("manageTrip")}</h3>
             <OrganizerBookings trip={trip} pin={adminPin} onChanged={onBooked} />
-            <PushDiagnostics pin={adminPin} />
+            <PushDiagnostics pin={adminPin} trip={trip} />
             <div style={{ height: 16 }} />
             <label style={{ fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 6, display: "block" }}>{t("tripStatus")}</label>
             <select value={trip.status} onChange={(e) => onSetStatus(e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 11, padding: "12px", fontSize: 14, fontWeight: 700, fontFamily: "inherit", background: C.yellowSoft, color: C.yellowInk, cursor: "pointer", marginBottom: 6 }}>
@@ -3024,7 +3070,10 @@ const BLANK_TRIP = () => ({
   spots: 12,
   spotsTaken: 0,
   deadline: "",
-  requireApproval: false,
+  // Підтвердження заявок тепер завжди увімкнене — перемикача більше
+  // немає. Поле лишається в даних, щоб старі поїздки не змінили
+  // поведінку несподівано.
+  requireApproval: true,
   from: { name: "München Hbf", time: "", platform: "" },
   to: { name: "", time: "" },
   trainLine: "",
@@ -3388,23 +3437,6 @@ function TripForm({ initial, onSave, onCancel }) {
               </p>
             </Field>
           </div>
-          {/* Підтвердження вручну. Стоїть НА ВСЮ ШИРИНУ під сіткою:
-              всередині двоколонкової сітки цей блок стискався в половину
-              рядка й переставав читатись як галочка. */}
-          <button onClick={() => set({ requireApproval: !t.requireApproval })}
-            style={{ width: "100%", textAlign: "left", background: t.requireApproval ? C.yellowSoft : "#fff", border: `1.5px solid ${t.requireApproval ? C.yellow : C.line}`, borderRadius: 11, padding: 12, display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", fontFamily: "inherit", marginTop: 4 }}>
-            <span style={{ width: 20, height: 20, borderRadius: 6, background: t.requireApproval ? C.yellowInk : "#fff", border: `1.5px solid ${t.requireApproval ? C.yellowInk : C.line}`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
-              {t.requireApproval && <ClipboardCheck size={12} />}
-            </span>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.ink }}>Я підтверджую кожен запис</span>
-              <span style={{ display: "block", fontSize: 11.5, color: C.muted, lineHeight: 1.5, marginTop: 3 }}>
-                {t.requireApproval
-                  ? "Заявка не займає місце, поки ви не підтвердили. Про кожну нову прийде сповіщення на ваш телефон."
-                  : "Зараз місце займається одразу. Увімкніть, якщо є ризик випадкових або жартівливих записів."}
-              </span>
-            </span>
-          </button>
         </div>
 
         {/* Train */}
