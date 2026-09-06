@@ -50,6 +50,12 @@ const minutesOf = (v) => {
   const m = String(v == null ? "" : v).match(/(\d{1,2}):(\d{2})/);
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 };
+// Дата за N діб від заданої, у форматі РРРР-ММ-ДД.
+const addDays = (iso, n) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
 const hhmm = (min) =>
   `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 const tx = (v, lang) => {
@@ -116,9 +122,9 @@ function build(kind, tr, extra) {
         ru: { title: "Набор завершён", body: `Набор в группу на ${when} до ${name} завершён.` },
       },
       meet: {
-        uk: { title: "Нагадування про збір", body: `Місце зустрічі: ${e.place}, ${e.time}. Приходьте вчасно.` },
-        en: { title: "Meeting reminder", body: `Meeting point: ${e.place}, ${e.time}. Please be on time.` },
-        ru: { title: "Напоминание о сборе", body: `Место встречи: ${e.place}, ${e.time}. Приходите вовремя.` },
+        uk: { title: "Нагадування про збір", body: `${when} ${name}: ${e.place}, ${e.time}. Приходьте вчасно.` },
+        en: { title: "Meeting reminder", body: `${when} ${name}: ${e.place}, ${e.time}. Please be on time.` },
+        ru: { title: "Напоминание о сборе", body: `${when} ${name}: ${e.place}, ${e.time}. Приходите вовремя.` },
       },
       end: {
         uk: { title: "Поїздка завершена", body: `Поїздка ${name} завершена. До нових зустрічей!` },
@@ -199,9 +205,22 @@ export default async function handler(req, res) {
 
     // ③ Напередодні о 22:00 — набір завершено. Або пізніше, при першій
     //    нагоді: краще з запізненням, ніж ніколи.
-    const closeDue = days >= 0 && (days < 1 || (days === 1 && nowMin >= 22 * 60));
+    // Час беремо з ВАШОГО дедлайну, а не з жорстко зашитої 22:00.
+    // І сповіщення НЕ переходить на наступну добу: раніше діяло просто
+    // «настав час або пізніше», тож пропущений вечір означав, що «набір
+    // завершено» прилітало вже після опівночі. Тепер, якщо доба
+    // скінчилась, воно пропускається — краще не надіслати, ніж
+    // розбудити людей о 00:15.
+    // Дедлайн зберігається як «2026-09-04T21:00» — БЕЗ позначки поясу.
+    // Через new Date() сервер читав це як час за Гринвічем, тобто на дві
+    // години пізніше за баварський. Тому розбираємо рядок напряму: цифри
+    // в ньому вже є берлінським часом, бо саме його вписує організатор.
+    const dm = String(tr.deadline || "").match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+    const closeDay = dm ? dm[1] : addDays(date, -1);
+    const closeMin = dm ? Number(dm[2]) * 60 + Number(dm[3]) : 22 * 60;
+    const closeDue = nowB.date === closeDay && nowMin >= closeMin;
     if (closeDue) planned.push({ key: `close:${id}`, tag, msgs: build("close", tr) });
-    else why.push(`close — треба день 1 після 22:00 або пізніше · зараз днів ${days}, ${hhmm(nowMin)}`);
+    else why.push(`close — потрібен день ${closeDay} після ${hhmm(closeMin)} · зараз ${nowB.date} ${hhmm(nowMin)}`);
 
     if (days === 0) {
       const legs = Array.isArray(tr.journeys) && tr.journeys.length > 0
@@ -216,22 +235,21 @@ export default async function handler(req, res) {
       if (meetMin == null) {
         why.push("meet — час зустрічі не заповнено: нема від чого відлічувати дві години");
       } else {
-        const remindAt = Math.max(0, meetMin - 120);
+        // Три години замість двох: люди їдуть із різних міст, і комусь
+        // треба виїхати з дому раніше за сам збір.
+        const remindAt = Math.max(0, meetMin - 180);
         const place = tx(tr.meetingPoint, "uk") || (firstLeg ? firstLeg.from : "");
         // Вікно від «за 2 години» до самого часу збору. Після збору
         // нагадування вже безглузде, тому далі не надсилаємо.
         if (nowMin >= remindAt && nowMin < meetMin) {
           planned.push({ key: `meet:${id}`, tag, msgs: build("meet", tr, { place, time: hhmm(meetMin) }) });
         } else {
-          why.push(`meet — збір ${hhmm(meetMin)}, вікно ${hhmm(remindAt)}–${hhmm(meetMin)} · зараз ${hhmm(nowMin)}`);
+          why.push(`meet — збір ${hhmm(meetMin)}, вікно ${hhmm(remindAt)}–${hhmm(meetMin)} (за 3 год) · зараз ${hhmm(nowMin)}`);
         }
       }
       // ⑤ О 21:00 — поїздка завершена. Або пізніше того ж вечора.
       if (nowMin >= 21 * 60) planned.push({ key: `end:${id}`, tag, msgs: build("end", tr) });
       else why.push(`end — треба після 21:00 · зараз ${hhmm(nowMin)}`);
-    } else if (days < 0 && days >= -2) {
-      // Поїздка вже минула, а «завершено» так і не пішло — надолужуємо.
-      planned.push({ key: `end:${id}`, tag, msgs: build("end", tr) });
     } else {
       why.push(`meet — тільки в день поїздки · зараз днів ${days}`);
     }
