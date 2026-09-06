@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v88";
+const APP_VERSION = "v89";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -2621,15 +2621,23 @@ function RedList({ pin }) {
   };
 
   return (
-    <div style={{ background: open ? C.card : "transparent", border: open ? "none" : "1px solid rgba(255,255,255,0.18)", borderRadius: 14, padding: open ? 14 : 0, marginTop: 10, boxShadow: open ? "0 2px 12px rgba(60,79,44,0.06)" : "none" }}>
+    <div style={{
+      display: open ? "block" : "inline-block",
+      background: open ? C.card : "rgba(255,255,255,0.08)",
+      border: open ? "none" : "1px solid rgba(255,255,255,0.16)",
+      borderRadius: open ? 14 : 20,
+      padding: open ? 14 : 0,
+      marginTop: 2, marginBottom: 20,
+      boxShadow: open ? "0 2px 12px rgba(60,79,44,0.06)" : "none",
+    }}>
       <button onClick={() => setOpen(!open)}
-        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: open ? 0 : "11px 13px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-        <span style={{ color: open ? C.rasp : "rgba(255,255,255,0.75)", flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
-          <ChevronRight size={15} />
+        style={{ width: open ? "100%" : "auto", display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", padding: open ? 0 : "8px 13px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+        <span style={{ color: open ? C.rasp : "rgba(255,255,255,0.7)", flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
+          <ChevronRight size={13} />
         </span>
-        <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700, color: open ? C.ink : "rgba(255,255,255,0.85)" }}>Червоний список</span>
+        <span style={{ flex: open ? 1 : "none", fontSize: 12, fontWeight: 700, color: open ? C.ink : "rgba(255,255,255,0.8)", whiteSpace: "nowrap" }}>Червоний список</span>
         {rows && rows.length > 0 && (
-          <span style={{ fontSize: 11, fontWeight: 800, color: open ? C.rasp : "rgba(255,255,255,0.85)", background: open ? C.raspSoft : "rgba(255,255,255,0.14)", padding: "2px 8px", borderRadius: 20 }}>{rows.length}</span>
+          <span style={{ fontSize: 10.5, fontWeight: 800, color: open ? C.rasp : "rgba(255,255,255,0.8)", background: open ? C.raspSoft : "rgba(255,255,255,0.16)", padding: "1px 7px", borderRadius: 20, flexShrink: 0 }}>{rows.length}</span>
         )}
       </button>
 
@@ -4456,7 +4464,10 @@ export default function App() {
                 <span style={{ fontSize: 19 }}>＋</span> {t("addTrip")}
               </button>
             )}
-            {isAdmin && <RedList pin={adminPin} />}
+            {/* Червоний список і кнопка перекладу — різні за суттю речі:
+                одна про людей, друга про вміст. Тому в них різна форма й
+                між ними помітний проміжок, а не спільна смуга. */}
+            {isAdmin && <div><RedList pin={adminPin} /></div>}
             {isAdmin && trips.length > 0 && (
               <button onClick={translateAll} disabled={!!tProgress} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "rgba(255,255,255,0.10)", color: "#fff", border: "1.5px dashed rgba(255,255,255,0.45)", padding: "11px", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: tProgress ? "default" : "pointer", marginBottom: 14, opacity: tProgress ? 0.7 : 1 }}>
                 🌐 {tProgress ? `Перекладаю… ${tProgress.done}/${tProgress.total}` : t("translateAllBtn")}
