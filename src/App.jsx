@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v84";
+const APP_VERSION = "v86";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -176,6 +176,14 @@ const sbSetBookingStatus = (id, pin, status) =>
 // пристрою. Доводити «це я» доводиться імʼям і контактом.
 // Позначити цей пристрій як пристрій організатора: сповіщення про нові
 // заявки мають приходити лише сюди, а не всім підписаним.
+// Червоний список: імена тих, хто порушував правила. Лежить у базі під
+// перевіркою PIN — ці імена не має бачити ніхто, крім організатора.
+const sbBlocklist = (pin) => sbRpc("blocklist_all", { pin });
+const sbBlockAdd = (pin, name, note) => sbRpc("blocklist_add", { pin, p_name: name, p_note: note });
+const sbBlockRemove = (pin, id) => sbRpc("blocklist_remove", { pin, p_id: id });
+// Порівняння імен: без урахування регістру й зайвих пробілів.
+const nameKey = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+
 const sbMarkAdminDevice = async (pin) => {
   if (!pushSupported() || !sbConfigured()) return;
   const reg = await navigator.serviceWorker.ready;
@@ -2112,11 +2120,28 @@ function BookingSection({ trip, taken, onBooked }) {
 // в тій самій розмові.
 function OrganizerBookings({ trip, pin, onChanged }) {
   const [rows, setRows] = useState(null);
+  // Імена з червоного списку. Потрібні, щоб позначити заявку, а не щоб
+  // її відхилити: імена повторюються, і автоматична відмова за збігом
+  // рано чи пізно образила б невинну людину.
+  const [flagged, setFlagged] = useState([]);
+  useEffect(() => {
+    if (!sbConfigured() || !pin) return;
+    sbRpc("redlist_all", { pin })
+      .then((r) => setFlagged((r || []).map((x) => String(x.name).trim().toLowerCase())))
+      .catch(() => setFlagged([]));
+  }, [pin]);
+  const isFlagged = (nm) => flagged.includes(String(nm || "").trim().toLowerCase());
   const [err, setErr] = useState("");
   const [copied, setCopied] = useState("");
   const [editId, setEditId] = useState(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ name: "", contact: "", people: 1 });
+  // Червоний список — щоб позначити знайомі імена прямо тут.
+  const [blocked, setBlocked] = useState([]);
+  useEffect(() => {
+    if (!sbConfigured() || !pin) return;
+    sbBlocklist(pin).then((r) => setBlocked((r || []).map((x) => nameKey(x.name)))).catch(() => {});
+  }, [pin]);
 
   // Раніше при порожньому PIN функція мовчки виходила, і на екрані
   // назавжди лишалось «Завантаження…» без жодного пояснення. Тепер
@@ -2252,11 +2277,17 @@ function OrganizerBookings({ trip, pin, onChanged }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, color: C.ink, fontWeight: 600 }}>
                   {r.name}{Number(r.people) > 1 ? ` · ${r.people}` : ""}
+                  {blocked.includes(nameKey(r.name)) && (
+                    <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.rasp, padding: "2px 7px", borderRadius: 20, marginLeft: 6 }}>ЧЕРВОНИЙ СПИСОК</span>
+                  )}
                   {r.status === "pending" && (
                     <span style={{ fontSize: 10, fontWeight: 800, color: C.yellowInk, background: C.yellowSoft, padding: "2px 7px", borderRadius: 20, marginLeft: 6 }}>ЧЕКАЄ</span>
                   )}
                   {r.status === "declined" && (
                     <span style={{ fontSize: 10, fontWeight: 800, color: C.rasp, background: C.raspSoft, padding: "2px 7px", borderRadius: 20, marginLeft: 6 }}>ВІДХИЛЕНО</span>
+                  )}
+                  {isFlagged(r.name) && (
+                    <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: C.rasp, padding: "2px 7px", borderRadius: 20, marginLeft: 6 }}>ЧЕРВОНИЙ СПИСОК</span>
                   )}
                   {!r.show_name && <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 400 }}> (прихований)</span>}
                 </div>
@@ -2314,7 +2345,7 @@ function timeChangeMsgs(trip) {
     const name = tc(trip.title);
     const when = tc(trip.dateLabel) || trip.date || "";
     out[lang] = {
-      uk: { title: "Змінився час поїздки", body: `${name}, ${when}. Час відправлення та час зустрічі змінився. Перевірте інформацію ще раз.` },
+      uk: { title: "Змінився час поїздки", body: `${name}, ${when}. Час відправлення та зустрічі змінився. Перевірте інформацію ще раз.` },
       en: { title: "Trip times changed", body: `${name}, ${when}. The departure and meeting times have changed. Please check the details again.` },
       ru: { title: "Изменилось время поездки", body: `${name}, ${when}. Время отправления и время встречи изменилось. Проверьте информацию ещё раз.` },
     }[lang];
@@ -2410,6 +2441,87 @@ function situationMsgs(kind, trip, reasonCode, newDate) {
   }
   CURRENT_LANG = prev;
   return out;
+}
+
+// ── Червоний список (режим організатора) ────────────────────────────
+// Список сам по собі марний, якщо в нього не заглядати. Тому імена з
+// нього підсвічуються прямо в заявках — там, де рішення й ухвалюється.
+function BlockList({ pin }) {
+  const [rows, setRows] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+
+  const load = () => {
+    if (!sbConfigured() || !pin) { setRows([]); return; }
+    sbBlocklist(pin).then((r) => setRows(r || [])).catch((e) =>
+      setErr("Не вдалося завантажити: " + String((e && e.message) || e).slice(0, 120)));
+  };
+  useEffect(() => { load(); }, [pin]);
+
+  const add = async () => {
+    if (name.trim() === "") { setErr("Вкажіть імʼя."); return; }
+    try {
+      await sbBlockAdd(pin, name.trim(), note.trim());
+      setName(""); setNote(""); setErr(""); load();
+    } catch (e) { setErr("Не вдалося: " + String((e && e.message) || e).slice(0, 120)); }
+  };
+  const remove = async (id) => {
+    if (!window.confirm("Прибрати з червоного списку?")) return;
+    try { await sbBlockRemove(pin, id); load(); }
+    catch (e) { setErr("Не вдалося: " + String((e && e.message) || e).slice(0, 120)); }
+  };
+
+  return (
+    <div style={{ background: C.card, borderRadius: 18, padding: 16, marginTop: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
+      <button onClick={() => setOpen(!open)}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+        <span style={{ color: C.rasp, flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
+          <ChevronRight size={17} />
+        </span>
+        <span style={{ fontSize: 13, fontWeight: 800, color: C.rasp, textTransform: "uppercase", letterSpacing: 0.6, flex: 1 }}>Червоний список</span>
+        <span style={{ fontSize: 11.5, color: C.muted }}>{rows === null ? "…" : rows.length}</span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 12 }}>
+          <p style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5, margin: "0 0 11px" }}>
+            Імена тих, хто порушував правила. Бачите лише ви. Коли така людина
+            подає заявку, її імʼя підсвітиться червоним у списку записаних.
+          </p>
+          {err !== "" && <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 9px" }}>{err}</p>}
+          {rows && rows.length > 0 && (
+            <div style={{ background: "#fff", borderRadius: 11, padding: "2px 12px", marginBottom: 11 }}>
+              {rows.map((r, i) => (
+                <div key={r.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "9px 0", borderBottom: i === rows.length - 1 ? "none" : `1px solid ${C.line}` }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: C.ink, fontWeight: 700 }}>{r.name}</div>
+                    {r.note && <div style={{ fontSize: 12, color: C.muted, marginTop: 2, lineHeight: 1.45 }}>{r.note}</div>}
+                  </div>
+                  <button onClick={() => remove(r.id)} aria-label="Прибрати"
+                    style={{ border: "none", background: "none", color: C.rasp, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {rows && rows.length === 0 && (
+            <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 11px" }}>Список порожній.</p>
+          )}
+          <input value={name} onChange={(e) => { setName(e.target.value); setErr(""); }} placeholder="Імʼя, як у записі"
+            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 11px", fontSize: 13.5, fontFamily: "inherit", marginBottom: 8, background: "#fff" }} />
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Причина (необовʼязково)"
+            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 11px", fontSize: 13.5, fontFamily: "inherit", marginBottom: 9, background: "#fff" }} />
+          <button onClick={add}
+            style={{ width: "100%", border: `1.5px solid ${C.rasp}`, background: C.raspSoft, color: C.rasp, borderRadius: 10, padding: "11px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Додати до червоного списку
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Перевірка сповіщень (режим організатора) ────────────────────────
@@ -2549,6 +2661,101 @@ function PushDiagnostics({ pin, trip }) {
       <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.5, margin: "9px 0 0" }}>
         Сповіщення отримають усі, хто його увімкнув, включно з вами.
       </p>
+    </div>
+  );
+}
+
+// ── Червоний список ──────────────────────────────────────────────────
+// Люди, які порушували правила групи. Бачить і редагує лише організатор:
+// доступу до таблиці ззовні немає взагалі, усе через функції з PIN.
+// Список сам нікого не блокує — він показує позначку в заявках, а рішення
+// лишається за людиною. Автоматична відмова за збігом імені була б
+// небезпечною: імена повторюються, а помилка тут ображає невинного.
+function RedList({ pin }) {
+  const [rows, setRows] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+
+  const load = () => {
+    if (!sbConfigured() || !pin) { setRows([]); return; }
+    sbRpc("redlist_all", { pin })
+      .then((r) => { setRows(r || []); setErr(""); })
+      .catch((e) => { setRows([]); setErr("Не вдалося завантажити: " + String((e && e.message) || e).slice(0, 120)); });
+  };
+  useEffect(() => { if (open) load(); }, [open, pin]);
+
+  const add = async () => {
+    if (name.trim() === "") { setErr("Вкажіть імʼя."); return; }
+    try {
+      await sbRpc("redlist_add", { pin, p_name: name.trim(), p_note: note.trim() });
+      setName(""); setNote(""); setErr(""); load();
+    } catch (e) { setErr("Не вдалося додати: " + String((e && e.message) || e).slice(0, 120)); }
+  };
+  const remove = async (id) => {
+    if (!window.confirm("Прибрати з червоного списку?")) return;
+    try { await sbRpc("redlist_remove", { pin, p_id: id }); load(); }
+    catch (e) { setErr("Не вдалося прибрати: " + String((e && e.message) || e).slice(0, 120)); }
+  };
+
+  return (
+    <div style={{ background: C.card, borderRadius: 18, padding: 16, marginTop: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
+      <button onClick={() => setOpen(!open)}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+        <span style={{ color: C.rasp, flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
+          <ChevronRight size={17} />
+        </span>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 800, color: C.ink }}>Червоний список</span>
+        {rows && rows.length > 0 && (
+          <span style={{ fontSize: 11.5, fontWeight: 800, color: C.rasp, background: C.raspSoft, padding: "2px 9px", borderRadius: 20 }}>{rows.length}</span>
+        )}
+      </button>
+
+      {open && (
+        <>
+          <p style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5, margin: "10px 0 12px" }}>
+            Люди, які порушували правила. Список бачите лише ви. Коли така людина
+            подає заявку, поруч з її імʼям зʼявиться червона позначка — але рішення
+            лишається за вами, застосунок нікого не відхиляє сам.
+          </p>
+
+          {err !== "" && (
+            <div style={{ background: C.raspSoft, borderRadius: 10, padding: "9px 11px", marginBottom: 10, fontSize: 12, color: C.rasp, lineHeight: 1.45 }}>{err}</div>
+          )}
+
+          {rows && rows.length > 0 && (
+            <div style={{ background: "#fff", borderRadius: 11, padding: "2px 12px", marginBottom: 11 }}>
+              {rows.map((r, i) => (
+                <div key={r.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 0", borderBottom: i === rows.length - 1 ? "none" : `1px solid ${C.line}` }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: C.ink, fontWeight: 700 }}>{r.name}</div>
+                    {r.note && r.note.trim() !== "" && (
+                      <div style={{ fontSize: 12, color: C.muted, marginTop: 2, lineHeight: 1.45 }}>{r.note}</div>
+                    )}
+                  </div>
+                  <button onClick={() => remove(r.id)} aria-label="Прибрати"
+                    style={{ border: "none", background: "none", color: C.rasp, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {rows && rows.length === 0 && err === "" && (
+            <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 11px" }}>Список порожній.</p>
+          )}
+
+          <input value={name} onChange={(e) => { setName(e.target.value); setErr(""); }} placeholder="Імʼя"
+            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 11px", fontSize: 13.5, fontFamily: "inherit", background: "#fff", marginBottom: 7 }} />
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Що сталося (необовʼязково)"
+            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 11px", fontSize: 13.5, fontFamily: "inherit", background: "#fff", marginBottom: 9 }} />
+          <button onClick={add}
+            style={{ width: "100%", border: `1.5px solid ${C.rasp}`, background: C.raspSoft, color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Додати до списку
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -2992,6 +3199,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
             <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>{t("manageTrip")}</h3>
             <OrganizerBookings trip={trip} pin={adminPin} onChanged={onBooked} />
             <PushDiagnostics pin={adminPin} trip={trip} />
+            <BlockList pin={adminPin} />
             <div style={{ height: 16 }} />
             <label style={{ fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 6, display: "block" }}>{t("tripStatus")}</label>
             <select value={trip.status} onChange={(e) => onSetStatus(e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 11, padding: "12px", fontSize: 14, fontWeight: 700, fontFamily: "inherit", background: C.yellowSoft, color: C.yellowInk, cursor: "pointer", marginBottom: 6 }}>
@@ -4328,6 +4536,7 @@ export default function App() {
                 <span style={{ fontSize: 19 }}>＋</span> {t("addTrip")}
               </button>
             )}
+            {isAdmin && <RedList pin={adminPin} />}
             {isAdmin && trips.length > 0 && (
               <button onClick={translateAll} disabled={!!tProgress} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "rgba(255,255,255,0.10)", color: "#fff", border: "1.5px dashed rgba(255,255,255,0.45)", padding: "11px", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: tProgress ? "default" : "pointer", marginBottom: 14, opacity: tProgress ? 0.7 : 1 }}>
                 🌐 {tProgress ? `Перекладаю… ${tProgress.done}/${tProgress.total}` : t("translateAllBtn")}
