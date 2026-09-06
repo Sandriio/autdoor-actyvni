@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v86";
+const APP_VERSION = "v88";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -2126,7 +2126,7 @@ function OrganizerBookings({ trip, pin, onChanged }) {
   const [flagged, setFlagged] = useState([]);
   useEffect(() => {
     if (!sbConfigured() || !pin) return;
-    sbRpc("redlist_all", { pin })
+    sbRpc("blocklist_all", { pin })
       .then((r) => setFlagged((r || []).map((x) => String(x.name).trim().toLowerCase())))
       .catch(() => setFlagged([]));
   }, [pin]);
@@ -2443,87 +2443,6 @@ function situationMsgs(kind, trip, reasonCode, newDate) {
   return out;
 }
 
-// ── Червоний список (режим організатора) ────────────────────────────
-// Список сам по собі марний, якщо в нього не заглядати. Тому імена з
-// нього підсвічуються прямо в заявках — там, де рішення й ухвалюється.
-function BlockList({ pin }) {
-  const [rows, setRows] = useState(null);
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [note, setNote] = useState("");
-  const [err, setErr] = useState("");
-
-  const load = () => {
-    if (!sbConfigured() || !pin) { setRows([]); return; }
-    sbBlocklist(pin).then((r) => setRows(r || [])).catch((e) =>
-      setErr("Не вдалося завантажити: " + String((e && e.message) || e).slice(0, 120)));
-  };
-  useEffect(() => { load(); }, [pin]);
-
-  const add = async () => {
-    if (name.trim() === "") { setErr("Вкажіть імʼя."); return; }
-    try {
-      await sbBlockAdd(pin, name.trim(), note.trim());
-      setName(""); setNote(""); setErr(""); load();
-    } catch (e) { setErr("Не вдалося: " + String((e && e.message) || e).slice(0, 120)); }
-  };
-  const remove = async (id) => {
-    if (!window.confirm("Прибрати з червоного списку?")) return;
-    try { await sbBlockRemove(pin, id); load(); }
-    catch (e) { setErr("Не вдалося: " + String((e && e.message) || e).slice(0, 120)); }
-  };
-
-  return (
-    <div style={{ background: C.card, borderRadius: 18, padding: 16, marginTop: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
-      <button onClick={() => setOpen(!open)}
-        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-        <span style={{ color: C.rasp, flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
-          <ChevronRight size={17} />
-        </span>
-        <span style={{ fontSize: 13, fontWeight: 800, color: C.rasp, textTransform: "uppercase", letterSpacing: 0.6, flex: 1 }}>Червоний список</span>
-        <span style={{ fontSize: 11.5, color: C.muted }}>{rows === null ? "…" : rows.length}</span>
-      </button>
-
-      {open && (
-        <div style={{ marginTop: 12 }}>
-          <p style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5, margin: "0 0 11px" }}>
-            Імена тих, хто порушував правила. Бачите лише ви. Коли така людина
-            подає заявку, її імʼя підсвітиться червоним у списку записаних.
-          </p>
-          {err !== "" && <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 9px" }}>{err}</p>}
-          {rows && rows.length > 0 && (
-            <div style={{ background: "#fff", borderRadius: 11, padding: "2px 12px", marginBottom: 11 }}>
-              {rows.map((r, i) => (
-                <div key={r.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "9px 0", borderBottom: i === rows.length - 1 ? "none" : `1px solid ${C.line}` }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, color: C.ink, fontWeight: 700 }}>{r.name}</div>
-                    {r.note && <div style={{ fontSize: 12, color: C.muted, marginTop: 2, lineHeight: 1.45 }}>{r.note}</div>}
-                  </div>
-                  <button onClick={() => remove(r.id)} aria-label="Прибрати"
-                    style={{ border: "none", background: "none", color: C.rasp, cursor: "pointer", padding: 6, display: "flex", flexShrink: 0 }}>
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          {rows && rows.length === 0 && (
-            <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 11px" }}>Список порожній.</p>
-          )}
-          <input value={name} onChange={(e) => { setName(e.target.value); setErr(""); }} placeholder="Імʼя, як у записі"
-            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 11px", fontSize: 13.5, fontFamily: "inherit", marginBottom: 8, background: "#fff" }} />
-          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Причина (необовʼязково)"
-            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 11px", fontSize: 13.5, fontFamily: "inherit", marginBottom: 9, background: "#fff" }} />
-          <button onClick={add}
-            style={{ width: "100%", border: `1.5px solid ${C.rasp}`, background: C.raspSoft, color: C.rasp, borderRadius: 10, padding: "11px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-            Додати до червоного списку
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── Перевірка сповіщень (режим організатора) ────────────────────────
 // Кнопка навмисно показує СИРУ відповідь сервера, а не «щось пішло не
 // так». Push проходить через шість ланок: дозвіл у браузері, фоновий
@@ -2680,35 +2599,37 @@ function RedList({ pin }) {
 
   const load = () => {
     if (!sbConfigured() || !pin) { setRows([]); return; }
-    sbRpc("redlist_all", { pin })
+    sbRpc("blocklist_all", { pin })
       .then((r) => { setRows(r || []); setErr(""); })
       .catch((e) => { setRows([]); setErr("Не вдалося завантажити: " + String((e && e.message) || e).slice(0, 120)); });
   };
-  useEffect(() => { if (open) load(); }, [open, pin]);
+  // Вантажимо одразу, а не лише при розгортанні: цифра поруч із назвою
+  // має бути видна відразу, інакше згорнутий рядок нічого не повідомляє.
+  useEffect(() => { load(); }, [pin]);
 
   const add = async () => {
     if (name.trim() === "") { setErr("Вкажіть імʼя."); return; }
     try {
-      await sbRpc("redlist_add", { pin, p_name: name.trim(), p_note: note.trim() });
+      await sbRpc("blocklist_add", { pin, p_name: name.trim(), p_note: note.trim() });
       setName(""); setNote(""); setErr(""); load();
     } catch (e) { setErr("Не вдалося додати: " + String((e && e.message) || e).slice(0, 120)); }
   };
   const remove = async (id) => {
     if (!window.confirm("Прибрати з червоного списку?")) return;
-    try { await sbRpc("redlist_remove", { pin, p_id: id }); load(); }
+    try { await sbRpc("blocklist_remove", { pin, p_id: id }); load(); }
     catch (e) { setErr("Не вдалося прибрати: " + String((e && e.message) || e).slice(0, 120)); }
   };
 
   return (
-    <div style={{ background: C.card, borderRadius: 18, padding: 16, marginTop: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
+    <div style={{ background: open ? C.card : "transparent", border: open ? "none" : "1px solid rgba(255,255,255,0.18)", borderRadius: 14, padding: open ? 14 : 0, marginTop: 10, boxShadow: open ? "0 2px 12px rgba(60,79,44,0.06)" : "none" }}>
       <button onClick={() => setOpen(!open)}
-        style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-        <span style={{ color: C.rasp, flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
-          <ChevronRight size={17} />
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: open ? 0 : "11px 13px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+        <span style={{ color: open ? C.rasp : "rgba(255,255,255,0.75)", flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s", display: "flex" }}>
+          <ChevronRight size={15} />
         </span>
-        <span style={{ flex: 1, fontSize: 13, fontWeight: 800, color: C.ink }}>Червоний список</span>
+        <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700, color: open ? C.ink : "rgba(255,255,255,0.85)" }}>Червоний список</span>
         {rows && rows.length > 0 && (
-          <span style={{ fontSize: 11.5, fontWeight: 800, color: C.rasp, background: C.raspSoft, padding: "2px 9px", borderRadius: 20 }}>{rows.length}</span>
+          <span style={{ fontSize: 11, fontWeight: 800, color: open ? C.rasp : "rgba(255,255,255,0.85)", background: open ? C.raspSoft : "rgba(255,255,255,0.14)", padding: "2px 8px", borderRadius: 20 }}>{rows.length}</span>
         )}
       </button>
 
@@ -3199,7 +3120,6 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
             <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>{t("manageTrip")}</h3>
             <OrganizerBookings trip={trip} pin={adminPin} onChanged={onBooked} />
             <PushDiagnostics pin={adminPin} trip={trip} />
-            <BlockList pin={adminPin} />
             <div style={{ height: 16 }} />
             <label style={{ fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 6, display: "block" }}>{t("tripStatus")}</label>
             <select value={trip.status} onChange={(e) => onSetStatus(e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 11, padding: "12px", fontSize: 14, fontWeight: 700, fontFamily: "inherit", background: C.yellowSoft, color: C.yellowInk, cursor: "pointer", marginBottom: 6 }}>
