@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v89";
+const APP_VERSION = "v91";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1143,12 +1143,15 @@ function MeetingMap({ lat, lng, accent }) {
   // Жовта шпилька для бонусних точок, червона для звичайних — щоб на
   // карті було одразу видно, дивишся ти на точку маршруту чи на
   // необов'язкове місце поруч.
-  const pinFill = accent === "bonus" ? "#f2c200" : "#e8332f";
-  const pinDot = accent === "bonus" ? "#4a3f00" : "#fff";
+  const frame = accent === "bonus" ? "#f2c200" : "transparent";
   const [span, setSpan] = useState(MAP_SPAN_DEFAULT);
   const gmaps = gmapsUrl(lat, lng);
   const bbox = `${lng - span},${lat - span},${lng + span},${lat + span}`;
-  const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik`;
+  // Шпильку малює САМА карта, а не накладка поверх неї. Накладка стояла
+  // в геометричному центрі рамки й збігалася з точкою лише тоді, коли
+  // карта показувала рівно замовлену область — а вона підганяє її під
+  // розмір вікна й округляє масштаб до цілого рівня. Звідси й зсув.
+  const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat},${lng}`;
   const canIn = span > MAP_SPAN_MIN * 1.01;
   const canOut = span < MAP_SPAN_MAX * 0.99;
   const zoom = (factor) => setSpan((v) => Math.min(MAP_SPAN_MAX, Math.max(MAP_SPAN_MIN, v * factor)));
@@ -1165,23 +1168,19 @@ function MeetingMap({ lat, lng, accent }) {
       }}>{label}</button>
   );
   return (
-    <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
+    <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: accent === "bonus" ? `2px solid ${frame}` : `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
       <iframe
         title="meeting-map"
         src={mapSrc}
-        style={{ width: "100%", height: "calc(100% + 26px)", border: "none", display: "block", pointerEvents: "none" }}
+        style={{ width: "100%", height: "100%", border: "none", display: "block", pointerEvents: "none" }}
         loading="lazy"
       />
       {/* Ліцензія OSM вимагає атрибуції — лишаємо її, але компактно
           й у стилі застосунку, замість службової смуги від iframe. */}
       <span style={{ position: "absolute", right: 6, bottom: 4, fontSize: 8.5, color: "rgba(0,0,0,0.42)", background: "rgba(255,255,255,0.72)", padding: "1px 5px", borderRadius: 6 }}>© OpenStreetMap</span>
-      {/* Червона шпилька в центрі */}
-      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", pointerEvents: "none" }}>
-        <svg width="34" height="44" viewBox="0 0 34 44" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))" }}>
-          <path d="M17 0C7.6 0 0 7.6 0 17c0 12 17 27 17 27s17-15 17-27C34 7.6 26.4 0 17 0z" fill={pinFill}/>
-          <circle cx="17" cy="17" r="6.5" fill={pinDot}/>
-        </svg>
-      </div>
+      {/* Накладка-шпилька прибрана: тепер точку малює сама карта за
+          координатами. Кольорову відмінність бонусних місць переносимо
+          на рамку — вона не бреше про положення. */}
       {/* Масштаб */}
       <div style={{ position: "absolute", right: 10, top: 10, display: "flex", flexDirection: "column", borderRadius: 10, overflow: "hidden", boxShadow: "0 1px 5px rgba(0,0,0,0.22)" }}>
         {zoomBtn("+", () => zoom(0.5), canIn, "10px 10px 0 0")}
@@ -1785,7 +1784,7 @@ function LiveWeather({ trip, isAdmin }) {
 // «місць немає», «запис закрито». Стан обирається сам за дедлайном і
 // кількістю вільних місць, тож організаторові нічого не треба вимикати
 // вручну — навіть якщо він спить, коли настане дедлайн.
-function BookingSection({ trip, taken, onBooked }) {
+function BookingSection({ trip, taken, onBooked, isAdmin }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
@@ -2005,7 +2004,7 @@ function BookingSection({ trip, taken, onBooked }) {
       {!mine && closed && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkClosed") + " " + t("bkAskOrganizer"))}
       {!mine && !closed && full && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkNoSpots") + " " + t("bkAskOrganizer"))}
 
-      {!mine && !open && !finding && guests && guests.length > 0 && (
+      {!isAdmin && !mine && !open && !finding && guests && guests.length > 0 && (
         <button onClick={() => { setFinding(true); setErr(""); }}
           style={{ width: "100%", border: "none", background: "none", color: C.green, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: "4px 0 12px", textAlign: "left" }}>
           {t("bkFindMine")}
@@ -2768,11 +2767,19 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           );
         })()}
 
-        {resolveSections(trip).filter((s) => s.visible !== false).map((sec) => {
+        {(() => {
+          // У режимі організатора запис іде в самий низ: ви ним не
+          // користуєтесь, а він відсуває опис поїздки, задля якого
+          // сторінку й відкривають. Учасник бачить звичний порядок.
+          const list = resolveSections(trip).filter((s) => s.visible !== false);
+          return isAdmin
+            ? [...list.filter((s) => s.type !== "booking"), ...list.filter((s) => s.type === "booking")]
+            : list;
+        })().map((sec) => {
           const renderers = {
             booking: {
               icon: <ClipboardCheck size={17} />, accent: C.green,
-              body: <BookingSection trip={trip} taken={taken} onBooked={onBooked} />,
+              body: <BookingSection trip={trip} taken={taken} onBooked={onBooked} isAdmin={isAdmin} />,
             },
             about: {
               icon: <Info size={17} />, accent: C.green,
