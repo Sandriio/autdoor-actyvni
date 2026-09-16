@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v91";
+const APP_VERSION = "v92";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1143,15 +1143,11 @@ function MeetingMap({ lat, lng, accent }) {
   // Жовта шпилька для бонусних точок, червона для звичайних — щоб на
   // карті було одразу видно, дивишся ти на точку маршруту чи на
   // необов'язкове місце поруч.
-  const frame = accent === "bonus" ? "#f2c200" : "transparent";
   const [span, setSpan] = useState(MAP_SPAN_DEFAULT);
   const gmaps = gmapsUrl(lat, lng);
   const bbox = `${lng - span},${lat - span},${lng + span},${lat + span}`;
-  // Шпильку малює САМА карта, а не накладка поверх неї. Накладка стояла
-  // в геометричному центрі рамки й збігалася з точкою лише тоді, коли
-  // карта показувала рівно замовлену область — а вона підганяє її під
-  // розмір вікна й округляє масштаб до цілого рівня. Звідси й зсув.
-  const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat},${lng}`;
+  // Карта без власної шпильки: її малюємо самі, щоб була червона.
+  const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik`;
   const canIn = span > MAP_SPAN_MIN * 1.01;
   const canOut = span < MAP_SPAN_MAX * 0.99;
   const zoom = (factor) => setSpan((v) => Math.min(MAP_SPAN_MAX, Math.max(MAP_SPAN_MIN, v * factor)));
@@ -1168,19 +1164,25 @@ function MeetingMap({ lat, lng, accent }) {
       }}>{label}</button>
   );
   return (
-    <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: accent === "bonus" ? `2px solid ${frame}` : `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
+    <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
       <iframe
         title="meeting-map"
         src={mapSrc}
-        style={{ width: "100%", height: "100%", border: "none", display: "block", pointerEvents: "none" }}
+        style={{ width: "100%", height: "calc(100% + 52px)", marginTop: -13, border: "none", display: "block", pointerEvents: "none" }}
         loading="lazy"
       />
       {/* Ліцензія OSM вимагає атрибуції — лишаємо її, але компактно
           й у стилі застосунку, замість службової смуги від iframe. */}
       <span style={{ position: "absolute", right: 6, bottom: 4, fontSize: 8.5, color: "rgba(0,0,0,0.42)", background: "rgba(255,255,255,0.72)", padding: "1px 5px", borderRadius: 6 }}>© OpenStreetMap</span>
-      {/* Накладка-шпилька прибрана: тепер точку малює сама карта за
-          координатами. Кольорову відмінність бонусних місць переносимо
-          на рамку — вона не бреше про положення. */}
+      {/* Червона шпилька в центрі. Центр вікна тепер збігається з центром
+          карти (див. поправку висоти вище), тож вона показує саме ту
+          точку, координати якої введені. */}
+      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", pointerEvents: "none" }}>
+        <svg width="32" height="42" viewBox="0 0 34 44" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))" }}>
+          <path d="M17 0C7.6 0 0 7.6 0 17c0 12 17 27 17 27s17-15 17-27C34 7.6 26.4 0 17 0z" fill={accent === "bonus" ? "#f2c200" : "#e8332f"}/>
+          <circle cx="17" cy="17" r="6.5" fill={accent === "bonus" ? "#4a3f00" : "#fff"}/>
+        </svg>
+      </div>
       {/* Масштаб */}
       <div style={{ position: "absolute", right: 10, top: 10, display: "flex", flexDirection: "column", borderRadius: 10, overflow: "hidden", boxShadow: "0 1px 5px rgba(0,0,0,0.22)" }}>
         {zoomBtn("+", () => zoom(0.5), canIn, "10px 10px 0 0")}
@@ -1293,6 +1295,24 @@ function PushToggle() {
   </>, "rgba(255,255,255,0.22)");
 }
 
+// Іконка типу місця. Один перелік на весь застосунок: і для заглушки
+// замість фото, і для позначки в кутку картки.
+function placeIcon(type, size) {
+  const n = size || 18;
+  return {
+    lake: <Waves size={n} strokeWidth={1.8} />,
+    city: <Building2 size={n} strokeWidth={1.8} />,
+    gorge: <Mountain size={n} strokeWidth={1.8} />,
+    mountain: <Mountain size={n} strokeWidth={1.8} />,
+    forest: <TreePine size={n} strokeWidth={1.8} />,
+    valley: <MountainSnow size={n} strokeWidth={1.8} />,
+    river: <Droplets size={n} strokeWidth={1.8} />,
+    museum: <Landmark size={n} strokeWidth={1.8} />,
+    waterfall: <CloudRain size={n} strokeWidth={1.8} />,
+    bike: <Bike size={n} strokeWidth={1.8} />,
+  }[type] || <Mountain size={n} strokeWidth={1.8} />;
+}
+
 // ── Trip card (list view) ──────────────────────────────────────────────
 function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onEdit, counts }) {
   const left = Math.max(0, (Number(trip.spots) || 0) - takenOf(trip, counts));
@@ -1309,9 +1329,19 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
               color: "#fff", fontSize: 11, fontWeight: 600, padding: "4px 10px",
               borderRadius: 20, letterSpacing: 0.3,
             }}>{dateWithWeekday(trip)}</span>
-            {STATUS[trip.status]?.badge && (
-              <span style={{ background: STATUS[trip.status].bg, color: STATUS[trip.status].fg, fontSize: 10, fontWeight: 700, padding: "4px 9px", borderRadius: 20, textTransform: "uppercase", letterSpacing: 0.5 }}>{trip.status === "postponed" ? postponedLabel(trip) : statusLabel(trip.status)}</span>
-            )}
+            <span style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
+              {STATUS[trip.status]?.badge && (
+                <span style={{ background: STATUS[trip.status].bg, color: STATUS[trip.status].fg, fontSize: 10, fontWeight: 700, padding: "4px 9px", borderRadius: 20, textTransform: "uppercase", letterSpacing: 0.5 }}>{trip.status === "postponed" ? postponedLabel(trip) : statusLabel(trip.status)}</span>
+              )}
+              {/* Тип місця — той самий значок, що й на заглушці замість
+                  фото. У кутку він підказує характер поїздки ще до того,
+                  як людина прочитає назву. */}
+              <span style={{
+                width: 30, height: 30, borderRadius: 10,
+                background: "rgba(255,255,255,0.22)", backdropFilter: "blur(4px)",
+                color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+              }}>{placeIcon(trip.placeType, 17)}</span>
+            </span>
           </div>
           <div style={{ color: "#fff" }}>
             <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.1, letterSpacing: -0.3 }}>{tc(trip.title)}</div>
@@ -1364,18 +1394,7 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
 // ── Place photo (real image if provided, else themed placeholder) ──────
 function PlacePhoto({ trip }) {
   const [failed, setFailed] = React.useState(false);
-  const typeIcon = {
-    lake: <Waves size={40} strokeWidth={1.5} />,
-    city: <Building2 size={40} strokeWidth={1.5} />,
-    gorge: <Mountain size={40} strokeWidth={1.5} />,
-    mountain: <Mountain size={40} strokeWidth={1.5} />,
-    forest: <TreePine size={40} strokeWidth={1.5} />,
-    valley: <MountainSnow size={40} strokeWidth={1.5} />,
-    river: <Droplets size={40} strokeWidth={1.5} />,
-    museum: <Landmark size={40} strokeWidth={1.5} />,
-    waterfall: <CloudRain size={40} strokeWidth={1.5} />,
-    bike: <Bike size={40} strokeWidth={1.5} />,
-  }[trip.placeType] || <Mountain size={40} strokeWidth={1.5} />;
+  const typeIcon = placeIcon(trip.placeType, 40);
 
   const hasImage = trip.image && trip.image.trim() !== "" && !failed;
 
@@ -1534,6 +1553,18 @@ function weekdayOf(iso) {
 }
 // Підпис дати з днем тижня. Якщо організатор уже вписав день у текст
 // дати («Субота, 21 червня»), другий раз не додаємо.
+// Підпис дати для картки: «Неділя, 20.09.26» кожною мовою. Збирається
+// з календарної дати, тож розійтися з нею не може за визначенням.
+function autoDateLabel(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return { uk: "", en: "", ru: "" };
+  const d = new Date(`${iso}T12:00:00Z`);
+  const short = `${m[3]}.${m[2]}.${m[1].slice(2)}`;
+  const out = {};
+  for (const lang of ["uk", "en", "ru"]) out[lang] = `${WEEKDAYS[lang][d.getUTCDay()]}, ${short}`;
+  return out;
+}
+
 function dateWithWeekday(trip) {
   const label = tc(trip && trip.dateLabel) || "";
   const wd = weekdayOf(trip && trip.date);
@@ -2768,13 +2799,21 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
         })()}
 
         {(() => {
-          // У режимі організатора запис іде в самий низ: ви ним не
-          // користуєтесь, а він відсуває опис поїздки, задля якого
-          // сторінку й відкривають. Учасник бачить звичний порядок.
+          // Запис іде в самий низ в обох режимах, але по-різному.
+          // Організаторові він не потрібен узагалі, тож стоїть останнім.
+          // Учасникові — одразу над контактами: спершу читаєш про місце
+          // й дорогу, потім вирішуєш їхати, а якщо є питання — контакти
+          // поруч. Раніше форма запису стояла на початку й відсувала
+          // опис, задля якого сторінку й відкривають.
           const list = resolveSections(trip).filter((s) => s.visible !== false);
-          return isAdmin
-            ? [...list.filter((s) => s.type !== "booking"), ...list.filter((s) => s.type === "booking")]
-            : list;
+          const rest = list.filter((s) => s.type !== "booking");
+          const book = list.filter((s) => s.type === "booking");
+          if (book.length === 0) return list;
+          if (isAdmin) return [...rest, ...book];
+          const ci = rest.findIndex((s) => s.type === "contact");
+          return ci < 0
+            ? [...rest, ...book]
+            : [...rest.slice(0, ci), ...book, ...rest.slice(ci)];
         })().map((sec) => {
           const renderers = {
             booking: {
@@ -3332,7 +3371,9 @@ function TripForm({ initial, onSave, onCancel }) {
     { k: "waterfall", n: "Водоспад" }, { k: "bike", n: "Вело" },
   ];
 
-  const canSave = ukOf(t.title).trim() !== "" && ukOf(t.dateLabel).trim() !== "";
+  // Зберегти можна, коли є назва й КАЛЕНДАРНА дата: підпис дати тепер
+  // похідний від неї, тож перевіряти його окремо немає сенсу.
+  const canSave = ukOf(t.title).trim() !== "" && String(t.date || "").trim() !== "";
 
   return (
     <div style={{ paddingBottom: 100 }}>
@@ -3352,9 +3393,12 @@ function TripForm({ initial, onSave, onCancel }) {
           <h3 style={cardTitle}><Info size={15} /> Основне</h3>
           <Field label="Назва місця *"><input style={inp} value={t.title} onChange={(e) => set({ title: e.target.value })} placeholder="Наприклад: Айбзеє" /></Field>
           <Field label="Короткий підпис"><input style={inp} value={t.subtitle} onChange={(e) => set({ subtitle: e.target.value })} placeholder="Смарагдове озеро під Цугшпітце" /></Field>
-          <Field label="Дата (текстом) *"><input style={inp} value={t.dateLabel} onChange={(e) => set({ dateLabel: e.target.value })} placeholder="Субота, 21 червня" /></Field>
-          <Field label="Дата (календарна) *">
-            <input style={{ ...inp, marginBottom: 6 }} type="date" value={t.date || ""} onChange={(e) => set({ date: e.target.value })} />
+          {/* Поле «Дата (текстом)» прибрано: два джерела однієї дати
+              неминуче розходились, а підпис ще й доводилось писати
+              трьома мовами руками. Тепер він збирається сам. */}
+          <Field label="Дата *">
+            <input style={{ ...inp, marginBottom: 6 }} type="date" value={t.date || ""}
+              onChange={(e) => set({ date: e.target.value, dateLabel: autoDateLabel(e.target.value) })} />
             <p style={{ fontSize: 11.5, margin: "0 0 12px", lineHeight: 1.45, color: weekdayOf(t.date) ? C.greenDark : C.rasp }}>
               {weekdayOf(t.date)
                 ? <>День тижня: <b>{weekdayOf(t.date)}</b> — додасться до дати сам, усіма мовами.</>
@@ -4123,8 +4167,8 @@ function TripForm({ initial, onSave, onCancel }) {
           <div style={{ background: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: 12, padding: "9px 13px", fontSize: 12.5, lineHeight: 1.45 }}>
             Щоб зберегти, заповніть у блоці «Основне»:{" "}
             {ukOf(t.title).trim() === "" ? "«Назва»" : ""}
-            {ukOf(t.title).trim() === "" && ukOf(t.dateLabel).trim() === "" ? " і " : ""}
-            {ukOf(t.dateLabel).trim() === "" ? "«Дата (текстом)»" : ""}
+            {ukOf(t.title).trim() === "" && String(t.date || "").trim() === "" ? " і " : ""}
+            {String(t.date || "").trim() === "" ? "«Дата»" : ""}
           </div>
         </div>
       )}
