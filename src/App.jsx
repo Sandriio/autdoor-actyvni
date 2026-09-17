@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
   Sun, CloudRain, Wind, Droplets, Navigation, Calendar, ArrowLeft, ArrowUp,
@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v98";
+const APP_VERSION = "v100";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1205,36 +1205,6 @@ function TrainLegs({ legs: rawLegs }) {
 // метрів — тому в застосунку місце показувалось правильно, а в Google
 // Maps ні. Координати округлюємо до шести знаків — це близько 10 см,
 // точніше не має сенсу.
-// Карта Leaflet підвантажується з мережі на першому показі. Робимо це
-// з коду, а не через index.html: так файл лишається один, і нічого не
-// треба правити руками при оновленні.
-let leafletPromise = null;
-function loadLeaflet() {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.L) return Promise.resolve(window.L);
-  if (leafletPromise) return leafletPromise;
-  leafletPromise = new Promise((ok, fail) => {
-    const css = document.createElement("link");
-    css.rel = "stylesheet";
-    css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-    document.head.appendChild(css);
-    // Білі смуги між клітинками карти. Клітинки — квадрати по 256
-    // пікселів, і коли карта стоїть на дробовій позиції, браузер
-    // округлює їх краї в різні боки: між сусідніми лишається щілина
-    // в частку пікселя. Розтягуємо кожну клітинку на пів пікселя —
-    // вони перекриваються, і щілини зникають.
-    const fix = document.createElement("style");
-    fix.textContent = ".leaflet-tile{width:256.5px!important;height:256.5px!important}";
-    document.head.appendChild(fix);
-    const js = document.createElement("script");
-    js.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    js.onload = () => (window.L ? ok(window.L) : fail(new Error("no L")));
-    js.onerror = () => fail(new Error("script failed"));
-    document.head.appendChild(js);
-  });
-  return leafletPromise;
-}
-
 function gmapsUrl(lat, lng) {
   const a = Number(lat), b = Number(lng);
   if (isNaN(a) || isNaN(b)) return "https://www.google.com/maps";
@@ -1252,60 +1222,25 @@ const MAP_SPAN_MIN = 0.0006;   // найближче
 const MAP_SPAN_MAX = 0.25;     // найдалі
 const MAP_SPAN_DEFAULT = 0.008;
 function MeetingMap({ lat, lng, accent }) {
-  // Справжня карта замість картинки в рамці.
+  // Одне готове зображення замість карти, складеної з клітинок.
   //
-  // Раніше тут була вбудована сторінка OpenStreetMap, а шпильку малював
-  // застосунок поверх неї, у центрі вікна. Це працює лише тоді, коли
-  // карта показує рівно замовлену область — а вона підганяє її під
-  // розмір вікна, округляє масштаб і лишає собі місце під службову
-  // смугу. Три спроби вгадати цю поправку дали три різні зсуви.
+  // Історія цього місця: спершу тут була вбудована сторінка OSM — вона
+  // підганяла показану область під розмір вікна, і шпилька поверх неї
+  // з'їжджала. Потім бібліотека Leaflet — вона ставить шпильку точно,
+  // але малює карту квадратами по 256 пікселів, і між ними лишаються
+  // білі щілини, коли карта стоїть на дробовій позиції.
   //
-  // Тепер карта справжня: шпилька прив'язана до координат самою
-  // бібліотекою, тож розійтися з точкою не може за побудовою. Заразом
-  // зникає службова смуга й з'являється колір шпильки.
-  const box = useRef(null);
-  const map = useRef(null);
-  const [failed, setFailed] = useState(false);
+  // Тепер сервер віддає ОДНУ картинку, задану центром і масштабом.
+  // Швів немає, бо немає й стиків. А центр картинки — це рівно та
+  // точка, координати якої ми передали, тож шпилька в центрі вікна
+  // завжди стоїть там, де треба. Ніяких поправок рахувати не потрібно.
   const [zoom, setZoom] = useState(15);
+  const [failed, setFailed] = useState(false);
   const gmaps = gmapsUrl(lat, lng);
-
-  const color = accent === "bonus" ? "#f2c200" : accent === "meeting" ? "#3f7a2e" : "#e8332f";
+  const fill = accent === "bonus" ? "#f2c200" : accent === "meeting" ? "#3f7a2e" : "#e8332f";
   const dot = accent === "bonus" ? "#4a3f00" : "#fff";
-
-  useEffect(() => {
-    let dead = false;
-    loadLeaflet()
-      .then((L) => {
-        if (dead || !box.current) return;
-        if (!map.current) {
-          map.current = L.map(box.current, {
-            zoomControl: false, attributionControl: false,
-            scrollWheelZoom: false, dragging: false,
-            doubleClickZoom: false, touchZoom: false, keyboard: false,
-          });
-          L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 })
-            .addTo(map.current);
-        }
-        map.current.setView([lat, lng], zoom);
-        if (map.current._pin) map.current.removeLayer(map.current._pin);
-        const icon = L.divIcon({
-          className: "",
-          html: `<svg width="32" height="42" viewBox="0 0 34 44" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))"><path d="M17 0C7.6 0 0 7.6 0 17c0 12 17 27 17 27s17-15 17-27C34 7.6 26.4 0 17 0z" fill="${color}"/><circle cx="17" cy="17" r="6.5" fill="${dot}"/></svg>`,
-          iconSize: [32, 42], iconAnchor: [16, 42],
-        });
-        map.current._pin = L.marker([lat, lng], { icon, interactive: false }).addTo(map.current);
-        // Розмір картки задається через співвідношення сторін і стає
-        // відомим уже після створення карти. Без перерахунку клітинки
-        // лягають зі зсувом — ще одне джерело білих смуг.
-        setTimeout(() => { if (map.current) map.current.invalidateSize(); }, 60);
-      })
-      .catch(() => { if (!dead) setFailed(true); });
-    return () => { dead = true; };
-  }, [lat, lng, zoom, color, dot]);
-
-  useEffect(() => () => {
-    if (map.current) { map.current.remove(); map.current = null; }
-  }, []);
+  const src = `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}`
+    + `&zoom=${zoom}&size=640x400&maptype=mapnik`;
 
   const zoomBtn = (label, onClick, enabled, radius) => (
     <button
@@ -1322,10 +1257,24 @@ function MeetingMap({ lat, lng, accent }) {
 
   return (
     <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
-      <div ref={box} style={{ width: "100%", height: "100%" }} />
-      {failed && (
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, textAlign: "center", fontSize: 12, color: C.muted, background: C.greenSoft }}>
+      {!failed ? (
+        <img
+          src={src}
+          alt=""
+          onError={() => setFailed(true)}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        />
+      ) : (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, textAlign: "center", fontSize: 12, color: C.muted }}>
           Карту не вдалося завантажити. Скористайтесь кнопкою нижче.
+        </div>
+      )}
+      {!failed && (
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", pointerEvents: "none" }}>
+          <svg width="32" height="42" viewBox="0 0 34 44" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))" }}>
+            <path d="M17 0C7.6 0 0 7.6 0 17c0 12 17 27 17 27s17-15 17-27C34 7.6 26.4 0 17 0z" fill={fill} />
+            <circle cx="17" cy="17" r="6.5" fill={dot} />
+          </svg>
         </div>
       )}
       <div style={{ position: "absolute", top: 10, right: 10, display: "flex", flexDirection: "column", boxShadow: "0 2px 8px rgba(0,0,0,0.2)", borderRadius: 10, overflow: "hidden" }}>
@@ -1333,8 +1282,6 @@ function MeetingMap({ lat, lng, accent }) {
         <div style={{ height: 1, background: C.line }} />
         {zoomBtn("−", () => setZoom((z) => Math.max(9, z - 1)), zoom > 9, "0 0 10px 10px")}
       </div>
-      {/* Подяка OpenStreetMap — вимога умов використання карт. Власним
-          дрібним написом, а не службовою смугою бібліотеки. */}
       <span style={{ position: "absolute", left: 8, bottom: 6, fontSize: 9.5, color: "rgba(0,0,0,0.45)", background: "rgba(255,255,255,0.72)", padding: "1px 6px", borderRadius: 6 }}>© OpenStreetMap</span>
       <a href={gmaps} target="_blank" rel="noreferrer"
         style={{ position: "absolute", right: 10, bottom: 10, display: "flex", alignItems: "center", gap: 6, background: "#fff", color: C.greenDark, borderRadius: 10, padding: "7px 11px", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }}>
@@ -1343,6 +1290,7 @@ function MeetingMap({ lat, lng, accent }) {
     </div>
   );
 }
+
 
 function DbScheduleLink({ trip }) {
   const js = tripJourneys(trip).map(filledLegs).filter((l) => l.length > 0);
@@ -1975,7 +1923,6 @@ function BookingSection({ trip, taken, onBooked, isAdmin }) {
   const [editing, setEditing] = useState(false);
   const [saved, setSaved] = useState(false);
   // Пошук власного запису для тих, хто записався до появи ключів.
-  const [finding, setFinding] = useState(false);
   const [fName, setFName] = useState("");
   const [fContact, setFContact] = useState("");
 
@@ -2036,7 +1983,7 @@ function BookingSection({ trip, taken, onBooked, isAdmin }) {
         showName: r.show_name !== false,
       };
       rememberBooking(trip.id, rec);
-      setMine(rec); setFinding(false); setFName(""); setFContact("");
+      setMine(rec); setFName(""); setFContact("");
     } catch (e) {
       setErr(t(bookErrorKey(e)));
     } finally { setBusy(false); }
@@ -2180,36 +2127,11 @@ function BookingSection({ trip, taken, onBooked, isAdmin }) {
       {!mine && closed && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkClosed") + " " + t("bkAskOrganizer"))}
       {!mine && !closed && full && box(C.raspSoft, C.rasp, <Info size={15} />, t("bkNoSpots") + " " + t("bkAskOrganizer"))}
 
-      {!isAdmin && !mine && !open && !finding && guests && guests.length > 0 && (
-        <button onClick={() => { setFinding(true); setErr(""); }}
-          style={{ width: "100%", border: "none", background: "none", color: C.green, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", padding: "4px 0 12px", textAlign: "left" }}>
-          {t("bkFindMine")}
-        </button>
-      )}
+      {/* «Ви вже записані? Знайти свій запис» прибрано повністю: пошук
+          чужого запису за іменем був єдиним місцем, де сторонній міг
+          дотягнутися до чужої заявки, і потреби в ньому немає. */}
 
-      {finding && (
-        <div style={{ border: `1.5px solid ${C.green}`, borderRadius: 13, padding: 13, marginBottom: 11, background: "#fff" }}>
-          <div style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, marginBottom: 5 }}>{t("bkFindTitle")}</div>
-          <p style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5, margin: "0 0 10px" }}>{t("bkFindNote")}</p>
-          <input value={fName} onChange={(e) => { setFName(e.target.value); setErr(""); }} placeholder={t("bkName")}
-            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px", fontSize: 14, fontFamily: "inherit", marginBottom: 8 }} />
-          <input value={fContact} onChange={(e) => { setFContact(e.target.value); setErr(""); }} placeholder={t("bkContact")}
-            style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 10, padding: "11px", fontSize: 14, fontFamily: "inherit", marginBottom: 10 }} />
-          {err !== "" && <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{err}</p>}
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => { setFinding(false); setErr(""); }}
-              style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.muted, borderRadius: 11, padding: "12px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-              {t("bkCancelEdit")}
-            </button>
-            <button onClick={claim} disabled={busy}
-              style={{ flex: 1, border: "none", background: busy ? C.pageSoft : C.green, color: "#fff", borderRadius: 11, padding: "12px", fontSize: 13.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
-              {busy ? t("bkSending") : t("bkFindBtn")}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {!mine && !closed && !full && !open && !finding && (
+      {!mine && !closed && !full && !open && (
         <button onClick={() => setOpen(true)}
           style={{ width: "100%", border: "none", background: C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
           {t("bkJoin")}
