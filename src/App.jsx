@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v102";
+const APP_VERSION = "v103";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1258,15 +1258,16 @@ function MeetingMap({ lat, lng, accent }) {
 
   return (
     <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
-      {/* Рамка вища за вікно на 70 пікселів і піднята на 20: службова
-          смуга OSM із посиланнями йде далеко за нижній край, а сама
-          карта лишається по центру вікна. Запасу 34 пікселі не
-          вистачало — знизу проступали верхівки літер. Положення шпильки
-          від цього не залежить: її ставить сама карта за координатами. */}
+      {/* Рамка більша за вікно з обох боків, і обидва запаси пов'язані.
+          Угорі вбудована карта малює власні кнопки масштабу, унизу —
+          службову смугу з посиланнями. Зрізаємо 80 пікселів зверху й
+          114 знизу: 114 = 80 + 34, де 34 — висота смуги. Саме за цієї
+          рівності центр карти збігається з центром вікна, і шпилька не
+          з'їжджає ні вгору, ні вниз. */}
       <iframe
         title="map"
         src={mapSrc}
-        style={{ width: "100%", height: "calc(100% + 70px)", marginTop: -20, border: "none", display: "block", pointerEvents: "none" }}
+        style={{ width: "100%", height: "calc(100% + 194px)", marginTop: -80, border: "none", display: "block", pointerEvents: "none" }}
         loading="lazy"
       />
       <div style={{ position: "absolute", top: 10, right: 10, display: "flex", flexDirection: "column", boxShadow: "0 2px 8px rgba(0,0,0,0.2)", borderRadius: 10, overflow: "hidden" }}>
