@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v101";
+const APP_VERSION = "v102";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1258,13 +1258,15 @@ function MeetingMap({ lat, lng, accent }) {
 
   return (
     <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
-      {/* Рамка вища за вікно: службова смуга OSM із посиланнями йде за
-          нижній край і не займає місця. Положення шпильки від цього не
-          залежить — її ставить сама карта. */}
+      {/* Рамка вища за вікно на 70 пікселів і піднята на 20: службова
+          смуга OSM із посиланнями йде далеко за нижній край, а сама
+          карта лишається по центру вікна. Запасу 34 пікселі не
+          вистачало — знизу проступали верхівки літер. Положення шпильки
+          від цього не залежить: її ставить сама карта за координатами. */}
       <iframe
         title="map"
         src={mapSrc}
-        style={{ width: "100%", height: "calc(100% + 34px)", border: "none", display: "block", pointerEvents: "none" }}
+        style={{ width: "100%", height: "calc(100% + 70px)", marginTop: -20, border: "none", display: "block", pointerEvents: "none" }}
         loading="lazy"
       />
       <div style={{ position: "absolute", top: 10, right: 10, display: "flex", flexDirection: "column", boxShadow: "0 2px 8px rgba(0,0,0,0.2)", borderRadius: 10, overflow: "hidden" }}>
