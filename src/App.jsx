@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v97";
+const APP_VERSION = "v98";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -287,8 +287,10 @@ function parseCoordsInput(str) {
   return { lat, lng };
 }
 const T = {
-  appName: { uk: "Аутдор Активні", en: "Autdoor Actyvni", de: "Autdoor Actyvni", ru: "Аутдор Активные" },
-  appSubtitle: { uk: "Одноденні поїздки в гори та міста", en: "Day trips to mountains and cities", de: "Tagesausflüge in Berge und Städte", ru: "Однодневные поездки в горы и города" },
+  // Назва однакова всіма мовами: це власна назва, а не опис. Те саме
+  // правило, що ми щойно застосували до Allgäu й Immenstadt.
+  appName: { uk: "Tropa Club", en: "Tropa Club", de: "Tropa Club", ru: "Tropa Club" },
+  appSubtitle: { uk: "Твій шлях до нової подорожі", en: "Your path to a new journey", de: "Dein Weg zu neuen Reisen", ru: "Твой путь к новому путешествию" },
   upcomingTrips: { uk: "Найближчі поїздки", en: "Upcoming trips", de: "Kommende Ausflüge", ru: "Ближайшие поездки" },
   futureTrips: { uk: "Майбутні поїздки", en: "Later trips", de: "Weitere Ausflüge", ru: "Будущие поездки" },
   avgCheck: { uk: "середній чек", en: "average check", de: "im Schnitt", ru: "средний чек" },
@@ -604,8 +606,49 @@ async function deeplBatch(texts, target) {
   return j.translations;
 }
 
+// ── Захист власних назв ─────────────────────────────────────────────
+// Речення на кшталт «Панорамні види на гірський масив Allgäu» містить і
+// кирилицю, і латинську назву. Перекладач бере все підряд і робить з
+// Allgäu «Альгой», з Immenstadt — «Имменштадт». Людині з квитком або
+// картою в руках потрібна назва з табло, а не її переказ.
+//
+// Тому перед відправкою латинські слова ховаємо за мітками, а після
+// перекладу повертаємо на місце. Якщо перекладач загубив хоч одну
+// мітку — лишаємо оригінал: краще без перекладу, ніж із покаліченою
+// назвою.
+const NAME_RE = /[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ0-9'’.\-]*/g;
+function maskNames(text) {
+  const names = [];
+  const masked = String(text).replace(NAME_RE, (m) => {
+    names.push(m);
+    return `ZQX${names.length - 1}ZQX`;
+  });
+  return { masked, names };
+}
+function unmaskNames(text, names) {
+  if (names.length === 0) return text;
+  let out = String(text);
+  for (let i = 0; i < names.length; i++) {
+    const re = new RegExp(`ZQX\\s*${i}\\s*ZQX`, "i");
+    if (!re.test(out)) return null;   // мітку загублено — переклад бракуємо
+    out = out.replace(re, names[i]);
+  }
+  return out;
+}
+
 // Перекладає масив рядків, повертає масив тієї ж довжини.
-async function translateBatch(texts, target) {
+async function translateBatch(texts0, target) {
+  const packed = texts0.map((x) => maskNames(x));
+  const texts = packed.map((p) => p.masked);
+  const restore = (arr) => arr.map((v, i) => {
+    if (v == null) return null;
+    const back = unmaskNames(v, packed[i].names);
+    return back == null ? texts0[i] : back;
+  });
+  return restore(await translateRaw(texts, target));
+}
+
+async function translateRaw(texts, target) {
   try {
     const d = await deeplBatch(texts, target);
     if (d && d.length === texts.length && d.every((x) => x)) return d;
@@ -811,7 +854,7 @@ const TRIPS = [
     contact: { name: "Андрій", role: "Організатор поїздки", telegram: "@autdoor_actyvni", phone: "+49 155 617 12359" },
     heroGradient: "linear-gradient(180deg, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.18) 100%), radial-gradient(135% 130% at 88% 95%, rgba(190,205,90,0.40) 0%, rgba(190,205,90,0) 55%), linear-gradient(120deg, #1b92dc 0%, #38a3e0 32%, #5fb0c8 56%, #8fbf8a 78%, #aece5f 100%)",
     coords: { lat: 47.4917, lng: 11.0958 },
-    meetingPoint: "Біля головного входу München Hbf, під табло відправлень. Шукайте жовтий прапорець «Аутдор Активні».",
+    meetingPoint: "Біля головного входу München Hbf, під табло відправлень. Шукайте жовтий прапорець «Tropa Club».",
     image: "/garmisch.jpg",
     placeType: "gorge",
     about:
@@ -1175,6 +1218,14 @@ function loadLeaflet() {
     css.rel = "stylesheet";
     css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
     document.head.appendChild(css);
+    // Білі смуги між клітинками карти. Клітинки — квадрати по 256
+    // пікселів, і коли карта стоїть на дробовій позиції, браузер
+    // округлює їх краї в різні боки: між сусідніми лишається щілина
+    // в частку пікселя. Розтягуємо кожну клітинку на пів пікселя —
+    // вони перекриваються, і щілини зникають.
+    const fix = document.createElement("style");
+    fix.textContent = ".leaflet-tile{width:256.5px!important;height:256.5px!important}";
+    document.head.appendChild(fix);
     const js = document.createElement("script");
     js.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
     js.onload = () => (window.L ? ok(window.L) : fail(new Error("no L")));
@@ -1243,6 +1294,10 @@ function MeetingMap({ lat, lng, accent }) {
           iconSize: [32, 42], iconAnchor: [16, 42],
         });
         map.current._pin = L.marker([lat, lng], { icon, interactive: false }).addTo(map.current);
+        // Розмір картки задається через співвідношення сторін і стає
+        // відомим уже після створення карти. Без перерахунку клітинки
+        // лягають зі зсувом — ще одне джерело білих смуг.
+        setTimeout(() => { if (map.current) map.current.invalidateSize(); }, 60);
       })
       .catch(() => { if (!dead) setFailed(true); });
     return () => { dead = true; };
