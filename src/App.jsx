@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v92";
+const APP_VERSION = "v96";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -735,6 +735,45 @@ const STATUS = {
   postponed: { tkey: "stPostponed", group: "upcoming", badge: true,  bg: "rgba(0,0,0,0.28)", fg: "#ffffff" },
 };
 const STATUS_ORDER = ["upcoming", "recruiting", "closed", "ongoing", "postponed", "done", "cancelled"];
+
+// Стан поїздки за годинником.
+//
+// Ручні стани — «Скасовано» і «Перенесено» — завжди сильніші: їх ставить
+// організатор, і час їх не скасовує. Решта визначається сама:
+//   після дня поїздки .................. Завершено
+//   у день поїздки ..................... Поїздка триває
+//   після дедлайну запису .............. Набір закрито
+//   інакше ............................. Набір у групу
+//
+// Час беремо берлінський: сервер і телефони учасників можуть бути в
+// інших поясах, а поїздка одна й та сама.
+function berlinNow() {
+  const f = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  });
+  const p = {};
+  f.formatToParts(new Date()).forEach((x) => { p[x.type] = x.value; });
+  return { date: `${p.year}-${p.month}-${p.day}`, min: Number(p.hour) * 60 + Number(p.minute) };
+}
+function autoStatus(trip) {
+  const manual = trip && trip.status;
+  if (manual === "cancelled" || manual === "postponed") return manual;
+  const date = String((trip && trip.date) || "").trim();
+  if (!date) return manual || "upcoming";
+  const now = berlinNow();
+  if (now.date > date) return "done";
+  // У день поїздки: до 21:00 вона триває, від 21:00 — завершена. Та сама
+  // година, що й у сповіщенні «Поїздка завершена», щоб напис на картці
+  // й повідомлення в телефоні не розходились.
+  if (now.date === date) return now.min >= 21 * 60 ? "done" : "ongoing";
+  const dm = String((trip && trip.deadline) || "").match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+  if (dm) {
+    const past = now.date > dm[1] || (now.date === dm[1] && now.min >= Number(dm[2]) * 60 + Number(dm[3]));
+    if (past) return "closed";
+  }
+  return "recruiting";
+}
 const statusLabel = (status) => t(STATUS[status]?.tkey || "stUpcoming");
 
 // For "postponed", the badge text is dynamic based on the new date.
@@ -1123,6 +1162,28 @@ function TrainLegs({ legs: rawLegs }) {
 // метрів — тому в застосунку місце показувалось правильно, а в Google
 // Maps ні. Координати округлюємо до шести знаків — це близько 10 см,
 // точніше не має сенсу.
+// Карта Leaflet підвантажується з мережі на першому показі. Робимо це
+// з коду, а не через index.html: так файл лишається один, і нічого не
+// треба правити руками при оновленні.
+let leafletPromise = null;
+function loadLeaflet() {
+  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
+  if (window.L) return Promise.resolve(window.L);
+  if (leafletPromise) return leafletPromise;
+  leafletPromise = new Promise((ok, fail) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    document.head.appendChild(css);
+    const js = document.createElement("script");
+    js.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    js.onload = () => (window.L ? ok(window.L) : fail(new Error("no L")));
+    js.onerror = () => fail(new Error("script failed"));
+    document.head.appendChild(js);
+  });
+  return leafletPromise;
+}
+
 function gmapsUrl(lat, lng) {
   const a = Number(lat), b = Number(lng);
   if (isNaN(a) || isNaN(b)) return "https://www.google.com/maps";
@@ -1140,17 +1201,57 @@ const MAP_SPAN_MIN = 0.0006;   // найближче
 const MAP_SPAN_MAX = 0.25;     // найдалі
 const MAP_SPAN_DEFAULT = 0.008;
 function MeetingMap({ lat, lng, accent }) {
-  // Жовта шпилька для бонусних точок, червона для звичайних — щоб на
-  // карті було одразу видно, дивишся ти на точку маршруту чи на
-  // необов'язкове місце поруч.
-  const [span, setSpan] = useState(MAP_SPAN_DEFAULT);
+  // Справжня карта замість картинки в рамці.
+  //
+  // Раніше тут була вбудована сторінка OpenStreetMap, а шпильку малював
+  // застосунок поверх неї, у центрі вікна. Це працює лише тоді, коли
+  // карта показує рівно замовлену область — а вона підганяє її під
+  // розмір вікна, округляє масштаб і лишає собі місце під службову
+  // смугу. Три спроби вгадати цю поправку дали три різні зсуви.
+  //
+  // Тепер карта справжня: шпилька прив'язана до координат самою
+  // бібліотекою, тож розійтися з точкою не може за побудовою. Заразом
+  // зникає службова смуга й з'являється колір шпильки.
+  const box = useRef(null);
+  const map = useRef(null);
+  const [failed, setFailed] = useState(false);
+  const [zoom, setZoom] = useState(15);
   const gmaps = gmapsUrl(lat, lng);
-  const bbox = `${lng - span},${lat - span},${lng + span},${lat + span}`;
-  // Карта без власної шпильки: її малюємо самі, щоб була червона.
-  const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik`;
-  const canIn = span > MAP_SPAN_MIN * 1.01;
-  const canOut = span < MAP_SPAN_MAX * 0.99;
-  const zoom = (factor) => setSpan((v) => Math.min(MAP_SPAN_MAX, Math.max(MAP_SPAN_MIN, v * factor)));
+
+  const color = accent === "bonus" ? "#f2c200" : accent === "meeting" ? "#3f7a2e" : "#e8332f";
+  const dot = accent === "bonus" ? "#4a3f00" : "#fff";
+
+  useEffect(() => {
+    let dead = false;
+    loadLeaflet()
+      .then((L) => {
+        if (dead || !box.current) return;
+        if (!map.current) {
+          map.current = L.map(box.current, {
+            zoomControl: false, attributionControl: false,
+            scrollWheelZoom: false, dragging: false,
+            doubleClickZoom: false, touchZoom: false, keyboard: false,
+          });
+          L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 })
+            .addTo(map.current);
+        }
+        map.current.setView([lat, lng], zoom);
+        if (map.current._pin) map.current.removeLayer(map.current._pin);
+        const icon = L.divIcon({
+          className: "",
+          html: `<svg width="32" height="42" viewBox="0 0 34 44" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))"><path d="M17 0C7.6 0 0 7.6 0 17c0 12 17 27 17 27s17-15 17-27C34 7.6 26.4 0 17 0z" fill="${color}"/><circle cx="17" cy="17" r="6.5" fill="${dot}"/></svg>`,
+          iconSize: [32, 42], iconAnchor: [16, 42],
+        });
+        map.current._pin = L.marker([lat, lng], { icon, interactive: false }).addTo(map.current);
+      })
+      .catch(() => { if (!dead) setFailed(true); });
+    return () => { dead = true; };
+  }, [lat, lng, zoom, color, dot]);
+
+  useEffect(() => () => {
+    if (map.current) { map.current.remove(); map.current = null; }
+  }, []);
+
   const zoomBtn = (label, onClick, enabled, radius) => (
     <button
       onClick={onClick}
@@ -1163,45 +1264,31 @@ function MeetingMap({ lat, lng, accent }) {
         borderRadius: radius, padding: 0,
       }}>{label}</button>
   );
+
   return (
     <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
-      <iframe
-        title="meeting-map"
-        src={mapSrc}
-        style={{ width: "100%", height: "calc(100% + 52px)", marginTop: -13, border: "none", display: "block", pointerEvents: "none" }}
-        loading="lazy"
-      />
-      {/* Ліцензія OSM вимагає атрибуції — лишаємо її, але компактно
-          й у стилі застосунку, замість службової смуги від iframe. */}
-      <span style={{ position: "absolute", right: 6, bottom: 4, fontSize: 8.5, color: "rgba(0,0,0,0.42)", background: "rgba(255,255,255,0.72)", padding: "1px 5px", borderRadius: 6 }}>© OpenStreetMap</span>
-      {/* Червона шпилька в центрі. Центр вікна тепер збігається з центром
-          карти (див. поправку висоти вище), тож вона показує саме ту
-          точку, координати якої введені. */}
-      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", pointerEvents: "none" }}>
-        <svg width="32" height="42" viewBox="0 0 34 44" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))" }}>
-          <path d="M17 0C7.6 0 0 7.6 0 17c0 12 17 27 17 27s17-15 17-27C34 7.6 26.4 0 17 0z" fill={accent === "bonus" ? "#f2c200" : "#e8332f"}/>
-          <circle cx="17" cy="17" r="6.5" fill={accent === "bonus" ? "#4a3f00" : "#fff"}/>
-        </svg>
+      <div ref={box} style={{ width: "100%", height: "100%" }} />
+      {failed && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, textAlign: "center", fontSize: 12, color: C.muted, background: C.greenSoft }}>
+          Карту не вдалося завантажити. Скористайтесь кнопкою нижче.
+        </div>
+      )}
+      <div style={{ position: "absolute", top: 10, right: 10, display: "flex", flexDirection: "column", boxShadow: "0 2px 8px rgba(0,0,0,0.2)", borderRadius: 10, overflow: "hidden" }}>
+        {zoomBtn("+", () => setZoom((z) => Math.min(18, z + 1)), zoom < 18, "10px 10px 0 0")}
+        <div style={{ height: 1, background: C.line }} />
+        {zoomBtn("−", () => setZoom((z) => Math.max(9, z - 1)), zoom > 9, "0 0 10px 10px")}
       </div>
-      {/* Масштаб */}
-      <div style={{ position: "absolute", right: 10, top: 10, display: "flex", flexDirection: "column", borderRadius: 10, overflow: "hidden", boxShadow: "0 1px 5px rgba(0,0,0,0.22)" }}>
-        {zoomBtn("+", () => zoom(0.5), canIn, "10px 10px 0 0")}
-        <span style={{ height: 1, background: C.line }} />
-        {zoomBtn("\u2212", () => zoom(2), canOut, "0 0 10px 10px")}
-      </div>
-      {/* Перехід у Google Maps — окремим значком, а не всією картою:
-          інакше натиск на «+» відкривав би карти замість наближення. */}
+      {/* Подяка OpenStreetMap — вимога умов використання карт. Власним
+          дрібним написом, а не службовою смугою бібліотеки. */}
+      <span style={{ position: "absolute", left: 8, bottom: 6, fontSize: 9.5, color: "rgba(0,0,0,0.45)", background: "rgba(255,255,255,0.72)", padding: "1px 6px", borderRadius: 6 }}>© OpenStreetMap</span>
       <a href={gmaps} target="_blank" rel="noreferrer"
-        style={{ position: "absolute", right: 10, bottom: 10, background: "#fff", borderRadius: 10, padding: "7px 11px", fontSize: 12, fontWeight: 700, color: C.green, display: "flex", alignItems: "center", gap: 5, boxShadow: "0 1px 5px rgba(0,0,0,0.18)", textDecoration: "none" }}>
-        <Navigation size={14} /> Google Maps
+        style={{ position: "absolute", right: 10, bottom: 10, display: "flex", alignItems: "center", gap: 6, background: "#fff", color: C.greenDark, borderRadius: 10, padding: "7px 11px", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }}>
+        <Navigation size={13} /> Google Maps
       </a>
     </div>
   );
 }
 
-// Кнопка на повний розклад Deutsche Bahn. Замінила вбудований пошук
-// поїздів: розклад тепер вводить організатор, а хто хоче інші варіанти —
-// відкриває сайт перевізника, де список завжди повний і актуальний.
 function DbScheduleLink({ trip }) {
   const js = tripJourneys(trip).map(filledLegs).filter((l) => l.length > 0);
   const legs = js.length > 0 ? js[0] : null;
@@ -1329,18 +1416,21 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
               color: "#fff", fontSize: 11, fontWeight: 600, padding: "4px 10px",
               borderRadius: 20, letterSpacing: 0.3,
             }}>{dateWithWeekday(trip)}</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
-              {STATUS[trip.status]?.badge && (
-                <span style={{ background: STATUS[trip.status].bg, color: STATUS[trip.status].fg, fontSize: 10, fontWeight: 700, padding: "4px 9px", borderRadius: 20, textTransform: "uppercase", letterSpacing: 0.5 }}>{trip.status === "postponed" ? postponedLabel(trip) : statusLabel(trip.status)}</span>
-              )}
-              {/* Тип місця — той самий значок, що й на заглушці замість
-                  фото. У кутку він підказує характер поїздки ще до того,
-                  як людина прочитає назву. */}
+            {/* Значок типу місця зверху, стан поїздки — під ним.
+                Поруч вони конкурували за одну смугу й тиснули на дату
+                ліворуч; у стовпчик кожен читається окремо. */}
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
               <span style={{
-                width: 30, height: 30, borderRadius: 10,
+                width: 44, height: 44, borderRadius: 14,
                 background: "rgba(255,255,255,0.22)", backdropFilter: "blur(4px)",
                 color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-              }}>{placeIcon(trip.placeType, 17)}</span>
+              }}>{placeIcon(trip.placeType, 26)}</span>
+              {(() => {
+                const st = autoStatus(trip);
+                return STATUS[st]?.badge ? (
+                  <span style={{ background: STATUS[st].bg, color: STATUS[st].fg, fontSize: 10, fontWeight: 700, padding: "4px 9px", borderRadius: 20, textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap" }}>{st === "postponed" ? postponedLabel(trip) : statusLabel(st)}</span>
+                ) : null;
+              })()}
             </span>
           </div>
           <div style={{ color: "#fff" }}>
@@ -1359,7 +1449,7 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
           </div>
           <ChevronRight size={18} color={C.faint} />
         </div>
-        {STATUS[trip.status]?.group === "upcoming" && (
+        {STATUS[autoStatus(trip)]?.group === "upcoming" && (
           <div style={{ padding: isAdmin ? "0 16px 10px" : "0 16px 13px", fontSize: 12, color: left <= 3 ? C.rasp : C.green, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
             <Users size={13} /> {left > 0 ? `${t("spotsLeft")} ${left} ${t("spotsLeftWord")}`.trim() : t("noSpots")}
           </div>
@@ -2935,7 +3025,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
               icon: <MapPin size={17} />, accent: C.green,
               body: (
                 <>
-                  {trip.coords && <div style={{ marginBottom: 12 }}><MeetingMap lat={trip.coords.lat} lng={trip.coords.lng} /></div>}
+                  {trip.coords && <div style={{ marginBottom: 12 }}><MeetingMap lat={trip.coords.lat} lng={trip.coords.lng} accent="meeting" /></div>}
                   <div style={{ padding: 13, background: C.greenSoft, borderRadius: 12, display: "flex", gap: 10, alignItems: "flex-start" }}>
                     <div style={{ color: C.green, marginTop: 1 }}><MapPin size={18} /></div>
                     <div style={{ flex: 1 }}>
@@ -3834,7 +3924,7 @@ function TripForm({ initial, onSave, onCancel }) {
           {(() => {
             const la = parseFloat(t.coords && t.coords.lat), ln = parseFloat(t.coords && t.coords.lng);
             return !isNaN(la) && !isNaN(ln) && (la !== 0 || ln !== 0) ? (
-              <div style={{ marginBottom: 10 }}><MeetingMap lat={la} lng={ln} /></div>
+              <div style={{ marginBottom: 10 }}><MeetingMap lat={la} lng={ln} accent="meeting" /></div>
             ) : null;
           })()}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -4351,8 +4441,8 @@ export default function App() {
     if (kb == null) return -1;
     return dir * (ka - kb);
   };
-  const upcomingAll = trips.filter((t) => (STATUS[t.status]?.group || "upcoming") === "upcoming").sort(byDate(1));
-  const past = trips.filter((t) => (STATUS[t.status]?.group || "upcoming") === "past").sort(byDate(-1));
+  const upcomingAll = trips.filter((t) => (STATUS[autoStatus(t)]?.group || "upcoming") === "upcoming").sort(byDate(1));
+  const past = trips.filter((t) => (STATUS[autoStatus(t)]?.group || "upcoming") === "past").sort(byDate(-1));
   // «Найближчі» — те, що вже за два тижні або раніше. Решта майбутніх
   // поїздок іде окремим списком нижче: так одразу видно, куди йдемо цими
   // вихідними, а далекі плани не змішуються з найближчими. Поїздка без
