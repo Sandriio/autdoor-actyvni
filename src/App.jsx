@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v100";
+const APP_VERSION = "v101";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1222,25 +1222,26 @@ const MAP_SPAN_MIN = 0.0006;   // найближче
 const MAP_SPAN_MAX = 0.25;     // найдалі
 const MAP_SPAN_DEFAULT = 0.008;
 function MeetingMap({ lat, lng, accent }) {
-  // Одне готове зображення замість карти, складеної з клітинок.
+  // Повернення до вбудованої карти OSM — з її ВЛАСНОЮ шпилькою.
   //
-  // Історія цього місця: спершу тут була вбудована сторінка OSM — вона
-  // підганяла показану область під розмір вікна, і шпилька поверх неї
-  // з'їжджала. Потім бібліотека Leaflet — вона ставить шпильку точно,
-  // але малює карту квадратами по 256 пікселів, і між ними лишаються
-  // білі щілини, коли карта стоїть на дробовій позиції.
+  // Через це місце ми пройшли тричі. Вбудована карта з нашою шпилькою
+  // поверх — шпилька з'їжджала, бо карта підганяє показану область під
+  // вікно. Бібліотека Leaflet — шпилька точна, але між клітинками
+  // з'являлися білі щілини. Готова картинка з сервера — сервіс не
+  // відповів узагалі.
   //
-  // Тепер сервер віддає ОДНУ картинку, задану центром і масштабом.
-  // Швів немає, бо немає й стиків. А центр картинки — це рівно та
-  // точка, координати якої ми передали, тож шпилька в центрі вікна
-  // завжди стоїть там, де треба. Ніяких поправок рахувати не потрібно.
-  const [zoom, setZoom] = useState(15);
-  const [failed, setFailed] = useState(false);
+  // Лишається варіант, який працював без нарікань на положення й без
+  // швів: вбудована карта, а шпильку ставить вона сама за координатами.
+  // Ціна — колір шпильки нам не належить. Тому тип точки показуємо
+  // кольоровим підписом під картою, а не кольором самої шпильки.
+  const [span, setSpan] = useState(MAP_SPAN_DEFAULT);
   const gmaps = gmapsUrl(lat, lng);
-  const fill = accent === "bonus" ? "#f2c200" : accent === "meeting" ? "#3f7a2e" : "#e8332f";
-  const dot = accent === "bonus" ? "#4a3f00" : "#fff";
-  const src = `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}`
-    + `&zoom=${zoom}&size=640x400&maptype=mapnik`;
+  const bbox = `${lng - span},${lat - span},${lng + span},${lat + span}`;
+  const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}`
+    + `&layer=mapnik&marker=${lat},${lng}`;
+  const canIn = span > MAP_SPAN_MIN * 1.01;
+  const canOut = span < MAP_SPAN_MAX * 0.99;
+  const zoom = (f) => setSpan((v) => Math.min(MAP_SPAN_MAX, Math.max(MAP_SPAN_MIN, v * f)));
 
   const zoomBtn = (label, onClick, enabled, radius) => (
     <button
@@ -1257,32 +1258,20 @@ function MeetingMap({ lat, lng, accent }) {
 
   return (
     <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", border: `1px solid ${C.line}`, aspectRatio: "16/10", background: C.greenSoft }}>
-      {!failed ? (
-        <img
-          src={src}
-          alt=""
-          onError={() => setFailed(true)}
-          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-        />
-      ) : (
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, textAlign: "center", fontSize: 12, color: C.muted }}>
-          Карту не вдалося завантажити. Скористайтесь кнопкою нижче.
-        </div>
-      )}
-      {!failed && (
-        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -100%)", pointerEvents: "none" }}>
-          <svg width="32" height="42" viewBox="0 0 34 44" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))" }}>
-            <path d="M17 0C7.6 0 0 7.6 0 17c0 12 17 27 17 27s17-15 17-27C34 7.6 26.4 0 17 0z" fill={fill} />
-            <circle cx="17" cy="17" r="6.5" fill={dot} />
-          </svg>
-        </div>
-      )}
+      {/* Рамка вища за вікно: службова смуга OSM із посиланнями йде за
+          нижній край і не займає місця. Положення шпильки від цього не
+          залежить — її ставить сама карта. */}
+      <iframe
+        title="map"
+        src={mapSrc}
+        style={{ width: "100%", height: "calc(100% + 34px)", border: "none", display: "block", pointerEvents: "none" }}
+        loading="lazy"
+      />
       <div style={{ position: "absolute", top: 10, right: 10, display: "flex", flexDirection: "column", boxShadow: "0 2px 8px rgba(0,0,0,0.2)", borderRadius: 10, overflow: "hidden" }}>
-        {zoomBtn("+", () => setZoom((z) => Math.min(18, z + 1)), zoom < 18, "10px 10px 0 0")}
+        {zoomBtn("+", () => zoom(0.5), canIn, "10px 10px 0 0")}
         <div style={{ height: 1, background: C.line }} />
-        {zoomBtn("−", () => setZoom((z) => Math.max(9, z - 1)), zoom > 9, "0 0 10px 10px")}
+        {zoomBtn("−", () => zoom(2), canOut, "0 0 10px 10px")}
       </div>
-      <span style={{ position: "absolute", left: 8, bottom: 6, fontSize: 9.5, color: "rgba(0,0,0,0.45)", background: "rgba(255,255,255,0.72)", padding: "1px 6px", borderRadius: 6 }}>© OpenStreetMap</span>
       <a href={gmaps} target="_blank" rel="noreferrer"
         style={{ position: "absolute", right: 10, bottom: 10, display: "flex", alignItems: "center", gap: 6, background: "#fff", color: C.greenDark, borderRadius: 10, padding: "7px 11px", fontSize: 12, fontWeight: 700, textDecoration: "none", boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }}>
         <Navigation size={13} /> Google Maps
@@ -1414,27 +1403,28 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
       <div onClick={onClick} style={{ cursor: "pointer" }}>
         <div style={{ height: 116, background: trip.heroGradient, position: "relative", padding: 16, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <span style={{
-              background: "rgba(255,255,255,0.22)", backdropFilter: "blur(4px)",
-              color: "#fff", fontSize: 11, fontWeight: 600, padding: "4px 10px",
-              borderRadius: 20, letterSpacing: 0.3,
-            }}>{dateWithWeekday(trip)}</span>
-            {/* Значок типу місця зверху, стан поїздки — під ним.
-                Поруч вони конкурували за одну смугу й тиснули на дату
-                ліворуч; у стовпчик кожен читається окремо. */}
-            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+            {/* Дата й стан — одним стовпчиком ліворуч: стан стосується
+                саме дати («до 19.09 набір», «20.09 завершено»), тож
+                поруч із нею читається як продовження думки. Значок типу
+                місця лишається праворуч і ні з чим не конкурує. */}
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, minWidth: 0 }}>
               <span style={{
-                width: 44, height: 44, borderRadius: 14,
                 background: "rgba(255,255,255,0.22)", backdropFilter: "blur(4px)",
-                color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-              }}>{placeIcon(trip.placeType, 26)}</span>
+                color: "#fff", fontSize: 11, fontWeight: 600, padding: "4px 10px",
+                borderRadius: 20, letterSpacing: 0.3, whiteSpace: "nowrap",
+              }}>{dateWithWeekday(trip)}</span>
               {(() => {
                 const st = autoStatus(trip);
                 return STATUS[st]?.badge ? (
-                  <span style={{ background: STATUS[st].bg, color: STATUS[st].fg, fontSize: 10, fontWeight: 700, padding: "4px 9px", borderRadius: 20, textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap" }}>{st === "postponed" ? postponedLabel(trip) : statusLabel(st)}</span>
+                  <span style={{ background: STATUS[st].bg, color: STATUS[st].fg, fontSize: 9, fontWeight: 700, padding: "3px 8px", borderRadius: 20, textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>{st === "postponed" ? postponedLabel(trip) : statusLabel(st)}</span>
                 ) : null;
               })()}
             </span>
+            <span style={{
+              width: 44, height: 44, borderRadius: 14, flexShrink: 0,
+              background: "rgba(255,255,255,0.22)", backdropFilter: "blur(4px)",
+              color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+            }}>{placeIcon(trip.placeType, 26)}</span>
           </div>
           <div style={{ color: "#fff" }}>
             <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.1, letterSpacing: -0.3 }}>{tc(trip.title)}</div>
@@ -3044,7 +3034,10 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                   return (
                     <div style={{ marginBottom: 14 }}>
                       <MeetingMap lat={la} lng={ln} accent={isBonus ? "bonus" : undefined} />
-                      <p style={{ fontSize: 11.5, color: isBonus ? C.yellowInk : C.muted, fontWeight: isBonus ? 700 : 400, margin: "6px 0 0" }}>{tc(sel.name)}</p>
+                      <p style={{ fontSize: 11.5, color: isBonus ? C.yellowInk : C.muted, fontWeight: isBonus ? 700 : 400, margin: "6px 0 0", display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ width: 9, height: 9, borderRadius: "50%", background: isBonus ? "#f2c200" : C.rasp, flexShrink: 0 }} />
+                        {tc(sel.name)}
+                      </p>
                     </div>
                   );
                 })()}
