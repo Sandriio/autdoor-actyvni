@@ -1,8 +1,8 @@
 {
-  "name": "Аутдор Активні",
-  "short_name": "Аутдор Активні",
-  "description": "Одноденні поїздки в гори та міста Баварії",
-  "start_url": "/?v=3",
+  "name": "Tropa Club",
+  "short_name": "Tropa Club",
+  "description": "Твій шлях до нової подорожі",
+  "start_url": "/?v=4",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
