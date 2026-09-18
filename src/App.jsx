@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v104";
+const APP_VERSION = "v105";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -382,6 +382,7 @@ const T = {
   tabPhotos: { uk: "Фотоархів", en: "Photos", de: "Fotos", ru: "Фотоархив" },
   tabUseful: { uk: "Корисне", en: "Useful", de: "Nützliches", ru: "Полезное" },
   arcTitle: { uk: "Фото та відео з поїздок", en: "Photos and videos from trips", de: "Fotos und Videos der Ausflüge", ru: "Фото и видео из поездок" },
+  arcBack: { uk: "Усі альбоми", en: "All albums", de: "Alle Alben", ru: "Все альбомы" },
   arcNote: { uk: "Додавайте свої — вони будуть доступні всій групі.", en: "Add your own — everyone in the group will see them.", de: "Eigene hinzufügen — für die ganze Gruppe sichtbar.", ru: "Добавляйте свои — они будут доступны всей группе." },
   usTitle: { uk: "Корисне", en: "Useful", de: "Nützliches", ru: "Полезное" },
   usTickets: { uk: "Квитки", en: "Tickets", de: "Tickets", ru: "Билеты" },
@@ -1490,6 +1491,68 @@ function DriveGallery({ folderUrl, limit }) {
           )}
         </div>
       )}
+    </>
+  );
+}
+
+// ── Фотоархів: теки поїздок + окремі файли ──────────────────────────
+// У спільній теці лежать не самі знімки, а підтеки — по одній на
+// поїздку. Тому спершу показуємо перелік альбомів, а знімки — коли
+// альбом відкрили. Якщо в теці є й окремі файли, вони теж показуються.
+function DriveArchive({ folderUrl }) {
+  const [folders, setFolders] = useState(null);
+  const [loose, setLoose] = useState(null);
+  const [err, setErr] = useState("");
+  const [open, setOpen] = useState(null);   // {id, name} відкритого альбому
+  const id = driveFolderId(folderUrl);
+
+  useEffect(() => {
+    if (!id) { setFolders([]); setLoose([]); return; }
+    let dead = false;
+    Promise.all([driveList(id, true), driveList(id, false)])
+      .then(([f, l]) => { if (!dead) { setFolders(f); setLoose(l); } })
+      .catch((e) => { if (!dead) { setFolders([]); setLoose([]); setErr(String(e.message || e).slice(0, 160)); } });
+    return () => { dead = true; };
+  }, [id]);
+
+  if (!id) return null;
+  if (folders === null) return <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>{t("gLoading")}</p>;
+  if (err !== "") return <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{t("gError")}</p>;
+
+  if (open) {
+    return (
+      <>
+        <button onClick={() => setOpen(null)}
+          style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", padding: "0 0 11px", cursor: "pointer", fontFamily: "inherit", color: C.greenDark, fontSize: 13, fontWeight: 700 }}>
+          <ChevronRight size={15} style={{ transform: "rotate(180deg)" }} /> {t("arcBack")}
+        </button>
+        <p style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, margin: "0 0 10px" }}>{open.name}</p>
+        <DriveGallery folderUrl={`https://drive.google.com/drive/folders/${open.id}`} />
+      </>
+    );
+  }
+
+  if (folders.length === 0 && (loose || []).length === 0) {
+    return <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>{t("gEmpty")}</p>;
+  }
+
+  return (
+    <>
+      {folders.length > 0 && (
+        <div style={{ display: "grid", gap: 7, marginBottom: (loose || []).length > 0 ? 16 : 10 }}>
+          {folders.map((f) => (
+            <button key={f.id} onClick={() => setOpen({ id: f.id, name: f.name })}
+              style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 13px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+              <span style={{ width: 34, height: 34, borderRadius: 10, background: C.greenSoft, color: C.greenDark, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Images size={17} />
+              </span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{f.name}</span>
+              <ChevronRight size={16} style={{ color: C.muted, flexShrink: 0 }} />
+            </button>
+          ))}
+        </div>
+      )}
+      {(loose || []).length > 0 && <DriveGallery folderUrl={folderUrl} />}
     </>
   );
 }
@@ -3292,8 +3355,14 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                     <p style={{ margin: "0 0 13px", fontSize: 13.5, color: C.inkSoft, lineHeight: 1.5 }}>{t("driveNote")}</p>
                     {/* Фото показуємо прямо тут, а не тільки посиланням:
                         кнопка забирає людину із застосунку, і назад вона
-                        здебільшого не повертається. */}
-                    <DriveGallery folderUrl={url} limit={12} />
+                        здебільшого не повертається.
+                        Сітка з'являється лише тоді, коли в поїздки є ВЛАСНА
+                        тека. Спільний архів тут не показуємо: у ньому лежать
+                        альбоми всіх поїздок, і в картці однієї це збивало б
+                        з пантелику. */}
+                    {trip.driveUrl && String(trip.driveUrl).trim() !== "" && (
+                      <DriveGallery folderUrl={url} limit={12} />
+                    )}
                     <a href={url} target="_blank" rel="noreferrer"
                       style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 13.5, fontWeight: 700, textDecoration: "none" }}>
                       <Camera size={16} /> {t("driveButton")}
@@ -4731,7 +4800,7 @@ export default function App() {
               <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16 }}>
                 <h2 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800, color: C.ink }}>{t("arcTitle")}</h2>
                 <p style={{ margin: "0 0 13px", fontSize: 12.5, color: C.muted, lineHeight: 1.5 }}>{t("arcNote")}</p>
-                <DriveGallery folderUrl={DRIVE_URL} />
+                <DriveArchive folderUrl={DRIVE_URL} />
                 <a href={DRIVE_URL} target="_blank" rel="noreferrer"
                   style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 13.5, fontWeight: 700, textDecoration: "none", marginTop: 4 }}>
                   <Camera size={16} /> {t("driveButton")}
