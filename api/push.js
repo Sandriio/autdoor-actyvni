@@ -62,7 +62,7 @@ function encryptPayload(uaPublicB64, authB64, payload) {
 function vapidHeader(audience) {
   const pub = process.env.VAPID_PUBLIC_KEY;
   const priv = process.env.VAPID_PRIVATE_KEY;
-  const sub = process.env.VAPID_SUBJECT || "mailto:autdoor.actyvni@gmail.com";
+  const sub = process.env.VAPID_SUBJECT || "mailto:tropa.club.trips@gmail.com";
   const p = fromB64u(pub);
   const key = crypto.createPrivateKey({
     key: {
