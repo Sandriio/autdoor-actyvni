@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════
-// Фоновий скрипт «Аутдор Активні»
+// Фоновий скрипт «Tropa Club»
 //
 // Це окремий файл, який браузер тримає живим, навіть коли застосунок
 // закритий. Без нього push-сповіщення неможливі: саме сюди приходить
@@ -22,10 +22,10 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch (err) {
-    data = { title: "Аутдор Активні", body: event.data ? event.data.text() : "" };
+    data = { title: "Tropa Club", body: event.data ? event.data.text() : "" };
   }
 
-  const title = data.title || "Аутдор Активні";
+  const title = data.title || "Tropa Club";
   const options = {
     body: data.body || "",
     // Шлях мусить збігатися з реальним іменем файлу в папці public.
@@ -40,7 +40,7 @@ self.addEventListener("push", (event) => {
     // дзвіночок.
     badge: data.badge || "/badge-96.png",
     vibrate: [120, 60, 120],
-    tag: data.tag || "autdoor",
+    tag: data.tag || "tropa",
     renotify: true,
     data: { url: data.url || "/" },
   };
