@@ -202,10 +202,10 @@ export default async function handler(req, res) {
     const payloadFor = (lang) => {
       const m = pack ? (pack[lang] || pack.uk || pack.en || Object.values(pack)[0]) : null;
       return JSON.stringify({
-        title: (m && m.title) || title || "Аутдор Активні",
+        title: (m && m.title) || title || "Tropa Club",
         body: (m && m.body) || body || "",
         url: url || "/",
-        tag: tag || "autdoor",
+        tag: tag || "tropa",
       });
     };
     const cache = {};
