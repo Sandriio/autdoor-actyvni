@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v107";
+const APP_VERSION = "v108";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -379,7 +379,7 @@ const T = {
   gError: { uk: "Не вдалося отримати фото з Диска. Скористайтесь кнопкою нижче.", en: "Could not load photos from Drive. Use the button below.", de: "Fotos konnten nicht geladen werden. Bitte Button unten nutzen.", ru: "Не удалось получить фото с Диска. Воспользуйтесь кнопкой ниже." },
   gMore: { uk: "Ще фото у спільному архіві:", en: "More photos in the shared archive:", de: "Weitere Fotos im Archiv:", ru: "Ещё фото в общем архиве:" },
   tabTrips: { uk: "Поїздки", en: "Trips", de: "Ausflüge", ru: "Поездки" },
-  tabPhotos: { uk: "Фотоархів", en: "Photos", de: "Fotos", ru: "Фотоархив" },
+  tabPhotos: { uk: "Медіаконтент", en: "Media", de: "Medien", ru: "Медиаконтент" },
   tabUseful: { uk: "Корисне", en: "Useful", de: "Nützliches", ru: "Полезное" },
   arcTitle: { uk: "Фото та відео з поїздок", en: "Photos and videos from trips", de: "Fotos und Videos der Ausflüge", ru: "Фото и видео из поездок" },
   arcBack: { uk: "Усі альбоми", en: "All albums", de: "Alle Alben", ru: "Все альбомы" },
@@ -1429,27 +1429,68 @@ function ApertureIcon({ size, color }) {
 }
 
 // ── Кольори альбомів ────────────────────────────────────────────────
-// Чотирнадцять рівновіддалених тонів кола відтінків. Яскравість кожного
-// підібрана окремо, щоб контраст значка до своєї плашки був однаковий
-// (близько 5:1): на однаковій яскравості жовтий і салатовий виглядають
-// блідими поруч із синім і фіолетовим.
+// П'ятдесят кольорів. Підібрані не «на око»: з дев'ятисот кандидатів
+// щоразу бралася найдальша точка в просторі CIELAB — тому кольори
+// розходяться максимально, а не збиваються в купки схожих. Яскравість
+// кожного підігнана окремо, щоб контраст значка до своєї плашки був
+// однаковий (близько 5:1): на однаковій яскравості жовтий і салатовий
+// виглядають блідими поруч із синім.
+//
+// Чесно: п'ятдесят — це вже за межею, де око впевнено розрізняє кольори
+// поодинці. Поруч у списку вони різні, але два кольори з різних кінців
+// довгого переліку можуть здатися схожими відтінками. Це обмеження зору,
+// а не палітри.
 const ALBUM_COLORS = [
-  { ink: "#b2331f", tile: "#f9e7e4" }, { ink: "#8b5918", tile: "#f9f0e4" },
-  { ink: "#6c6c13", tile: "#f9f9e4" }, { ink: "#4a7114", tile: "#f0f9e4" },
-  { ink: "#237515", tile: "#e7f9e4" }, { ink: "#15752f", tile: "#e4f9ea" },
-  { ink: "#157559", tile: "#e4f9f3" }, { ink: "#16707e", tile: "#e4f6f9" },
-  { ink: "#2062b6", tile: "#e4edf9" }, { ink: "#4546de", tile: "#e4e4f9" },
-  { ink: "#7a33db", tile: "#ede4f9" }, { ink: "#9f20b6", tile: "#f6e4f9" },
-  { ink: "#ad1f86", tile: "#f9e4f3" }, { ink: "#b6204c", tile: "#f9e4ea" },
+  { ink: "#874f78", tile: "#f1e9ef" }, { ink: "#426f2f", tile: "#eaf3e6" },
+  { ink: "#a110b7", tile: "#f6e1f9" }, { ink: "#745f44", tile: "#f1ede9" },
+  { ink: "#6337e1", tile: "#e7e1f8" }, { ink: "#6b652e", tile: "#f3f2e6" },
+  { ink: "#a419a3", tile: "#f8e1f8" }, { ink: "#516a3e", tile: "#ecf1e9" },
+  { ink: "#ab2190", tile: "#f7e2f3" }, { ink: "#2f6f45", tile: "#e6f3eb" },
+  { ink: "#b71063", tile: "#f9e1ed" }, { ink: "#136e7c", tile: "#e1f5f8" },
+  { ink: "#a9325e", tile: "#f5e4ea" }, { ink: "#11735c", tile: "#e1f8f3" },
+  { ink: "#b11b78", tile: "#f8e1ef" }, { ink: "#406d64", tile: "#e9f1ef" },
+  { ink: "#bc102d", tile: "#f9e1e5" }, { ink: "#4f6287", tile: "#e9ebf1" },
+  { ink: "#b12f1b", tile: "#f8e4e1" }, { ink: "#595b97", tile: "#e9e9f1" },
+  { ink: "#925516", tile: "#f8ede1" }, { ink: "#4b58af", tile: "#e6e8f3" },
+  { ink: "#736811", tile: "#f8f5e1" }, { ink: "#923f92", tile: "#f3e6f3" },
+  { ink: "#576f11", tile: "#f2f8e1" }, { ink: "#6c4baf", tile: "#ebe6f3" },
+  { ink: "#7e5d26", tile: "#f5efe4" }, { ink: "#5b4ac9", tile: "#e6e4f5" },
+  { ink: "#ad3434", tile: "#f5e4e4" }, { ink: "#466577", tile: "#e9eef1" },
+  { ink: "#901fd1", tile: "#f0e1f8" }, { ink: "#8a5351", tile: "#f1e9e9" },
+  { ink: "#7f14eb", tile: "#ede1f9" }, { ink: "#8a5164", tile: "#f1e9eb" },
+  { ink: "#117312", tile: "#e1f8e1" }, { ink: "#8338bc", tile: "#eee4f5" },
+  { ink: "#8b543c", tile: "#f3eae6" }, { ink: "#374be1", tile: "#e1e4f8" },
+  { ink: "#9d4343", tile: "#f3e6e6" }, { ink: "#1257ce", tile: "#e1e9f9" },
+  { ink: "#9d492f", tile: "#f5e8e4" }, { ink: "#0d6a91", tile: "#e1f1f9" },
+  { ink: "#b61b41", tile: "#f8e1e7" }, { ink: "#117337", tile: "#e1f8ea" },
+  { ink: "#964074", tile: "#f3e6ee" }, { ink: "#357311", tile: "#eaf8e1" },
+  { ink: "#77518a", tile: "#eee9f1" }, { ink: "#a4450e", tile: "#f9e9e1" },
+  { ink: "#1a62ad", tile: "#e1ecf8" }, { ink: "#9a4259", tile: "#f3e6ea" },
 ];
-// Колір закріплюється за ідентифікатором теки, а не за її місцем у
-// списку. Якби колір залежав від місця, поява одного нового альбому
-// перефарбувала б усі наступні — а людина запам'ятовує саме колір.
-function albumColor(key) {
-  const s = String(key || "");
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return ALBUM_COLORS[h % ALBUM_COLORS.length];
+// Колір закріплюється за ідентифікатором теки, а не за її місцем у списку:
+// якби колір залежав від місця, поява одного нового альбому перефарбувала б
+// усі наступні — а людина запам'ятовує саме колір.
+//
+// Самої кількості кольорів замало, щоб вони не повторювалися: два різні
+// ідентифікатори легко дають те саме число. Тому зайнятий колір
+// пропускається й береться наступний вільний. На списку до 50 альбомів
+// повторів немає жодного; понад 50 — повтори неминучі, і тоді колір
+// просто піде по колу.
+function albumColorMap(keys) {
+  const used = new Set();
+  const map = {};
+  for (const key of keys) {
+    const s = String(key || "");
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    let idx = h % ALBUM_COLORS.length;
+    for (let step = 0; step < ALBUM_COLORS.length && used.has(idx); step++) {
+      idx = (idx + 1) % ALBUM_COLORS.length;
+    }
+    used.add(idx);
+    map[key] = ALBUM_COLORS[idx];
+  }
+  return map;
 }
 
 // ── Галерея з Google Диска ──────────────────────────────────────────
@@ -1459,6 +1500,9 @@ function DriveGallery({ folderUrl, limit }) {
   const [files, setFiles] = useState(null);
   const [err, setErr] = useState("");
   const [open, setOpen] = useState(null);   // індекс відкритого файлу
+  // Файли, для яких прямий шлях не спрацював: по одному, а не на всю
+  // галерею, щоб одне збійне відео не переводило решту на рамку Диска.
+  const [driveFallback, setDriveFallback] = useState({});
   const id = driveFolderId(folderUrl);
 
   useEffect(() => {
@@ -1525,23 +1569,50 @@ function DriveGallery({ folderUrl, limit }) {
         <div onClick={() => setOpen(null)}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom))" }}>
           {isVideo(cur) ? (
-            // Програвач займає всю вільну площу, а не жорсткий кадр 16:9.
-            // Раніше висота була прив'язана до ширини за співвідношенням
-            // 16:9, тож вертикальне відео з телефона стискалося у вузьку
-            // смужку посеред екрана — саме це виглядало як «обрізається».
+            // Свій програвач замість рамки Google Диска.
             //
-            // allowFullScreen обов'язковий. Без цього дозволу кнопка «на
-            // весь екран» усередині програвача Диска не може розгорнути
-            // рамку й натомість відкриває файл на самому Диску.
+            // Коричнева смуга «drive.google.com — щоб вийти з повноекранного
+            // режиму…» — це попередження самого браузера про те, що екран
+            // зайняв ЧУЖИЙ сайт. Сховати його кодом неможливо: це захист
+            // користувача, і він з'являтиметься щоразу, поки відео грає з
+            // рамки drive.google.com. Єдиний спосіб його позбутися — грати
+            // файл самим. Тоді зникають і значок «відкрити в новому вікні»,
+            // і вікно про «Картинку в картинці», і підпис у шторці нарешті
+            // наш, а не той, що вирішить Диск.
+            //
+            // Якщо Диск не віддасть файл напряму, спрацьовує onError і
+            // вмикається стара рамка. Краще менш гарний програвач, ніж
+            // порожній екран — тому запасний шлях лишається.
             <div onClick={(e) => e.stopPropagation()}
-              style={{ width: "100%", height: "100%", maxWidth: 1100, paddingTop: 46, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <iframe
-                title="video"
-                src={drivePreview(cur.id)}
-                allow="autoplay; fullscreen; picture-in-picture"
-                allowFullScreen
-                style={{ width: "100%", height: "100%", border: "none", borderRadius: 12, background: "#000", display: "block" }}
-              />
+              style={{ width: "100%", height: "100%", maxWidth: 1100, paddingTop: 46, boxSizing: "border-box", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+              {driveFallback[cur.id] ? (
+                <iframe
+                  title="video"
+                  src={drivePreview(cur.id)}
+                  allow="autoplay; fullscreen; picture-in-picture"
+                  allowFullScreen
+                  style={{ width: "100%", flex: 1, minHeight: 0, border: "none", borderRadius: 12, background: "#000", display: "block" }}
+                />
+              ) : (
+                <video
+                  key={cur.id}
+                  src={driveMedia(cur.id)}
+                  poster={driveThumb(cur.id, 1000)}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  controlsList="nodownload"
+                  onError={() => setDriveFallback((m) => ({ ...m, [cur.id]: true }))}
+                  style={{ width: "100%", flex: 1, minHeight: 0, objectFit: "contain", borderRadius: 12, background: "#000", display: "block" }}
+                />
+              )}
+              {/* Дрібний підпис, який програвач зараз працює. Тримаємо його,
+                  поки не переконаємось на живих файлах, що прямий шлях
+                  надійний — здогадуватись, чому відео поводиться інакше,
+                  вже виходило дорожче, ніж один рядок тексту. */}
+              <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", marginTop: 8, letterSpacing: 0.3 }}>
+                {driveFallback[cur.id] ? "програвач: Google Диск" : "програвач: власний"}
+              </span>
             </div>
           ) : (
             <img src={driveThumb(cur.id, 1600)} alt=""
@@ -1613,22 +1684,28 @@ function DriveArchive({ folderUrl }) {
     <>
       {folders.length > 0 && (
         <div style={{ display: "grid", gap: 7, marginBottom: (loose || []).length > 0 ? 16 : 10 }}>
-          {folders.map((f) => {
-            // Свій колір на кожен альбом: у довгому списку однакових рядків
-            // колір значка помітніший за назву й допомагає впізнати потрібну
-            // поїздку, не вчитуючись.
-            const col = albumColor(f.id);
-            return (
-              <button key={f.id} onClick={() => setOpen({ id: f.id, name: f.name })}
-                style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 13px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-                <span style={{ width: 42, height: 42, borderRadius: 12, background: col.tile, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <ApertureIcon size={27} color={col.ink} />
-                </span>
-                <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{f.name}</span>
-                <ChevronRight size={16} style={{ color: C.muted, flexShrink: 0 }} />
-              </button>
-            );
-          })}
+          {(() => {
+            // Кольори роздаються один раз на ввесь список, а не кожному
+            // рядку окремо: інакше рядок не знав би, що його колір уже
+            // зайняв хтось вищий, і повтори неминуче з'явилися б.
+            const colors = albumColorMap(folders.map((f) => f.id));
+            return folders.map((f) => {
+              // Свій колір на кожен альбом: у довгому списку однакових
+              // рядків колір значка помітніший за назву й допомагає
+              // впізнати потрібну поїздку, не вчитуючись.
+              const col = colors[f.id];
+              return (
+                <button key={f.id} onClick={() => setOpen({ id: f.id, name: f.name })}
+                  style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 13px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                  <span style={{ width: 42, height: 42, borderRadius: 12, background: col.tile, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <ApertureIcon size={27} color={col.ink} />
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{f.name}</span>
+                  <ChevronRight size={16} style={{ color: C.muted, flexShrink: 0 }} />
+                </button>
+              );
+            });
+          })()}
         </div>
       )}
       {(loose || []).length > 0 && <DriveGallery folderUrl={folderUrl} />}
@@ -1714,23 +1791,16 @@ function UsefulTab() {
     <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16 }}>
       <h2 style={{ margin: "0 0 14px", fontSize: 14.5, fontWeight: 800, color: C.ink, lineHeight: 1.5 }}>{t("usIntro")}</h2>
       <div style={{ display: "grid", gap: 12 }}>
-        {USEFUL_SHEETS.map((s, i) => {
-          const col = albumColor(s.file);
-          return (
-            <button key={s.file} onClick={() => setOpen(i)}
-              style={{ display: "block", width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: 10, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 9, padding: "0 2px" }}>
-                <span style={{ width: 34, height: 34, borderRadius: 10, background: col.tile, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <ApertureIcon size={22} color={col.ink} />
-                </span>
-                <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 800, color: C.ink }}>{label(s)}</span>
-                <ChevronRight size={16} style={{ color: C.muted, flexShrink: 0 }} />
-              </div>
-              <img src={s.file} alt={label(s)} loading="lazy"
-                style={{ width: "100%", display: "block", borderRadius: 10, background: C.greenSoft }} />
-            </button>
-          );
-        })}
+        {USEFUL_SHEETS.map((s, i) => (
+          // Нічого, крім самого плаката: заголовок і значок тут були зайвими,
+          // бо назва розділу написана на самій картинці вгорі. Рамка — кольору
+          // тла застосунку, тож світлий плакат має чіткий край на світлій картці.
+          <button key={s.file} onClick={() => setOpen(i)}
+            style={{ display: "block", width: "100%", padding: 0, border: `2px solid ${C.page}`, borderRadius: 12, overflow: "hidden", cursor: "pointer", fontFamily: "inherit", background: C.greenSoft, lineHeight: 0 }}>
+            <img src={s.file} alt={label(s)} loading="lazy"
+              style={{ width: "100%", display: "block" }} />
+          </button>
+        ))}
       </div>
       {cur && (
         <UsefulSheetViewer
@@ -1951,6 +2021,9 @@ function driveFolderId(url) {
 // Ескіз і повний розмір — різні адреси того самого файлу.
 const driveThumb = (id, w) => `https://drive.google.com/thumbnail?id=${id}&sz=w${w || 400}`;
 const drivePreview = (id) => `https://drive.google.com/file/d/${id}/preview`;
+// Пряме посилання на сам файл — той самий ключ, яким читаємо перелік тек.
+// Потрібне, щоб грати відео власним програвачем, а не в рамці Диска.
+const driveMedia = (id) => `${DRIVE_FILES}/${id}?alt=media&key=${GDRIVE_KEY}`;
 
 async function driveList(folderId, onlyFolders) {
   if (!folderId) return [];
