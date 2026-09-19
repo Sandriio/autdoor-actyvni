@@ -1,4 +1,4 @@
-cimport React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
   Sun, CloudRain, Wind, Droplets, Navigation, Calendar, ArrowLeft, ArrowUp,
