@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v112 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v114 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -24,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v112";
+const APP_VERSION = "v114";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -386,7 +386,9 @@ const T = {
   arcBack: { uk: "Усі альбоми", en: "All albums", de: "Alle Alben", ru: "Все альбомы" },
   arcNote: { uk: "Додавайте свої — вони будуть доступні всій групі.", en: "Add your own — everyone in the group will see them.", de: "Eigene hinzufügen — für die ganze Gruppe sichtbar.", ru: "Добавляйте свои — они будут доступны всей группе." },
   mcAllFolders: { uk: "Усі папки", en: "All folders", de: "Alle Ordner", ru: "Все папки" },
-  mcYearWord: { uk: " рік", en: "", de: "", ru: " год" },
+  mcYearLabel: { uk: "{y} рік", en: "Year {y}", de: "Jahr {y}", ru: "{y} год" },
+  mcRename:    { uk: "Перейменувати", en: "Rename", de: "Umbenennen", ru: "Переименовать" },
+  mcSave:      { uk: "Зберегти", en: "Save", de: "Speichern", ru: "Сохранить" },
   mcOther: { uk: "Інші", en: "Other", de: "Andere", ru: "Другие" },
   mcAlbums: { uk: "альбомів", en: "albums", de: "Alben", ru: "альбомов" },
   mcAddFolder: { uk: "Додати папку", en: "Add folder", de: "Ordner hinzufügen", ru: "Добавить папку" },
@@ -407,7 +409,7 @@ const T = {
   upTooBig: { uk: "Відео завелике. Обріжте його або завантажте коротший фрагмент.", en: "Video is too large. Trim it or upload a shorter clip.", de: "Video ist zu groß. Kürzen Sie es oder laden Sie einen kürzeren Clip hoch.", ru: "Видео слишком большое. Обрежьте его или загрузите более короткий фрагмент." },
   usAddImage: { uk: "Додати зображення", en: "Add image", de: "Bild hinzufügen", ru: "Добавить изображение" },
   usDelete: { uk: "Видалити", en: "Delete", de: "Löschen", ru: "Удалить" },
-  usIntro: { uk: "Корисна додаткова інформація, яка може стати у нагоді.", en: "Useful extra information that may come in handy.", de: "Nützliche Zusatzinformationen, die hilfreich sein können.", ru: "Полезная дополнительная информация, которая может пригодиться." },
+  usIntro: { uk: "Корисна додаткова інформація, яка може стати у нагоді", en: "Useful extra information that may come in handy", de: "Nützliche Zusatzinformationen, die hilfreich sein können", ru: "Полезная дополнительная информация, которая может пригодиться" },
   secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
   driveNote: { uk: "Спільний архів медіа з цієї поїздки. Додавайте свої — вони будуть доступні всій групі.", en: "A shared media archive from this trip. Add your own — everyone in the group will see them.", de: "Gemeinsames Medienarchiv dieses Ausflugs. Fügen Sie eigene hinzu — die ganze Gruppe sieht sie.", ru: "Общий архив медиа с этой поездки. Добавляйте свои — они будут доступны всей группе." },
   driveHomeNote: { uk: "Архів медіа з усіх поїздок", en: "Media archive from all trips", de: "Medienarchiv aller Ausflüge", ru: "Архив медиа со всех поездок" },
@@ -1889,6 +1891,8 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
   const [editing, setEditing] = useState(null); // тека, якій міняємо колір
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
+  const [renaming, setRenaming] = useState(null);   // {id, title}
+
   const [note, setNote] = useState("");
   const id = driveFolderId(folderUrl);
 
@@ -1936,7 +1940,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
         p_group_id: patch.group_id !== undefined ? patch.group_id : (cur.group_id || null),
         p_ink: patch.ink !== undefined ? patch.ink : (cur.ink || null),
         p_tile: patch.tile !== undefined ? patch.tile : (cur.tile || null),
-        pin: adminPin,
+        p_pin: adminPin,
       });
       reloadMeta(); setNote("");
     } catch (e) { setNote(String(e.message || e).slice(0, 140)); }
@@ -2021,12 +2025,27 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
   const list = allGroupList(folders, groups, groupOf);
   const groupColors = albumColorMap(list.map((g) => `grp-${g.id}`));
 
+  // Перейменування працює і для папок-років, яких ще немає в базі:
+  // зберігаємо рядок з тим самим ідентифікатором, тож папка лишається
+  // на своєму місці серед років, просто отримує свою назву.
+  const renameGroup = async () => {
+    const title = String(renaming.title || "").trim();
+    if (title === "") return;
+    try {
+      await sbRpc("save_album_group", {
+        p_id: renaming.id, p_title: title,
+        p_sort: /^\d{4}$/.test(renaming.id) ? 0 : list.length, p_pin: adminPin,
+      });
+      setRenaming(null); reloadMeta(); setNote("");
+    } catch (e) { setNote(String(e.message || e).slice(0, 140)); }
+  };
+
   const addGroup = async () => {
     const title = newName.trim();
     if (title === "") return;
     try {
       await sbRpc("save_album_group", {
-        p_id: `g${Date.now()}`, p_title: title, p_sort: list.length, pin: adminPin,
+        p_id: `g${Date.now()}`, p_title: title, p_sort: list.length, p_pin: adminPin,
       });
       setNewName(""); setAdding(false); reloadMeta(); setNote("");
     } catch (e) { setNote(String(e.message || e).slice(0, 140)); }
@@ -2037,14 +2056,33 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
       {note !== "" && <p style={{ fontSize: 11.5, color: C.rasp, margin: "0 0 9px" }}>{note}</p>}
       <div style={{ display: "grid", gap: 9, marginBottom: 12 }}>
         {list.map((g) => (
-          <button key={g.id} onClick={() => setView({ type: "group", id: g.id, title: g.title })}
-            style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: "22px 20px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: "block", fontSize: 19, fontWeight: 800, color: C.ink, letterSpacing: -0.2 }}>{g.title}</span>
-              <span style={{ display: "block", fontSize: 12.5, color: C.muted, marginTop: 4 }}>{g.count} {t("mcAlbums")}</span>
-            </span>
-            <ChevronRight size={20} style={{ color: C.muted, flexShrink: 0 }} />
-          </button>
+          renaming && renaming.id === g.id ? (
+            <div key={g.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: 14 }}>
+              <input value={renaming.title} onChange={(e) => setRenaming({ ...renaming, title: e.target.value })} autoFocus
+                style={{ width: "100%", padding: "11px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 15, fontWeight: 700, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={renameGroup} style={{ flex: 1, background: C.green, color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{t("mcSave")}</button>
+                <button onClick={() => setRenaming(null)} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 14px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: C.muted }}>{t("mcCancel")}</button>
+              </div>
+            </div>
+          ) : (
+            <div key={g.id} style={{ display: "flex", alignItems: "center", width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16 }}>
+              <button onClick={() => setView({ type: "group", id: g.id, title: g.title })}
+                style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, background: "none", border: "none", padding: "22px 20px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 19, fontWeight: 800, color: C.ink, letterSpacing: -0.2 }}>{g.title}</span>
+                  <span style={{ display: "block", fontSize: 12.5, color: C.muted, marginTop: 4 }}>{g.count} {t("mcAlbums")}</span>
+                </span>
+              </button>
+              {isAdmin && (
+                <button onClick={() => setRenaming({ id: g.id, title: g.title })} aria-label={t("mcRename")}
+                  style={{ background: "none", border: "none", padding: "10px 6px", cursor: "pointer", color: C.muted, display: "flex" }}>
+                  <Pencil size={17} />
+                </button>
+              )}
+              <ChevronRight size={20} style={{ color: C.muted, flexShrink: 0, marginRight: 16, marginLeft: isAdmin ? 0 : -4 }} />
+            </div>
+          )
         ))}
       </div>
       {isAdmin && (
@@ -2078,16 +2116,30 @@ function allGroupList(folders, groups, groupOf) {
     const g = groupOf(f);
     counts[g] = (counts[g] || 0) + 1;
   }
+  const custom = {};
+  for (const g of groups) custom[g.id] = g;
+
+  // Назва: своя, якщо організатор перейменував; інакше рік мовою
+  // застосунку. Рік підставляється в шаблон, бо англійською слово
+  // стоїть перед числом, а українською — після.
+  const titleOf = (id) => {
+    if (custom[id] && custom[id].title) return custom[id].title;
+    if (/^\d{4}$/.test(id)) return t("mcYearLabel").replace("{y}", id);
+    return id === "other" ? t("mcOther") : id;
+  };
+
+  const ids = new Set([...Object.keys(counts), ...Object.keys(custom)]);
+  const years = [...ids].filter((k) => /^\d{4}$/.test(k)).sort().reverse();
+  const plain = [...ids].filter((k) => !/^\d{4}$/.test(k) && k !== "other")
+    .sort((a, b) => ((custom[a] && custom[a].sort) || 0) - ((custom[b] && custom[b].sort) || 0));
+
+  // Спершу роки, потім створені вручну папки, наприкінці «Інші».
+  // Порядок сталий: перейменування року не переставляє його в списку.
   const out = [];
-  const seen = new Set();
-  for (const g of groups) {
-    seen.add(g.id);
-    out.push({ id: g.id, title: g.title, count: counts[g.id] || 0 });
-  }
-  const years = Object.keys(counts).filter((k) => /^\d{4}$/.test(k) && !seen.has(k)).sort().reverse();
-  for (const y of years) out.push({ id: y, title: `${y}${t("mcYearWord")}`, count: counts[y] });
-  if (counts.other && !seen.has("other")) out.push({ id: "other", title: t("mcOther"), count: counts.other });
-  return out.filter((g) => g.count > 0 || groups.some((x) => x.id === g.id));
+  for (const y of years) out.push({ id: y, title: titleOf(y), count: counts[y] || 0 });
+  for (const k of plain) out.push({ id: k, title: titleOf(k), count: counts[k] || 0 });
+  if (counts.other) out.push({ id: "other", title: t("mcOther"), count: counts.other });
+  return out.filter((g) => g.count > 0 || custom[g.id]);
 }
 
 // ── Корисне: довідкові плакати ──────────────────────────────────────
@@ -2187,7 +2239,7 @@ function UsefulTab({ isAdmin, adminPin }) {
         await sbRpc("save_useful_sheet", {
           p_id: `s${Date.now()}${Math.random().toString(36).slice(2, 5)}`,
           p_url: up.url, p_title: String(f.name || "").replace(/\.[a-z0-9]+$/i, "").slice(0, 80),
-          p_sort: n++, pin: adminPin,
+          p_sort: n++, p_pin: adminPin,
         });
       }
       load();
@@ -2198,7 +2250,7 @@ function UsefulTab({ isAdmin, adminPin }) {
 
   const del = async (row) => {
     if (!row.id) { setNote("Вбудовані плакати видаляються лише з коду."); return; }
-    try { await sbRpc("delete_useful_sheet", { p_id: row.id, pin: adminPin }); load(); }
+    try { await sbRpc("delete_useful_sheet", { p_id: row.id, p_pin: adminPin }); load(); }
     catch (err) { setNote(String(err.message || err).slice(0, 160)); }
   };
 
@@ -2304,7 +2356,10 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
           </div>
           <ChevronRight size={18} color={C.faint} />
         </div>
-        {STATUS[autoStatus(trip)]?.group === "upcoming" && (
+        {/* Коли набір уже закритий, рядок «Залишилось N місць» лише
+            збиває з пантелику: місця нібито є, а записатися не можна.
+            Тому показуємо його лише поки набір відкритий. */}
+        {STATUS[autoStatus(trip)]?.group === "upcoming" && autoStatus(trip) !== "closed" && (
           <div style={{ padding: isAdmin ? "0 16px 10px" : "0 16px 13px", fontSize: 12, color: left <= 3 ? C.rasp : C.green, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
             <Users size={13} /> {left > 0 ? `${t("spotsLeft")} ${left} ${t("spotsLeftWord")}`.trim() : t("noSpots")}
           </div>
