@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v111 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v112 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -24,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v111";
+const APP_VERSION = "v112";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -385,7 +385,29 @@ const T = {
   arcTitle: { uk: "Фото та відео з поїздок", en: "Photos and videos from trips", de: "Fotos und Videos der Ausflüge", ru: "Фото и видео из поездок" },
   arcBack: { uk: "Усі альбоми", en: "All albums", de: "Alle Alben", ru: "Все альбомы" },
   arcNote: { uk: "Додавайте свої — вони будуть доступні всій групі.", en: "Add your own — everyone in the group will see them.", de: "Eigene hinzufügen — für die ganze Gruppe sichtbar.", ru: "Добавляйте свои — они будут доступны всей группе." },
-  usIntro: { uk: "Корисна додаткова інформація, яка може стати у нагоді. Можливо ти знайдеш тут щось для себе!", en: "Useful extra information that may come in handy. Perhaps you will find something for yourself here!", de: "Nützliche Zusatzinformationen, die hilfreich sein können. Vielleicht ist etwas für Sie dabei!", ru: "Полезная дополнительная информация, которая может пригодиться. Возможно, ты найдёшь здесь что-то для себя!" },
+  mcAllFolders: { uk: "Усі папки", en: "All folders", de: "Alle Ordner", ru: "Все папки" },
+  mcYearWord: { uk: " рік", en: "", de: "", ru: " год" },
+  mcOther: { uk: "Інші", en: "Other", de: "Andere", ru: "Другие" },
+  mcAlbums: { uk: "альбомів", en: "albums", de: "Alben", ru: "альбомов" },
+  mcAddFolder: { uk: "Додати папку", en: "Add folder", de: "Ordner hinzufügen", ru: "Добавить папку" },
+  mcFolderName: { uk: "Назва папки, напр. 2027 рік", en: "Folder name, e.g. 2027", de: "Ordnername, z. B. 2027", ru: "Название папки, напр. 2027 год" },
+  mcCreate: { uk: "Створити", en: "Create", de: "Erstellen", ru: "Создать" },
+  mcCancel: { uk: "Скасувати", en: "Cancel", de: "Abbrechen", ru: "Отменить" },
+  mcMoveTo: { uk: "Перенести в папку", en: "Move to folder", de: "In Ordner verschieben", ru: "Перенести в папку" },
+  mcAutoColor: { uk: "Повернути автоматичний колір", en: "Back to automatic colour", de: "Automatische Farbe zurücksetzen", ru: "Вернуть автоматический цвет" },
+  mcApply: { uk: "Застосувати колір", en: "Apply colour", de: "Farbe übernehmen", ru: "Применить цвет" },
+  mcHue: { uk: "Відтінок", en: "Hue", de: "Farbton", ru: "Оттенок" },
+  mcSat: { uk: "Насиченість", en: "Saturation", de: "Sättigung", ru: "Насыщенность" },
+  mcLight: { uk: "Яскравість", en: "Brightness", de: "Helligkeit", ru: "Яркость" },
+  upAdd: { uk: "Додати фото або відео", en: "Add photo or video", de: "Foto oder Video hinzufügen", ru: "Добавить фото или видео" },
+  upBusy: { uk: "Завантажуємо…", en: "Uploading…", de: "Wird hochgeladen…", ru: "Загружаем…" },
+  upHint: { uk: "Фото стискаються автоматично. Відео — до", en: "Photos are compressed automatically. Video — up to", de: "Fotos werden automatisch verkleinert. Video — bis", ru: "Фото сжимаются автоматически. Видео — до" },
+  upAdded: { uk: "Додано", en: "Added", de: "Hinzugefügt", ru: "Добавлено" },
+  upFailed: { uk: "Не вдалося", en: "Failed", de: "Fehlgeschlagen", ru: "Не удалось" },
+  upTooBig: { uk: "Відео завелике. Обріжте його або завантажте коротший фрагмент.", en: "Video is too large. Trim it or upload a shorter clip.", de: "Video ist zu groß. Kürzen Sie es oder laden Sie einen kürzeren Clip hoch.", ru: "Видео слишком большое. Обрежьте его или загрузите более короткий фрагмент." },
+  usAddImage: { uk: "Додати зображення", en: "Add image", de: "Bild hinzufügen", ru: "Добавить изображение" },
+  usDelete: { uk: "Видалити", en: "Delete", de: "Löschen", ru: "Удалить" },
+  usIntro: { uk: "Корисна додаткова інформація, яка може стати у нагоді.", en: "Useful extra information that may come in handy.", de: "Nützliche Zusatzinformationen, die hilfreich sein können.", ru: "Полезная дополнительная информация, которая может пригодиться." },
   secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
   driveNote: { uk: "Спільний архів медіа з цієї поїздки. Додавайте свої — вони будуть доступні всій групі.", en: "A shared media archive from this trip. Add your own — everyone in the group will see them.", de: "Gemeinsames Medienarchiv dieses Ausflugs. Fügen Sie eigene hinzu — die ganze Gruppe sieht sie.", ru: "Общий архив медиа с этой поездки. Добавляйте свои — они будут доступны всей группе." },
   driveHomeNote: { uk: "Архів медіа з усіх поїздок", en: "Media archive from all trips", de: "Medienarchiv aller Ausflüge", ru: "Архив медиа со всех поездок" },
@@ -1533,7 +1555,7 @@ async function sbUploadMedia(file) {
   if (!sbConfigured()) throw new Error("База даних не підключена");
   const isVid = String(file.type || "").startsWith("video/");
   if (isVid && file.size > UPLOAD_VIDEO_MAX_MB * 1024 * 1024) {
-    throw new Error(`Відео більше за ${UPLOAD_VIDEO_MAX_MB} МБ. Обріжте його або завантажте коротший фрагмент.`);
+    throw new Error(t("upTooBig"));
   }
   const ext = isVid ? (String(file.name).split(".").pop() || "mp4").toLowerCase() : "jpg";
   const name = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
@@ -1572,61 +1594,81 @@ function hslToHex(h, s, l) {
 
 function ColorWheel({ value, onPick }) {
   const [h, setH] = useState(value && value.h != null ? value.h : 210);
-  const [s, setS] = useState(value && value.s != null ? value.s : 0.75);
+  const [sa, setSa] = useState(value && value.s != null ? value.s : 0.75);
   const [l, setL] = useState(value && value.l != null ? value.l : 0.38);
   const ref = useRef(null);
 
+  // Колесо дає приблизний колір одним дотиком, повзунки — точний.
+  // Самим лише колесом на телефоні влучити в потрібний відтінок важко:
+  // палець закриває саме те місце, куди цілишся.
   const pickAt = (clientX, clientY) => {
     const el = ref.current;
     if (!el) return;
-    const b = el.getBoundingClientRect();
-    const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
-    const dx = clientX - cx, dy = clientY - cy;
-    const rad = Math.min(1, Math.hypot(dx, dy) / (b.width / 2));
+    const bx = el.getBoundingClientRect();
+    const dx = clientX - (bx.left + bx.width / 2);
+    const dy = clientY - (bx.top + bx.height / 2);
+    const rad = Math.min(1, Math.hypot(dx, dy) / (bx.width / 2));
     let ang = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
     if (ang < 0) ang += 360;
     setH(Math.round(ang));
-    setS(Math.max(0.15, Number(rad.toFixed(2))));
+    setSa(Math.max(0.15, Number(rad.toFixed(2))));
   };
 
-  const ink = hslToHex(h, s, l);
-  const tile = hslToHex(h, Math.min(0.6, s * 0.8), 0.93);
+  const ink = hslToHex(h, sa, l);
+  const tile = hslToHex(h, Math.min(0.6, sa * 0.8), 0.93);
+  const row = (label, val, min, max, cur, set, track) => (
+    <div style={{ marginBottom: 9 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: C.muted, marginBottom: 3 }}>
+        <span>{label}</span><span>{val}</span>
+      </div>
+      <input type="range" min={min} max={max} value={cur} onChange={(e) => set(Number(e.target.value))}
+        style={{ width: "100%", appearance: "none", WebkitAppearance: "none", height: 16, background: track, borderRadius: 8, outline: "none" }} />
+    </div>
+  );
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 13, alignItems: "flex-start", marginBottom: 11 }}>
         <div
           ref={ref}
           onClick={(e) => pickAt(e.clientX, e.clientY)}
-          onTouchMove={(e) => { const p = e.touches[0]; if (p) pickAt(p.clientX, p.clientY); }}
           onTouchStart={(e) => { const p = e.touches[0]; if (p) pickAt(p.clientX, p.clientY); }}
+          onTouchMove={(e) => { const p = e.touches[0]; if (p) pickAt(p.clientX, p.clientY); }}
           style={{
-            width: 150, height: 150, borderRadius: "50%", flexShrink: 0, cursor: "crosshair",
+            width: 116, height: 116, borderRadius: "50%", flexShrink: 0, cursor: "crosshair",
             touchAction: "none", border: `2px solid ${C.line}`,
             background:
               "radial-gradient(circle closest-side, #fff 0%, rgba(255,255,255,0) 72%), " +
               "conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)",
           }}
         />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-            <span style={{ width: 46, height: 46, borderRadius: 13, background: tile, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${C.line}` }}>
-              <ApertureIcon size={30} color={ink} />
-            </span>
-            <span style={{ fontSize: 11.5, color: C.muted, fontFamily: "monospace" }}>{ink}</span>
-          </div>
-          <label style={{ fontSize: 11.5, color: C.muted, display: "block", marginBottom: 4 }}>Яскравість</label>
-          <input type="range" min="18" max="62" value={Math.round(l * 100)}
-            onChange={(e) => setL(Number(e.target.value) / 100)}
-            style={{ width: "100%" }} />
-        </div>
+        <span style={{ width: 62, height: 62, borderRadius: 16, background: tile, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${C.line}` }}>
+          <ApertureIcon size={40} color={ink} />
+        </span>
       </div>
-      <button onClick={() => onPick({ ink, tile, h, s, l })}
-        style={{ width: "100%", background: C.green, color: "#fff", border: "none", borderRadius: 11, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-        Застосувати колір
+      {row(t("mcHue"), `${h}°`, 0, 359, h, setH,
+        "linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)")}
+      {row(t("mcSat"), `${Math.round(sa * 100)}%`, 15, 100, Math.round(sa * 100), (v) => setSa(v / 100),
+        `linear-gradient(to right, ${hslToHex(h, 0.15, l)}, ${hslToHex(h, 1, l)})`)}
+      {row(t("mcLight"), `${Math.round(l * 100)}%`, 18, 62, Math.round(l * 100), (v) => setL(v / 100),
+        `linear-gradient(to right, ${hslToHex(h, sa, 0.18)}, ${hslToHex(h, sa, 0.62)})`)}
+      <button onClick={() => onPick({ ink, tile, h, s: sa, l })}
+        style={{ width: "100%", background: C.green, color: "#fff", border: "none", borderRadius: 11, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginTop: 3 }}>
+        {t("mcApply")}
       </button>
     </div>
   );
+}
+
+// ⑤ Альбоми впорядковуємо за датою з назви — від січня до грудня.
+// Диск віддає теки за абеткою, а «29.03» тоді стоїть попереду «05.09»,
+// бо порівнюються перші символи, а не місяці.
+function sortByDate(list) {
+  const key = (f) => {
+    const m = String(f.name || "").match(/^\s*(\d{1,2})\.(\d{1,2})\.(\d{2})\b/);
+    return m ? Number(m[3]) * 10000 + Number(m[2]) * 100 + Number(m[1]) : 999999;
+  };
+  return [...list].sort((a, b) => key(a) - key(b) || (a.name < b.name ? -1 : 1));
 }
 
 // ── Завантаження файлів ─────────────────────────────────────────────
@@ -1655,7 +1697,7 @@ function UploadButton({ folderId, onDone }) {
     }
     setBusy(false);
     if (inp.current) inp.current.value = "";
-    setMsg(bad.length === 0 ? `Додано: ${ok}` : `Додано ${ok}. Не вдалося: ${bad[0]}`);
+    setMsg(bad.length === 0 ? `${t("upAdded")}: ${ok}` : `${t("upAdded")}: ${ok}. ${t("upFailed")}: ${bad[0]}`);
     if (ok > 0 && onDone) onDone();
   };
 
@@ -1665,11 +1707,11 @@ function UploadButton({ folderId, onDone }) {
       <button onClick={() => inp.current && inp.current.click()} disabled={busy}
         style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", background: busy ? C.greenSoft : C.green, color: busy ? C.greenDark : "#fff", border: "none", borderRadius: 12, padding: "12px", fontSize: 13.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
         {busy ? <Loader2 size={16} /> : <Camera size={16} />}
-        {busy ? "Завантажуємо…" : "Додати фото або відео"}
+        {busy ? t("upBusy") : t("upAdd")}
       </button>
       {msg !== "" && <p style={{ margin: "7px 0 0", fontSize: 11.5, color: C.muted, lineHeight: 1.45 }}>{msg}</p>}
       <p style={{ margin: "6px 0 0", fontSize: 11, color: C.faint, lineHeight: 1.45 }}>
-        Фото стискаються автоматично. Відео — до {UPLOAD_VIDEO_MAX_MB} МБ.
+        {t("upHint")} {UPLOAD_VIDEO_MAX_MB} MB.
       </p>
     </div>
   );
@@ -1807,14 +1849,7 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
                   style={{ width: "100%", flex: 1, minHeight: 0, objectFit: "contain", borderRadius: 12, background: "#000", display: "block" }}
                 />
               )}
-              {/* Дрібний підпис, який програвач зараз працює. Тримаємо його,
-                  поки не переконаємось на живих файлах, що прямий шлях
-                  надійний — здогадуватись, чому відео поводиться інакше,
-                  вже виходило дорожче, ніж один рядок тексту. */}
-              <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", marginTop: 8, letterSpacing: 0.3 }}>
-                {cur.upUrl ? "програвач: власний" : driveFallback[cur.id] ? "програвач: Google Диск" : "програвач: власний"}
-              </span>
-            </div>
+                          </div>
           ) : (
             <img src={cur.upUrl || driveThumb(cur.id, 1600)} alt=""
               style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 12 }} />
@@ -1828,7 +1863,7 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
               <ChevronRight size={20} style={{ transform: "rotate(180deg)" }} />
             </button>
           )}
-          {open < files.length - 1 && (
+          {open < all.length - 1 && (
             <button onClick={(e) => { e.stopPropagation(); setOpen(open + 1); }}
               style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.85)", color: C.ink, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ChevronRight size={20} />
@@ -1927,10 +1962,10 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
 
   // ── список альбомів усередині групи ──
   if (view && view.type === "group") {
-    const inGroup = folders.filter((f) => groupOf(f) === view.id);
+    const inGroup = sortByDate(folders.filter((f) => groupOf(f) === view.id));
     return (
       <>
-        {back(() => { setView(null); setEditing(null); }, "Усі папки")}
+        {back(() => { setView(null); setEditing(null); }, t("mcAllFolders"))}
         <p style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, margin: "0 0 10px" }}>{view.title}</p>
         {note !== "" && <p style={{ fontSize: 11.5, color: C.rasp, margin: "0 0 9px" }}>{note}</p>}
         <div style={{ display: "grid", gap: 7, marginBottom: 10 }}>
@@ -1957,7 +1992,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
                   <div style={{ borderTop: `1px solid ${C.line}`, padding: 13 }}>
                     <ColorWheel value={null} onPick={(c) => { saveMeta(f.id, { ink: c.ink, tile: c.tile }); setEditing(null); }} />
                     <div style={{ marginTop: 11 }}>
-                      <label style={{ fontSize: 11.5, color: C.muted, display: "block", marginBottom: 5 }}>Перенести в папку</label>
+                      <label style={{ fontSize: 11.5, color: C.muted, display: "block", marginBottom: 5 }}>{t("mcMoveTo")}</label>
                       <select value={groupOf(f)} onChange={(e) => saveMeta(f.id, { group_id: e.target.value })}
                         style={{ width: "100%", padding: "9px 10px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 13, fontFamily: "inherit", background: "#fff", color: C.ink }}>
                         {allGroupList(folders, groups, groupOf).map((g) => (
@@ -1968,7 +2003,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
                     {(meta[f.id] && meta[f.id].ink) && (
                       <button onClick={() => saveMeta(f.id, { ink: null, tile: null })}
                         style={{ marginTop: 9, background: "none", border: "none", padding: 0, color: C.muted, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
-                        Повернути автоматичний колір
+                        {t("mcAutoColor")}
                       </button>
                     )}
                   </div>
@@ -2000,38 +2035,32 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
   return (
     <>
       {note !== "" && <p style={{ fontSize: 11.5, color: C.rasp, margin: "0 0 9px" }}>{note}</p>}
-      <div style={{ display: "grid", gap: 7, marginBottom: 10 }}>
-        {list.map((g) => {
-          const col = groupColors[`grp-${g.id}`];
-          return (
-            <button key={g.id} onClick={() => setView({ type: "group", id: g.id, title: g.title })}
-              style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "13px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-              <span style={{ width: 42, height: 42, borderRadius: 12, background: col.tile, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <ApertureIcon size={27} color={col.ink} />
-              </span>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: C.ink }}>{g.title}</span>
-                <span style={{ display: "block", fontSize: 11.5, color: C.muted, marginTop: 2 }}>{g.count} альбомів</span>
-              </span>
-              <ChevronRight size={16} style={{ color: C.muted, flexShrink: 0 }} />
-            </button>
-          );
-        })}
+      <div style={{ display: "grid", gap: 9, marginBottom: 12 }}>
+        {list.map((g) => (
+          <button key={g.id} onClick={() => setView({ type: "group", id: g.id, title: g.title })}
+            style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: "22px 20px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 19, fontWeight: 800, color: C.ink, letterSpacing: -0.2 }}>{g.title}</span>
+              <span style={{ display: "block", fontSize: 12.5, color: C.muted, marginTop: 4 }}>{g.count} {t("mcAlbums")}</span>
+            </span>
+            <ChevronRight size={20} style={{ color: C.muted, flexShrink: 0 }} />
+          </button>
+        ))}
       </div>
       {isAdmin && (
         adding ? (
           <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
-            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Назва папки, напр. 2027 рік"
+            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={t("mcFolderName")}
               style={{ width: "100%", padding: "10px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 13, fontFamily: "inherit", marginBottom: 9, boxSizing: "border-box" }} />
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={addGroup} style={{ flex: 1, background: C.green, color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Створити</button>
-              <button onClick={() => { setAdding(false); setNewName(""); }} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 14px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: C.muted }}>Скасувати</button>
+              <button onClick={addGroup} style={{ flex: 1, background: C.green, color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{t("mcCreate")}</button>
+              <button onClick={() => { setAdding(false); setNewName(""); }} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 14px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: C.muted }}>{t("mcCancel")}</button>
             </div>
           </div>
         ) : (
           <button onClick={() => setAdding(true)}
             style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", background: C.greenSoft, color: C.greenDark, border: "none", borderRadius: 12, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>
-            + Додати папку
+            + {t("mcAddFolder")}
           </button>
         )
       )}
@@ -2056,8 +2085,8 @@ function allGroupList(folders, groups, groupOf) {
     out.push({ id: g.id, title: g.title, count: counts[g.id] || 0 });
   }
   const years = Object.keys(counts).filter((k) => /^\d{4}$/.test(k) && !seen.has(k)).sort().reverse();
-  for (const y of years) out.push({ id: y, title: `${y} рік`, count: counts[y] });
-  if (counts.other && !seen.has("other")) out.push({ id: "other", title: "Інші", count: counts.other });
+  for (const y of years) out.push({ id: y, title: `${y}${t("mcYearWord")}`, count: counts[y] });
+  if (counts.other && !seen.has("other")) out.push({ id: "other", title: t("mcOther"), count: counts.other });
   return out.filter((g) => g.count > 0 || groups.some((x) => x.id === g.id));
 }
 
@@ -2191,7 +2220,7 @@ function UsefulTab({ isAdmin, adminPin }) {
           <input ref={inp} type="file" accept="image/*" multiple onChange={add} style={{ display: "none" }} />
           <button onClick={() => inp.current && inp.current.click()} disabled={busy}
             style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", background: busy ? C.greenSoft : C.green, color: busy ? C.greenDark : "#fff", border: "none", borderRadius: 12, padding: "11px", fontSize: 13, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
-            {busy ? <Loader2 size={15} /> : <Camera size={15} />} {busy ? "Завантажуємо…" : "Додати зображення"}
+            {busy ? <Loader2 size={15} /> : <Camera size={15} />} {busy ? t("upBusy") : t("usAddImage")}
           </button>
         </div>
       )}
@@ -2203,7 +2232,7 @@ function UsefulTab({ isAdmin, adminPin }) {
               <img src={sh.url} alt={sh.title || ""} loading="lazy" style={{ width: "100%", display: "block" }} />
             </button>
             {isAdmin && (
-              <button onClick={() => del(sh)} aria-label="Видалити"
+              <button onClick={() => del(sh)} aria-label={t("usDelete")}
                 style={{ position: "absolute", top: 10, right: 10, width: 34, height: 34, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.92)", color: C.rasp, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.25)" }}>
                 <Trash2 size={16} />
               </button>
