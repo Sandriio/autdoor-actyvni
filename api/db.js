@@ -23,7 +23,7 @@ async function getJson(url, timeoutMs) {
       signal: ctl.signal,
       // User-Agent з посиланням на проєкт — так радить документація
       // db-vendo-client, це знижує шанс потрапити під троттлінг.
-      headers: { Accept: "application/json", "User-Agent": "autdoor-actyvni.vercel.app (community trips app)" },
+      headers: { Accept: "application/json", "User-Agent": "Tropa Club (community trips app)" },
     });
     if (r.status === 429) throw new Error("HTTP 429 (rate limit)");
     if (!r.ok) throw new Error("HTTP " + r.status);
