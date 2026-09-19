@@ -137,7 +137,19 @@ function build(kind, tr, extra) {
 }
 
 export default async function handler(req, res) {
-  const secret = (req.query && req.query.secret) || (req.body && req.body.secret);
+  // Ключ приймаємо двома шляхами.
+  //
+  // Vercel, запускаючи розклад сам, НЕ вміє додавати ?secret= у адресу —
+  // він надсилає заголовок Authorization: Bearer <CRON_SECRET>. Раніше
+  // перевірявся лише ?secret=, тому автоматичний виклик відхилявся з
+  // 403, і жодне сповіщення не йшло.
+  //
+  // Дописувати ключ у саму адресу в vercel.json не можна: репозиторій
+  // відкритий, і ключ побачив би будь-хто.
+  const fromQuery = (req.query && req.query.secret) || (req.body && req.body.secret);
+  const auth = String((req.headers && req.headers.authorization) || "");
+  const fromHeader = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const secret = fromQuery || fromHeader;
   if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
     res.status(403).json({ error: "bad secret" });
     return;
