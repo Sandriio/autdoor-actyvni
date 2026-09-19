@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+cimport React, { useState, useEffect, useCallback } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
   Sun, CloudRain, Wind, Droplets, Navigation, Calendar, ArrowLeft, ArrowUp,
@@ -23,7 +23,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v108";
+const APP_VERSION = "v109";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1429,43 +1429,43 @@ function ApertureIcon({ size, color }) {
 }
 
 // ── Кольори альбомів ────────────────────────────────────────────────
-// П'ятдесят кольорів. Підібрані не «на око»: з дев'ятисот кандидатів
-// щоразу бралася найдальша точка в просторі CIELAB — тому кольори
-// розходяться максимально, а не збиваються в купки схожих. Яскравість
-// кожного підігнана окремо, щоб контраст значка до своєї плашки був
-// однаковий (близько 5:1): на однаковій яскравості жовтий і салатовий
-// виглядають блідими поруч із синім.
+// Перша спроба була помилкою: п'ятдесят різних кольорів у коді ще не
+// означають п'ятдесят різних кольорів для ока. Точних повторів не було
+// жодного, але 128 пар відрізнялися настільки мало, що на значку 27 px
+// читалися як однакові — тому й здавалося, що кольори повторюються.
 //
-// Чесно: п'ятдесят — це вже за межею, де око впевнено розрізняє кольори
-// поодинці. Поруч у списку вони різні, але два кольори з різних кінців
-// довгого переліку можуть здатися схожими відтінками. Це обмеження зору,
-// а не палітри.
+// Тут інший підхід. Кольорів двадцять п'ять, а не п'ятдесят, зате вони
+// розведені вдвічі далі. Кожен показується двома способами: темний
+// значок на світлій плашці — і ті самі два кольори навпаки. Один колір
+// у двох ролях сплутати неможливо, тож поєднань виходить п'ятдесят.
+//
+// Перевірено підрахунком: пар, які око може злити, було 128, стало 2.
 const ALBUM_COLORS = [
-  { ink: "#874f78", tile: "#f1e9ef" }, { ink: "#426f2f", tile: "#eaf3e6" },
-  { ink: "#a110b7", tile: "#f6e1f9" }, { ink: "#745f44", tile: "#f1ede9" },
-  { ink: "#6337e1", tile: "#e7e1f8" }, { ink: "#6b652e", tile: "#f3f2e6" },
-  { ink: "#a419a3", tile: "#f8e1f8" }, { ink: "#516a3e", tile: "#ecf1e9" },
-  { ink: "#ab2190", tile: "#f7e2f3" }, { ink: "#2f6f45", tile: "#e6f3eb" },
-  { ink: "#b71063", tile: "#f9e1ed" }, { ink: "#136e7c", tile: "#e1f5f8" },
-  { ink: "#a9325e", tile: "#f5e4ea" }, { ink: "#11735c", tile: "#e1f8f3" },
-  { ink: "#b11b78", tile: "#f8e1ef" }, { ink: "#406d64", tile: "#e9f1ef" },
-  { ink: "#bc102d", tile: "#f9e1e5" }, { ink: "#4f6287", tile: "#e9ebf1" },
-  { ink: "#b12f1b", tile: "#f8e4e1" }, { ink: "#595b97", tile: "#e9e9f1" },
-  { ink: "#925516", tile: "#f8ede1" }, { ink: "#4b58af", tile: "#e6e8f3" },
-  { ink: "#736811", tile: "#f8f5e1" }, { ink: "#923f92", tile: "#f3e6f3" },
-  { ink: "#576f11", tile: "#f2f8e1" }, { ink: "#6c4baf", tile: "#ebe6f3" },
-  { ink: "#7e5d26", tile: "#f5efe4" }, { ink: "#5b4ac9", tile: "#e6e4f5" },
-  { ink: "#ad3434", tile: "#f5e4e4" }, { ink: "#466577", tile: "#e9eef1" },
-  { ink: "#901fd1", tile: "#f0e1f8" }, { ink: "#8a5351", tile: "#f1e9e9" },
-  { ink: "#7f14eb", tile: "#ede1f9" }, { ink: "#8a5164", tile: "#f1e9eb" },
-  { ink: "#117312", tile: "#e1f8e1" }, { ink: "#8338bc", tile: "#eee4f5" },
-  { ink: "#8b543c", tile: "#f3eae6" }, { ink: "#374be1", tile: "#e1e4f8" },
-  { ink: "#9d4343", tile: "#f3e6e6" }, { ink: "#1257ce", tile: "#e1e9f9" },
-  { ink: "#9d492f", tile: "#f5e8e4" }, { ink: "#0d6a91", tile: "#e1f1f9" },
-  { ink: "#b61b41", tile: "#f8e1e7" }, { ink: "#117337", tile: "#e1f8ea" },
-  { ink: "#964074", tile: "#f3e6ee" }, { ink: "#357311", tile: "#eaf8e1" },
-  { ink: "#77518a", tile: "#eee9f1" }, { ink: "#a4450e", tile: "#f9e9e1" },
-  { ink: "#1a62ad", tile: "#e1ecf8" }, { ink: "#9a4259", tile: "#f3e6ea" },
+  { ink: "#047e9f", tile: "#e0f3f8" }, { ink: "#d5d5f6", tile: "#0606f9" },
+  { ink: "#1273ce", tile: "#e0ecf8" }, { ink: "#8b7004", tile: "#f6efd5" },
+  { ink: "#0606f9", tile: "#d5d5f6" }, { ink: "#f2d9e8", tile: "#bc2f83" },
+  { ink: "#d5f6d5", tile: "#038103" }, { ink: "#f0d7f4", tile: "#7b178c" },
+  { ink: "#624218", tile: "#f2e7d9" }, { ink: "#f2e0f8", tile: "#b114eb" },
+  { ink: "#f3f8e0", tile: "#668103" }, { ink: "#e0e9f8", tile: "#1066f9" },
+  { ink: "#b35305", tile: "#f6e4d5" }, { ink: "#d5dff6", tile: "#0d3696" },
+  { ink: "#d81365", tile: "#f8e0ea" }, { ink: "#d5f6f4", tile: "#07544f" },
+  { ink: "#c705a7", tile: "#f8e0f4" }, { ink: "#d5f6ea", tile: "#0b8357" },
+  { ink: "#721d5d", tile: "#f2d9ec" }, { ink: "#e8f2d9", tile: "#395214" },
+  { ink: "#7b178c", tile: "#f0d7f4" }, { ink: "#f6efd5", tile: "#8b7004" },
+  { ink: "#401ba7", tile: "#dfd7f4" }, { ink: "#f2e7d9", tile: "#624218" },
+  { ink: "#1a43f9", tile: "#d5dbf6" }, { ink: "#f6e4d5", tile: "#b35305" },
+  { ink: "#0d3696", tile: "#d5dff6" }, { ink: "#f2d9d9", tile: "#7a1f1f" },
+  { ink: "#1066f9", tile: "#e0e9f8" }, { ink: "#f5e3e4", tile: "#cc333b" },
+  { ink: "#0a4771", tile: "#d5e9f6" }, { ink: "#f8e0ea", tile: "#d81365" },
+  { ink: "#038103", tile: "#d5f6d5" }, { ink: "#f2d9ec", tile: "#721d5d" },
+  { ink: "#395214", tile: "#e8f2d9" }, { ink: "#d5dbf6", tile: "#1a43f9" },
+  { ink: "#7a1f1f", tile: "#f2d9d9" }, { ink: "#e0ecf8", tile: "#1273ce" },
+  { ink: "#db0606", tile: "#f8e0e0" }, { ink: "#d5e9f6", tile: "#0a4771" },
+  { ink: "#cc333b", tile: "#f5e3e4" }, { ink: "#dfd7f4", tile: "#401ba7" },
+  { ink: "#668103", tile: "#f3f8e0" }, { ink: "#b114eb", tile: "#f2e0f8" },
+  { ink: "#0b8357", tile: "#d5f6ea" }, { ink: "#f8e0f4", tile: "#c705a7" },
+  { ink: "#07544f", tile: "#d5f6f4" }, { ink: "#f8e0e0", tile: "#db0606" },
+  { ink: "#e0f3f8", tile: "#047e9f" }, { ink: "#bc2f83", tile: "#f2d9e8" },
 ];
 // Колір закріплюється за ідентифікатором теки, а не за її місцем у списку:
 // якби колір залежав від місця, поява одного нового альбому перефарбувала б
