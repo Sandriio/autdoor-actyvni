@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v116 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v117 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -24,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v116";
+const APP_VERSION = "v117";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -388,6 +388,7 @@ const T = {
   mcAllFolders: { uk: "Усі папки", en: "All folders", de: "Alle Ordner", ru: "Все папки" },
   mcYearLabel: { uk: "{y} рік", en: "Year {y}", de: "Jahr {y}", ru: "{y} год" },
   mcRename:    { uk: "Перейменувати", en: "Rename", de: "Umbenennen", ru: "Переименовать" },
+  mcClearHint: { uk: "Залиште поле порожнім, щоб повернути назву, яка перекладається сама.", en: "Leave the field empty to restore the name that translates itself.", de: "Feld leer lassen, um den automatisch übersetzten Namen wiederherzustellen.", ru: "Оставьте поле пустым, чтобы вернуть название, которое переводится само." },
   mcSave:      { uk: "Зберегти", en: "Save", de: "Speichern", ru: "Сохранить" },
   mcOther: { uk: "Інші", en: "Other", de: "Andere", ru: "Другие" },
   mcAlbums: { uk: "альбомів", en: "albums", de: "Alben", ru: "альбомов" },
@@ -1674,7 +1675,8 @@ function sortByDate(list) {
     const m = String(f.name || "").match(/^\s*(\d{1,2})\.(\d{1,2})\.(\d{2})\b/);
     return m ? Number(m[3]) * 10000 + Number(m[2]) * 100 + Number(m[1]) : 999999;
   };
-  return [...list].sort((a, b) => key(a) - key(b) || (a.name < b.name ? -1 : 1));
+  // Найновіші зверху: свіжу поїздку шукають частіше за торішню.
+  return [...list].sort((a, b) => key(b) - key(a) || (a.name < b.name ? 1 : -1));
 }
 
 // ── Завантаження файлів ─────────────────────────────────────────────
@@ -2032,13 +2034,18 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
   // Перейменування працює і для папок-років, яких ще немає в базі:
   // зберігаємо рядок з тим самим ідентифікатором, тож папка лишається
   // на своєму місці серед років, просто отримує свою назву.
+  // Своя назва завжди однією мовою — інших перекладів для неї нізвідки
+  // взяти. Тому для папок-років порожнє поле повертає автоматичну назву,
+  // яка перекладається сама. Без цього назва, введена англійською,
+  // лишалася б і в українській, і в російській назавжди.
   const renameGroup = async () => {
     const title = String(renaming.title || "").trim();
-    if (title === "") return;
+    const isYear = /^\d{4}$/.test(renaming.id);
+    if (title === "" && !isYear) return;
     try {
       await sbRpc("save_album_group", {
         p_id: renaming.id, p_title: title,
-        p_sort: /^\d{4}$/.test(renaming.id) ? 0 : list.length, p_pin: adminPin,
+        p_sort: isYear ? 0 : list.length, p_pin: adminPin,
       });
       setRenaming(null); reloadMeta(); setNote("");
     } catch (e) { setNote(String(e.message || e).slice(0, 140)); }
@@ -2068,6 +2075,9 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
                 <button onClick={renameGroup} style={{ flex: 1, background: C.green, color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{t("mcSave")}</button>
                 <button onClick={() => setRenaming(null)} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 14px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: C.muted }}>{t("mcCancel")}</button>
               </div>
+              {/^\d{4}$/.test(renaming.id) && (
+                <p style={{ margin: "9px 0 0", fontSize: 11.5, color: C.muted, lineHeight: 1.45 }}>{t("mcClearHint")}</p>
+              )}
             </div>
           ) : (
             <div key={g.id} style={{ display: "flex", alignItems: "center", width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16 }}>
