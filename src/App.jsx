@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from "react";
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v115 ═══
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
   Sun, CloudRain, Wind, Droplets, Navigation, Calendar, ArrowLeft, ArrowUp,
@@ -23,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v109";
+const APP_VERSION = "v115";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -290,7 +291,7 @@ const T = {
   // Назва однакова всіма мовами: це власна назва, а не опис. Те саме
   // правило, що ми щойно застосували до Allgäu й Immenstadt.
   appName: { uk: "Tropa Club", en: "Tropa Club", de: "Tropa Club", ru: "Tropa Club" },
-  appSubtitle: { uk: "Твій шлях до нової подорожі", en: "Your path to a new journey", de: "Dein Weg zu neuen Reisen", ru: "Твой путь к новому путешествию" },
+  appSubtitle: { uk: "Твій шлях до нової подорожі", en: "Your path to a new journey", de: "Dein Weg zu neuen Reisen", ru: "Путь к новому путешествию" },
   upcomingTrips: { uk: "Найближчі поїздки", en: "Upcoming trips", de: "Kommende Ausflüge", ru: "Ближайшие поездки" },
   futureTrips: { uk: "Майбутні поїздки", en: "Later trips", de: "Weitere Ausflüge", ru: "Будущие поездки" },
   avgCheck: { uk: "середній чек", en: "average check", de: "im Schnitt", ru: "средний чек" },
@@ -384,7 +385,31 @@ const T = {
   arcTitle: { uk: "Фото та відео з поїздок", en: "Photos and videos from trips", de: "Fotos und Videos der Ausflüge", ru: "Фото и видео из поездок" },
   arcBack: { uk: "Усі альбоми", en: "All albums", de: "Alle Alben", ru: "Все альбомы" },
   arcNote: { uk: "Додавайте свої — вони будуть доступні всій групі.", en: "Add your own — everyone in the group will see them.", de: "Eigene hinzufügen — für die ganze Gruppe sichtbar.", ru: "Добавляйте свои — они будут доступны всей группе." },
-  usIntro: { uk: "Корисна додаткова інформація, яка може стати у нагоді. Можливо ти знайдеш тут щось для себе!", en: "Useful extra information that may come in handy. Perhaps you will find something for yourself here!", de: "Nützliche Zusatzinformationen, die hilfreich sein können. Vielleicht ist etwas für Sie dabei!", ru: "Полезная дополнительная информация, которая может пригодиться. Возможно, ты найдёшь здесь что-то для себя!" },
+  mcAllFolders: { uk: "Усі папки", en: "All folders", de: "Alle Ordner", ru: "Все папки" },
+  mcYearLabel: { uk: "{y} рік", en: "Year {y}", de: "Jahr {y}", ru: "{y} год" },
+  mcRename:    { uk: "Перейменувати", en: "Rename", de: "Umbenennen", ru: "Переименовать" },
+  mcSave:      { uk: "Зберегти", en: "Save", de: "Speichern", ru: "Сохранить" },
+  mcOther: { uk: "Інші", en: "Other", de: "Andere", ru: "Другие" },
+  mcAlbums: { uk: "альбомів", en: "albums", de: "Alben", ru: "альбомов" },
+  mcAddFolder: { uk: "Додати папку", en: "Add folder", de: "Ordner hinzufügen", ru: "Добавить папку" },
+  mcFolderName: { uk: "Назва папки, напр. 2027 рік", en: "Folder name, e.g. 2027", de: "Ordnername, z. B. 2027", ru: "Название папки, напр. 2027 год" },
+  mcCreate: { uk: "Створити", en: "Create", de: "Erstellen", ru: "Создать" },
+  mcCancel: { uk: "Скасувати", en: "Cancel", de: "Abbrechen", ru: "Отменить" },
+  mcMoveTo: { uk: "Перенести в папку", en: "Move to folder", de: "In Ordner verschieben", ru: "Перенести в папку" },
+  mcAutoColor: { uk: "Повернути автоматичний колір", en: "Back to automatic colour", de: "Automatische Farbe zurücksetzen", ru: "Вернуть автоматический цвет" },
+  mcApply: { uk: "Застосувати колір", en: "Apply colour", de: "Farbe übernehmen", ru: "Применить цвет" },
+  mcHue: { uk: "Відтінок", en: "Hue", de: "Farbton", ru: "Оттенок" },
+  mcSat: { uk: "Насиченість", en: "Saturation", de: "Sättigung", ru: "Насыщенность" },
+  mcLight: { uk: "Яскравість", en: "Brightness", de: "Helligkeit", ru: "Яркость" },
+  upAdd: { uk: "Додати фото або відео", en: "Add photo or video", de: "Foto oder Video hinzufügen", ru: "Добавить фото или видео" },
+  upBusy: { uk: "Завантажуємо…", en: "Uploading…", de: "Wird hochgeladen…", ru: "Загружаем…" },
+  upHint: { uk: "Фото стискаються автоматично. Відео — до", en: "Photos are compressed automatically. Video — up to", de: "Fotos werden automatisch verkleinert. Video — bis", ru: "Фото сжимаются автоматически. Видео — до" },
+  upAdded: { uk: "Додано", en: "Added", de: "Hinzugefügt", ru: "Добавлено" },
+  upFailed: { uk: "Не вдалося", en: "Failed", de: "Fehlgeschlagen", ru: "Не удалось" },
+  upTooBig: { uk: "Відео завелике. Обріжте його або завантажте коротший фрагмент.", en: "Video is too large. Trim it or upload a shorter clip.", de: "Video ist zu groß. Kürzen Sie es oder laden Sie einen kürzeren Clip hoch.", ru: "Видео слишком большое. Обрежьте его или загрузите более короткий фрагмент." },
+  usAddImage: { uk: "Додати зображення", en: "Add image", de: "Bild hinzufügen", ru: "Добавить изображение" },
+  usDelete: { uk: "Видалити", en: "Delete", de: "Löschen", ru: "Удалить" },
+  usIntro: { uk: "Корисна інформація для подорожей", en: "Useful information for your trips", de: "Nützliche Infos für Ihre Reisen", ru: "Полезная информация для поездок" },
   secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
   driveNote: { uk: "Спільний архів медіа з цієї поїздки. Додавайте свої — вони будуть доступні всій групі.", en: "A shared media archive from this trip. Add your own — everyone in the group will see them.", de: "Gemeinsames Medienarchiv dieses Ausflugs. Fügen Sie eigene hinzu — die ganze Gruppe sieht sie.", ru: "Общий архив медиа с этой поездки. Добавляйте свои — они будут доступны всей группе." },
   driveHomeNote: { uk: "Архів медіа з усіх поїздок", en: "Media archive from all trips", de: "Medienarchiv aller Ausflüge", ru: "Архив медиа со всех поездок" },
@@ -1493,11 +1518,213 @@ function albumColorMap(keys) {
   return map;
 }
 
+// ── Медіаконтент: групи, кольори, завантаження ──────────────────────
+// Усе, що організатор налаштовує руками, лежить у Supabase, а не в коді:
+// інакше кожна зміна кольору чи нова папка означали б нову збірку.
+// Самі файли з Диска читаються як раніше — тут лише надбудова над ними.
+
+async function sbRows(table, query) {
+  if (!sbConfigured()) return [];
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, { headers: sbHeaders() });
+  if (!r.ok) return [];
+  return r.json();
+}
+
+const sbAlbumGroups = () => sbRows("album_groups", "select=*&order=sort.asc");
+const sbAlbumMeta = () => sbRows("album_meta", "select=*");
+const sbUsefulSheets = () => sbRows("useful_sheets", "select=*&order=sort.asc");
+const sbUploads = () => sbRows("uploads", "select=*&order=created_at.desc");
+
+// Запис у таблицю завантажень іде напряму: додавати фото можуть усі, не
+// лише організатор. Видаляти — лише за PIN, через серверну функцію.
+async function sbAddUpload(row) {
+  if (!sbConfigured()) throw new Error("База даних не підключена");
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/uploads`, {
+    method: "POST",
+    headers: { ...sbHeaders(), "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify(row),
+  });
+  if (!r.ok) throw new Error((await r.text()).slice(0, 160));
+}
+
+// Завантаження файлу у сховище. Фото стискаємо в браузері — телефонне
+// фото на 4 МБ після стиснення важить близько 400 КБ, і місця вистачає
+// на тисячі знімків. Відео стиснути так не можна, тому воно йде як є,
+// і саме тому стоїть обмеження розміру.
+const UPLOAD_VIDEO_MAX_MB = 45;
+
+async function sbUploadMedia(file) {
+  if (!sbConfigured()) throw new Error("База даних не підключена");
+  const isVid = String(file.type || "").startsWith("video/");
+  if (isVid && file.size > UPLOAD_VIDEO_MAX_MB * 1024 * 1024) {
+    throw new Error(t("upTooBig"));
+  }
+  const ext = isVid ? (String(file.name).split(".").pop() || "mp4").toLowerCase() : "jpg";
+  const name = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const body = isVid ? file : await downscaleImage(file, 1800, 0.85);
+  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/photos/${name}`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": isVid ? file.type : "image/jpeg" },
+    body,
+  });
+  if (!r.ok) throw new Error((await r.text()).slice(0, 160));
+  return { url: `${SUPABASE_URL}/storage/v1/object/public/photos/${name}`, kind: isVid ? "video" : "image" };
+}
+
+// Рік дістається з назви теки: усі альбоми названі як «29.06.25: Forgensee».
+// Завдяки цьому поділ на роки працює одразу, без жодного налаштування, а
+// вручну групу можна перевизначити пізніше.
+function yearFromName(name) {
+  const m = String(name || "").match(/^\s*\d{1,2}\.\d{1,2}\.(\d{2})\b/);
+  return m ? `20${m[1]}` : "";
+}
+
+// ── Кольорове колесо ────────────────────────────────────────────────
+// Кут — відтінок, відстань від центру — насиченість, повзунок — яскравість.
+// Колесо намальоване градієнтами CSS, а колір під пальцем рахується з
+// геометрії, а не піпеткою з картинки: так значення точне й однакове на
+// всіх екранах.
+function hslToHex(h, s, l) {
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    const v = l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+    return Math.round(v * 255).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+function ColorWheel({ value, onPick }) {
+  const [h, setH] = useState(value && value.h != null ? value.h : 210);
+  const [sa, setSa] = useState(value && value.s != null ? value.s : 0.75);
+  const [l, setL] = useState(value && value.l != null ? value.l : 0.38);
+  const ref = useRef(null);
+
+  // Колесо дає приблизний колір одним дотиком, повзунки — точний.
+  // Самим лише колесом на телефоні влучити в потрібний відтінок важко:
+  // палець закриває саме те місце, куди цілишся.
+  const pickAt = (clientX, clientY) => {
+    const el = ref.current;
+    if (!el) return;
+    const bx = el.getBoundingClientRect();
+    const dx = clientX - (bx.left + bx.width / 2);
+    const dy = clientY - (bx.top + bx.height / 2);
+    const rad = Math.min(1, Math.hypot(dx, dy) / (bx.width / 2));
+    let ang = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+    if (ang < 0) ang += 360;
+    setH(Math.round(ang));
+    setSa(Math.max(0.15, Number(rad.toFixed(2))));
+  };
+
+  const ink = hslToHex(h, sa, l);
+  const tile = hslToHex(h, Math.min(0.6, sa * 0.8), 0.93);
+  const row = (label, val, min, max, cur, set, track) => (
+    <div style={{ marginBottom: 9 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: C.muted, marginBottom: 3 }}>
+        <span>{label}</span><span>{val}</span>
+      </div>
+      <input type="range" min={min} max={max} value={cur} onChange={(e) => set(Number(e.target.value))}
+        style={{ width: "100%", appearance: "none", WebkitAppearance: "none", height: 16, background: track, borderRadius: 8, outline: "none" }} />
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 13, alignItems: "flex-start", marginBottom: 11 }}>
+        <div
+          ref={ref}
+          onClick={(e) => pickAt(e.clientX, e.clientY)}
+          onTouchStart={(e) => { const p = e.touches[0]; if (p) pickAt(p.clientX, p.clientY); }}
+          onTouchMove={(e) => { const p = e.touches[0]; if (p) pickAt(p.clientX, p.clientY); }}
+          style={{
+            width: 116, height: 116, borderRadius: "50%", flexShrink: 0, cursor: "crosshair",
+            touchAction: "none", border: `2px solid ${C.line}`,
+            background:
+              "radial-gradient(circle closest-side, #fff 0%, rgba(255,255,255,0) 72%), " +
+              "conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)",
+          }}
+        />
+        <span style={{ width: 62, height: 62, borderRadius: 16, background: tile, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: `1px solid ${C.line}` }}>
+          <ApertureIcon size={40} color={ink} />
+        </span>
+      </div>
+      {row(t("mcHue"), `${h}°`, 0, 359, h, setH,
+        "linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)")}
+      {row(t("mcSat"), `${Math.round(sa * 100)}%`, 15, 100, Math.round(sa * 100), (v) => setSa(v / 100),
+        `linear-gradient(to right, ${hslToHex(h, 0.15, l)}, ${hslToHex(h, 1, l)})`)}
+      {row(t("mcLight"), `${Math.round(l * 100)}%`, 18, 62, Math.round(l * 100), (v) => setL(v / 100),
+        `linear-gradient(to right, ${hslToHex(h, sa, 0.18)}, ${hslToHex(h, sa, 0.62)})`)}
+      <button onClick={() => onPick({ ink, tile, h, s: sa, l })}
+        style={{ width: "100%", background: C.green, color: "#fff", border: "none", borderRadius: 11, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginTop: 3 }}>
+        {t("mcApply")}
+      </button>
+    </div>
+  );
+}
+
+// ⑤ Альбоми впорядковуємо за датою з назви — від січня до грудня.
+// Диск віддає теки за абеткою, а «29.03» тоді стоїть попереду «05.09»,
+// бо порівнюються перші символи, а не місяці.
+function sortByDate(list) {
+  const key = (f) => {
+    const m = String(f.name || "").match(/^\s*(\d{1,2})\.(\d{1,2})\.(\d{2})\b/);
+    return m ? Number(m[3]) * 10000 + Number(m[2]) * 100 + Number(m[1]) : 999999;
+  };
+  return [...list].sort((a, b) => key(a) - key(b) || (a.name < b.name ? -1 : 1));
+}
+
+// ── Завантаження файлів ─────────────────────────────────────────────
+// Кнопка однакова для всіх: і організатор, і учасник додають свої фото
+// сюди ж. Різниця лише в тому, що видаляти може тільки організатор.
+function UploadButton({ folderId, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const inp = useRef(null);
+
+  const handle = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setBusy(true); setMsg("");
+    let ok = 0; const bad = [];
+    for (const f of files) {
+      try {
+        const up = await sbUploadMedia(f);
+        await sbAddUpload({
+          id: `u${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
+          folder_id: folderId || "root",
+          url: up.url, kind: up.kind, name: String(f.name || "").slice(0, 120),
+        });
+        ok++;
+      } catch (err) { bad.push(String(err.message || err)); }
+    }
+    setBusy(false);
+    if (inp.current) inp.current.value = "";
+    setMsg(bad.length === 0 ? `${t("upAdded")}: ${ok}` : `${t("upAdded")}: ${ok}. ${t("upFailed")}: ${bad[0]}`);
+    if (ok > 0 && onDone) onDone();
+  };
+
+  return (
+    <div style={{ marginBottom: 11 }}>
+      <input ref={inp} type="file" accept="image/*,video/*" multiple onChange={handle} style={{ display: "none" }} />
+      <button onClick={() => inp.current && inp.current.click()} disabled={busy}
+        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", background: busy ? C.greenSoft : C.green, color: busy ? C.greenDark : "#fff", border: "none", borderRadius: 12, padding: "12px", fontSize: 13.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+        {busy ? <Loader2 size={16} /> : <Camera size={16} />}
+        {busy ? t("upBusy") : t("upAdd")}
+      </button>
+      {msg !== "" && <p style={{ margin: "7px 0 0", fontSize: 11.5, color: C.muted, lineHeight: 1.45 }}>{msg}</p>}
+      <p style={{ margin: "6px 0 0", fontSize: 11, color: C.faint, lineHeight: 1.45 }}>
+        {t("upHint")} {UPLOAD_VIDEO_MAX_MB} MB.
+      </p>
+    </div>
+  );
+}
+
 // ── Галерея з Google Диска ──────────────────────────────────────────
 // Сітка ескізів, натиск — на весь екран. Відео відкривається програвачем
 // Диска: свій робити немає сенсу, а цей уміє все й нічого не важить.
-function DriveGallery({ folderUrl, limit }) {
+function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
   const [files, setFiles] = useState(null);
+  const [ups, setUps] = useState([]);
   const [err, setErr] = useState("");
   const [open, setOpen] = useState(null);   // індекс відкритого файлу
   // Файли, для яких прямий шлях не спрацював: по одному, а не на всю
@@ -1514,10 +1741,25 @@ function DriveGallery({ folderUrl, limit }) {
     return () => { dead = true; };
   }, [id]);
 
+  // Файли, додані просто в застосунку. Лежать у Supabase, а не на Диску,
+  // і показуються в тій самій сітці — для людини різниці бути не повинно.
+  const loadUps = useCallback(() => {
+    if (!albumId) { setUps([]); return; }
+    sbUploads().then((rows) => setUps(
+      (rows || []).filter((r) => r.folder_id === albumId).map((r) => ({
+        id: r.id, name: r.name || "", upUrl: r.url,
+        mimeType: r.kind === "video" ? "video/mp4" : "image/jpeg",
+      }))
+    )).catch(() => setUps([]));
+  }, [albumId]);
+  useEffect(() => { loadUps(); }, [loadUps]);
+
   // Відкритий файл рахуємо ДО виходів із функції: нижче стоїть ще один
   // useEffect, а гачки не можна оголошувати після return — React вимагає,
   // щоб їх щоразу викликали однакову кількість разів.
-  const cur = files && open != null ? files[open] : null;
+  // Спершу те, що додали люди, потім архів із Диска.
+  const all = files ? [...ups, ...files] : null;
+  const cur = all && open != null ? all[open] : null;
   const isVideo = (f) => String((f && f.mimeType) || "").startsWith("video/");
 
   // Підпис у системному сповіщенні під час фонового програвання. Без
@@ -1539,17 +1781,17 @@ function DriveGallery({ folderUrl, limit }) {
   if (!id) return null;
   if (files === null) return <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>{t("gLoading")}</p>;
   if (err !== "") return <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{t("gError")}</p>;
-  if (files.length === 0) return <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>{t("gEmpty")}</p>;
-
-  const shown = limit ? files.slice(0, limit) : files;
+  const shown = limit ? all.slice(0, limit) : all;
 
   return (
     <>
+      {albumId && !limit && <UploadButton folderId={albumId} onDone={loadUps} />}
+      {all.length === 0 && <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>{t("gEmpty")}</p>}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 10 }}>
         {shown.map((f, i) => (
           <button key={f.id} onClick={() => setOpen(i)}
             style={{ position: "relative", aspectRatio: "1", border: "none", padding: 0, borderRadius: 10, overflow: "hidden", cursor: "pointer", background: C.greenSoft }}>
-            <img src={driveThumb(f.id, 400)} alt="" loading="lazy"
+            <img src={f.upUrl || driveThumb(f.id, 400)} alt="" loading="lazy"
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
             {isVideo(f) && (
               <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.25)", color: "#fff" }}>
@@ -1559,9 +1801,9 @@ function DriveGallery({ folderUrl, limit }) {
           </button>
         ))}
       </div>
-      {limit && files.length > limit && (
+      {limit && all.length > limit && (
         <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 10px" }}>
-          {t("gMore")} {files.length - limit}
+          {t("gMore")} {all.length - limit}
         </p>
       )}
 
@@ -1585,7 +1827,10 @@ function DriveGallery({ folderUrl, limit }) {
             // порожній екран — тому запасний шлях лишається.
             <div onClick={(e) => e.stopPropagation()}
               style={{ width: "100%", height: "100%", maxWidth: 1100, paddingTop: 46, boxSizing: "border-box", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-              {driveFallback[cur.id] ? (
+              {cur.upUrl ? (
+                <video key={cur.id} src={cur.upUrl} controls playsInline preload="metadata"
+                  style={{ width: "100%", flex: 1, minHeight: 0, objectFit: "contain", borderRadius: 12, background: "#000", display: "block" }} />
+              ) : driveFallback[cur.id] ? (
                 <iframe
                   title="video"
                   src={drivePreview(cur.id)}
@@ -1606,16 +1851,9 @@ function DriveGallery({ folderUrl, limit }) {
                   style={{ width: "100%", flex: 1, minHeight: 0, objectFit: "contain", borderRadius: 12, background: "#000", display: "block" }}
                 />
               )}
-              {/* Дрібний підпис, який програвач зараз працює. Тримаємо його,
-                  поки не переконаємось на живих файлах, що прямий шлях
-                  надійний — здогадуватись, чому відео поводиться інакше,
-                  вже виходило дорожче, ніж один рядок тексту. */}
-              <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", marginTop: 8, letterSpacing: 0.3 }}>
-                {driveFallback[cur.id] ? "програвач: Google Диск" : "програвач: власний"}
-              </span>
-            </div>
+                          </div>
           ) : (
-            <img src={driveThumb(cur.id, 1600)} alt=""
+            <img src={cur.upUrl || driveThumb(cur.id, 1600)} alt=""
               style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 12 }} />
           )}
           <button onClick={(e) => { e.stopPropagation(); setOpen(null); }}
@@ -1627,7 +1865,7 @@ function DriveGallery({ folderUrl, limit }) {
               <ChevronRight size={20} style={{ transform: "rotate(180deg)" }} />
             </button>
           )}
-          {open < files.length - 1 && (
+          {open < all.length - 1 && (
             <button onClick={(e) => { e.stopPropagation(); setOpen(open + 1); }}
               style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.85)", color: C.ink, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ChevronRight size={20} />
@@ -1643,12 +1881,29 @@ function DriveGallery({ folderUrl, limit }) {
 // У спільній теці лежать не самі знімки, а підтеки — по одній на
 // поїздку. Тому спершу показуємо перелік альбомів, а знімки — коли
 // альбом відкрили. Якщо в теці є й окремі файли, вони теж показуються.
-function DriveArchive({ folderUrl }) {
+function DriveArchive({ folderUrl, isAdmin, adminPin }) {
   const [folders, setFolders] = useState(null);
   const [loose, setLoose] = useState(null);
   const [err, setErr] = useState("");
-  const [open, setOpen] = useState(null);   // {id, name} відкритого альбому
+  const [groups, setGroups] = useState([]);
+  const [meta, setMeta] = useState({});
+  const [view, setView] = useState(null);      // {type:"group"|"album", ...}
+  const [editing, setEditing] = useState(null); // тека, якій міняємо колір
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [renaming, setRenaming] = useState(null);   // {id, title}
+
+  const [note, setNote] = useState("");
   const id = driveFolderId(folderUrl);
+
+  const reloadMeta = useCallback(() => {
+    Promise.all([sbAlbumGroups(), sbAlbumMeta()]).then(([g, m]) => {
+      setGroups(g || []);
+      const byId = {};
+      for (const row of m || []) byId[row.folder_id] = row;
+      setMeta(byId);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!id) { setFolders([]); setLoose([]); return; }
@@ -1656,61 +1911,235 @@ function DriveArchive({ folderUrl }) {
     Promise.all([driveList(id, true), driveList(id, false)])
       .then(([f, l]) => { if (!dead) { setFolders(f); setLoose(l); } })
       .catch((e) => { if (!dead) { setFolders([]); setLoose([]); setErr(String(e.message || e).slice(0, 160)); } });
+    reloadMeta();
     return () => { dead = true; };
-  }, [id]);
+  }, [id, reloadMeta]);
 
   if (!id) return null;
   if (folders === null) return <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>{t("gLoading")}</p>;
   if (err !== "") return <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{t("gError")}</p>;
 
-  if (open) {
+  // Кожен альбом належить до групи: спершу та, яку задав організатор,
+  // інакше рік із назви, інакше «Інші».
+  const groupOf = (f) => (meta[f.id] && meta[f.id].group_id) || yearFromName(f.name) || "other";
+
+  // Порядок роздачі кольорів сталий — за ідентифікатором теки, а не за
+  // тим, яку групу зараз відкрито. Інакше альбом міняв би колір залежно
+  // від того, звідки на нього дивишся.
+  const autoColors = albumColorMap([...folders].sort((a, b) => (a.id < b.id ? -1 : 1)).map((f) => f.id));
+  const colorOf = (f) => {
+    const m = meta[f.id];
+    return m && m.ink && m.tile ? { ink: m.ink, tile: m.tile } : autoColors[f.id];
+  };
+
+  const saveMeta = async (folderId, patch) => {
+    try {
+      const cur = meta[folderId] || {};
+      await sbRpc("save_album_meta", {
+        p_folder_id: folderId,
+        p_group_id: patch.group_id !== undefined ? patch.group_id : (cur.group_id || null),
+        p_ink: patch.ink !== undefined ? patch.ink : (cur.ink || null),
+        p_tile: patch.tile !== undefined ? patch.tile : (cur.tile || null),
+        p_pin: adminPin,
+      });
+      reloadMeta(); setNote("");
+    } catch (e) { setNote(String(e.message || e).slice(0, 140)); }
+  };
+
+  const back = (onClick, label) => (
+    <button onClick={onClick}
+      style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", padding: "0 0 11px", cursor: "pointer", fontFamily: "inherit", color: C.greenDark, fontSize: 13, fontWeight: 700 }}>
+      <ChevronRight size={15} style={{ transform: "rotate(180deg)" }} /> {label}
+    </button>
+  );
+
+  // ── відкритий альбом ──
+  if (view && view.type === "album") {
     return (
       <>
-        <button onClick={() => setOpen(null)}
-          style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", padding: "0 0 11px", cursor: "pointer", fontFamily: "inherit", color: C.greenDark, fontSize: 13, fontWeight: 700 }}>
-          <ChevronRight size={15} style={{ transform: "rotate(180deg)" }} /> {t("arcBack")}
-        </button>
-        <p style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, margin: "0 0 10px" }}>{open.name}</p>
-        <DriveGallery folderUrl={`https://drive.google.com/drive/folders/${open.id}`} />
+        {back(() => setView({ type: "group", id: view.groupId, title: view.groupTitle }), t("arcBack"))}
+        <p style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, margin: "0 0 10px" }}>{view.name}</p>
+        <DriveGallery folderUrl={`https://drive.google.com/drive/folders/${view.id}`} albumId={view.id} isAdmin={isAdmin} adminPin={adminPin} />
       </>
     );
   }
 
-  if (folders.length === 0 && (loose || []).length === 0) {
-    return <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>{t("gEmpty")}</p>;
+  // ── список альбомів усередині групи ──
+  if (view && view.type === "group") {
+    const inGroup = sortByDate(folders.filter((f) => groupOf(f) === view.id));
+    return (
+      <>
+        {back(() => { setView(null); setEditing(null); }, t("mcAllFolders"))}
+        <p style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, margin: "0 0 10px" }}>{view.title}</p>
+        {note !== "" && <p style={{ fontSize: 11.5, color: C.rasp, margin: "0 0 9px" }}>{note}</p>}
+        <div style={{ display: "grid", gap: 7, marginBottom: 10 }}>
+          {inGroup.map((f) => {
+            const col = colorOf(f);
+            return (
+              <div key={f.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 13px" }}>
+                  <button onClick={() => setView({ type: "album", id: f.id, name: f.name, groupId: view.id, groupTitle: view.title })}
+                    style={{ display: "flex", alignItems: "center", gap: 11, flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                    <span style={{ width: 42, height: 42, borderRadius: 12, background: col.tile, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <ApertureIcon size={27} color={col.ink} />
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{f.name}</span>
+                  </button>
+                  {isAdmin ? (
+                    <button onClick={() => setEditing(editing === f.id ? null : f.id)}
+                      style={{ background: "none", border: "none", padding: 4, cursor: "pointer", color: C.muted, display: "flex" }}>
+                      <Pencil size={15} />
+                    </button>
+                  ) : <ChevronRight size={16} style={{ color: C.muted, flexShrink: 0 }} />}
+                </div>
+                {isAdmin && editing === f.id && (
+                  <div style={{ borderTop: `1px solid ${C.line}`, padding: 13 }}>
+                    <ColorWheel value={null} onPick={(c) => { saveMeta(f.id, { ink: c.ink, tile: c.tile }); setEditing(null); }} />
+                    <div style={{ marginTop: 11 }}>
+                      <label style={{ fontSize: 11.5, color: C.muted, display: "block", marginBottom: 5 }}>{t("mcMoveTo")}</label>
+                      <select value={groupOf(f)} onChange={(e) => saveMeta(f.id, { group_id: e.target.value })}
+                        style={{ width: "100%", padding: "9px 10px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 13, fontFamily: "inherit", background: "#fff", color: C.ink }}>
+                        {allGroupList(folders, groups, groupOf).map((g) => (
+                          <option key={g.id} value={g.id}>{g.title}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {(meta[f.id] && meta[f.id].ink) && (
+                      <button onClick={() => saveMeta(f.id, { ink: null, tile: null })}
+                        style={{ marginTop: 9, background: "none", border: "none", padding: 0, color: C.muted, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
+                        {t("mcAutoColor")}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {inGroup.length === 0 && <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>{t("gEmpty")}</p>}
+        </div>
+      </>
+    );
   }
+
+  // ── верхній рівень: папки-роки ──
+  const list = allGroupList(folders, groups, groupOf);
+  const groupColors = albumColorMap(list.map((g) => `grp-${g.id}`));
+
+  // Перейменування працює і для папок-років, яких ще немає в базі:
+  // зберігаємо рядок з тим самим ідентифікатором, тож папка лишається
+  // на своєму місці серед років, просто отримує свою назву.
+  const renameGroup = async () => {
+    const title = String(renaming.title || "").trim();
+    if (title === "") return;
+    try {
+      await sbRpc("save_album_group", {
+        p_id: renaming.id, p_title: title,
+        p_sort: /^\d{4}$/.test(renaming.id) ? 0 : list.length, p_pin: adminPin,
+      });
+      setRenaming(null); reloadMeta(); setNote("");
+    } catch (e) { setNote(String(e.message || e).slice(0, 140)); }
+  };
+
+  const addGroup = async () => {
+    const title = newName.trim();
+    if (title === "") return;
+    try {
+      await sbRpc("save_album_group", {
+        p_id: `g${Date.now()}`, p_title: title, p_sort: list.length, p_pin: adminPin,
+      });
+      setNewName(""); setAdding(false); reloadMeta(); setNote("");
+    } catch (e) { setNote(String(e.message || e).slice(0, 140)); }
+  };
 
   return (
     <>
-      {folders.length > 0 && (
-        <div style={{ display: "grid", gap: 7, marginBottom: (loose || []).length > 0 ? 16 : 10 }}>
-          {(() => {
-            // Кольори роздаються один раз на ввесь список, а не кожному
-            // рядку окремо: інакше рядок не знав би, що його колір уже
-            // зайняв хтось вищий, і повтори неминуче з'явилися б.
-            const colors = albumColorMap(folders.map((f) => f.id));
-            return folders.map((f) => {
-              // Свій колір на кожен альбом: у довгому списку однакових
-              // рядків колір значка помітніший за назву й допомагає
-              // впізнати потрібну поїздку, не вчитуючись.
-              const col = colors[f.id];
-              return (
-                <button key={f.id} onClick={() => setOpen({ id: f.id, name: f.name })}
-                  style={{ display: "flex", alignItems: "center", gap: 11, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 13px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-                  <span style={{ width: 42, height: 42, borderRadius: 12, background: col.tile, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <ApertureIcon size={27} color={col.ink} />
-                  </span>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{f.name}</span>
-                  <ChevronRight size={16} style={{ color: C.muted, flexShrink: 0 }} />
+      {note !== "" && <p style={{ fontSize: 11.5, color: C.rasp, margin: "0 0 9px" }}>{note}</p>}
+      <div style={{ display: "grid", gap: 9, marginBottom: 12 }}>
+        {list.map((g) => (
+          renaming && renaming.id === g.id ? (
+            <div key={g.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: 14 }}>
+              <input value={renaming.title} onChange={(e) => setRenaming({ ...renaming, title: e.target.value })} autoFocus
+                style={{ width: "100%", padding: "11px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 15, fontWeight: 700, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={renameGroup} style={{ flex: 1, background: C.green, color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{t("mcSave")}</button>
+                <button onClick={() => setRenaming(null)} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 14px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: C.muted }}>{t("mcCancel")}</button>
+              </div>
+            </div>
+          ) : (
+            <div key={g.id} style={{ display: "flex", alignItems: "center", width: "100%", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16 }}>
+              <button onClick={() => setView({ type: "group", id: g.id, title: g.title })}
+                style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, background: "none", border: "none", padding: "22px 20px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 19, fontWeight: 800, color: C.ink, letterSpacing: -0.2 }}>{g.title}</span>
+                  <span style={{ display: "block", fontSize: 12.5, color: C.muted, marginTop: 4 }}>{g.count} {t("mcAlbums")}</span>
+                </span>
+              </button>
+              {isAdmin && (
+                <button onClick={() => setRenaming({ id: g.id, title: g.title })} aria-label={t("mcRename")}
+                  style={{ background: "none", border: "none", padding: "10px 6px", cursor: "pointer", color: C.muted, display: "flex" }}>
+                  <Pencil size={17} />
                 </button>
-              );
-            });
-          })()}
-        </div>
+              )}
+              <ChevronRight size={20} style={{ color: C.muted, flexShrink: 0, marginRight: 16, marginLeft: isAdmin ? 0 : -4 }} />
+            </div>
+          )
+        ))}
+      </div>
+      {isAdmin && (
+        adding ? (
+          <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={t("mcFolderName")}
+              style={{ width: "100%", padding: "10px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 13, fontFamily: "inherit", marginBottom: 9, boxSizing: "border-box" }} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={addGroup} style={{ flex: 1, background: C.green, color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{t("mcCreate")}</button>
+              <button onClick={() => { setAdding(false); setNewName(""); }} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 14px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: C.muted }}>{t("mcCancel")}</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setAdding(true)}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", background: C.greenSoft, color: C.greenDark, border: "none", borderRadius: 12, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>
+            + {t("mcAddFolder")}
+          </button>
+        )
       )}
-      {(loose || []).length > 0 && <DriveGallery folderUrl={folderUrl} />}
+      {(loose || []).length > 0 && <DriveGallery folderUrl={folderUrl} albumId="root" isAdmin={isAdmin} adminPin={adminPin} />}
     </>
   );
+}
+
+// Перелік папок верхнього рівня: ті, які створив організатор, плюс роки,
+// що самі випливають із назв альбомів. Порожні групи не показуються —
+// інакше список заростав би роками, у яких нічого немає.
+function allGroupList(folders, groups, groupOf) {
+  const counts = {};
+  for (const f of folders) {
+    const g = groupOf(f);
+    counts[g] = (counts[g] || 0) + 1;
+  }
+  const custom = {};
+  for (const g of groups) custom[g.id] = g;
+
+  // Назва: своя, якщо організатор перейменував; інакше рік мовою
+  // застосунку. Рік підставляється в шаблон, бо англійською слово
+  // стоїть перед числом, а українською — після.
+  const titleOf = (id) => {
+    if (custom[id] && custom[id].title) return custom[id].title;
+    if (/^\d{4}$/.test(id)) return t("mcYearLabel").replace("{y}", id);
+    return id === "other" ? t("mcOther") : id;
+  };
+
+  const ids = new Set([...Object.keys(counts), ...Object.keys(custom)]);
+  const years = [...ids].filter((k) => /^\d{4}$/.test(k)).sort().reverse();
+  const plain = [...ids].filter((k) => !/^\d{4}$/.test(k) && k !== "other")
+    .sort((a, b) => ((custom[a] && custom[a].sort) || 0) - ((custom[b] && custom[b].sort) || 0));
+
+  // Спершу роки, потім створені вручну папки, наприкінці «Інші».
+  // Порядок сталий: перейменування року не переставляє його в списку.
+  const out = [];
+  for (const y of years) out.push({ id: y, title: titleOf(y), count: counts[y] || 0 });
+  for (const k of plain) out.push({ id: k, title: titleOf(k), count: counts[k] || 0 });
+  if (counts.other) out.push({ id: "other", title: t("mcOther"), count: counts.other });
+  return out.filter((g) => g.count > 0 || custom[g.id]);
 }
 
 // ── Корисне: довідкові плакати ──────────────────────────────────────
@@ -1721,15 +2150,15 @@ function DriveArchive({ folderUrl }) {
 // Файли лежать у теці public і потрапляють у збірку як є. Формат webp
 // вибрано свідомо: ті самі вісім плакатів важать 2,7 МБ замість 20 МБ,
 // а завантажуються лише ті, до яких людина догорнула (loading="lazy").
-const USEFUL_SHEETS = [
-  { file: "/useful-1.webp", uk: "Спорядження для походів", en: "Hiking gear", ru: "Снаряжение для походов" },
-  { file: "/useful-2.webp", uk: "Одяг по сезону", en: "Clothing by season", ru: "Одежда по сезону" },
-  { file: "/useful-3.webp", uk: "Вода і перекус", en: "Water and snacks", ru: "Вода и перекус" },
-  { file: "/useful-4.webp", uk: "Готівка та оплата", en: "Cash and payment", ru: "Наличные и оплата" },
-  { file: "/useful-5.webp", uk: "Як поводитися в горах", en: "How to behave in the mountains", ru: "Как вести себя в горах" },
-  { file: "/useful-6.webp", uk: "Як поводитися в містах", en: "How to behave in towns", ru: "Как вести себя в городах" },
-  { file: "/useful-7.webp", uk: "Безпека та комфорт", en: "Safety and comfort", ru: "Безопасность и комфорт" },
-  { file: "/useful-8.webp", uk: "Гарного настрою!", en: "Enjoy the trip!", ru: "Хорошего настроения!" },
+const USEFUL_FALLBACK = [
+  { id: "", url: "/useful-1.webp", title: "" },
+  { id: "", url: "/useful-2.webp", title: "" },
+  { id: "", url: "/useful-3.webp", title: "" },
+  { id: "", url: "/useful-4.webp", title: "" },
+  { id: "", url: "/useful-5.webp", title: "" },
+  { id: "", url: "/useful-6.webp", title: "" },
+  { id: "", url: "/useful-7.webp", title: "" },
+  { id: "", url: "/useful-8.webp", title: "" },
 ];
 const USEFUL_ZOOMS = [1, 1.8, 2.8];
 
@@ -1782,33 +2211,95 @@ function UsefulSheetViewer({ sheet, title, onClose, onPrev, onNext }) {
   );
 }
 
-function UsefulTab() {
-  const [open, setOpen] = useState(null);   // індекс відкритого плаката
-  const cur = open != null ? USEFUL_SHEETS[open] : null;
-  const label = (s) => s[CURRENT_LANG] || s.uk;
+function UsefulTab({ isAdmin, adminPin }) {
+  const [sheets, setSheets] = useState(null);
+  const [open, setOpen] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const inp = useRef(null);
+
+  // Плакати лежать у базі, а не в коді: інакше кожен новий аркуш вимагав
+  // би нової збірки. Якщо база мовчить — показуємо ті вісім, що лежать у
+  // збірці, щоб розділ ніколи не був порожнім.
+  const load = useCallback(() => {
+    sbUsefulSheets()
+      .then((rows) => setSheets(rows && rows.length > 0 ? rows : USEFUL_FALLBACK))
+      .catch(() => setSheets(USEFUL_FALLBACK));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const add = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setBusy(true); setNote("");
+    try {
+      let n = (sheets || []).length;
+      for (const f of files) {
+        const up = await sbUploadMedia(f);
+        await sbRpc("save_useful_sheet", {
+          p_id: `s${Date.now()}${Math.random().toString(36).slice(2, 5)}`,
+          p_url: up.url, p_title: String(f.name || "").replace(/\.[a-z0-9]+$/i, "").slice(0, 80),
+          p_sort: n++, p_pin: adminPin,
+        });
+      }
+      load();
+    } catch (err) { setNote(String(err.message || err).slice(0, 160)); }
+    setBusy(false);
+    if (inp.current) inp.current.value = "";
+  };
+
+  const del = async (row) => {
+    if (!row.id) { setNote("Вбудовані плакати видаляються лише з коду."); return; }
+    try { await sbRpc("delete_useful_sheet", { p_id: row.id, p_pin: adminPin }); load(); }
+    catch (err) { setNote(String(err.message || err).slice(0, 160)); }
+  };
+
+  if (sheets === null) {
+    return (
+      <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16 }}>
+        <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>{t("gLoading")}</p>
+      </div>
+    );
+  }
+  const cur = open != null ? sheets[open] : null;
 
   return (
     <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16 }}>
       <h2 style={{ margin: "0 0 14px", fontSize: 14.5, fontWeight: 800, color: C.ink, lineHeight: 1.5 }}>{t("usIntro")}</h2>
-      <div style={{ display: "grid", gap: 12 }}>
-        {USEFUL_SHEETS.map((s, i) => (
-          // Нічого, крім самого плаката: заголовок і значок тут були зайвими,
-          // бо назва розділу написана на самій картинці вгорі. Рамка — кольору
-          // тла застосунку, тож світлий плакат має чіткий край на світлій картці.
-          <button key={s.file} onClick={() => setOpen(i)}
-            style={{ display: "block", width: "100%", padding: 0, border: `2px solid ${C.page}`, borderRadius: 12, overflow: "hidden", cursor: "pointer", fontFamily: "inherit", background: C.greenSoft, lineHeight: 0 }}>
-            <img src={s.file} alt={label(s)} loading="lazy"
-              style={{ width: "100%", display: "block" }} />
+      {note !== "" && <p style={{ fontSize: 11.5, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{note}</p>}
+      {isAdmin && (
+        <div style={{ marginBottom: 12 }}>
+          <input ref={inp} type="file" accept="image/*" multiple onChange={add} style={{ display: "none" }} />
+          <button onClick={() => inp.current && inp.current.click()} disabled={busy}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", background: busy ? C.greenSoft : C.green, color: busy ? C.greenDark : "#fff", border: "none", borderRadius: 12, padding: "11px", fontSize: 13, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+            {busy ? <Loader2 size={15} /> : <Camera size={15} />} {busy ? t("upBusy") : t("usAddImage")}
           </button>
+        </div>
+      )}
+      <div style={{ display: "grid", gap: 12 }}>
+        {sheets.map((sh, i) => (
+          <div key={sh.id || sh.url} style={{ position: "relative" }}>
+            <button onClick={() => setOpen(i)}
+              style={{ display: "block", width: "100%", padding: 0, border: `2px solid ${C.page}`, borderRadius: 12, overflow: "hidden", cursor: "pointer", fontFamily: "inherit", background: C.greenSoft, lineHeight: 0 }}>
+              <img src={sh.url} alt={sh.title || ""} loading="lazy" style={{ width: "100%", display: "block" }} />
+            </button>
+            {isAdmin && (
+              <button onClick={() => del(sh)} aria-label={t("usDelete")}
+                style={{ position: "absolute", top: 10, right: 10, width: 34, height: 34, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.92)", color: C.rasp, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.25)" }}>
+                <Trash2 size={16} />
+              </button>
+            )}
+          </div>
         ))}
+        {sheets.length === 0 && <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>{t("gEmpty")}</p>}
       </div>
       {cur && (
         <UsefulSheetViewer
-          sheet={cur.file}
-          title={label(cur)}
+          sheet={cur.url}
+          title={cur.title || ""}
           onClose={() => setOpen(null)}
           onPrev={open > 0 ? () => setOpen(open - 1) : null}
-          onNext={open < USEFUL_SHEETS.length - 1 ? () => setOpen(open + 1) : null}
+          onNext={open < sheets.length - 1 ? () => setOpen(open + 1) : null}
         />
       )}
     </div>
@@ -1865,7 +2356,10 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
           </div>
           <ChevronRight size={18} color={C.faint} />
         </div>
-        {STATUS[autoStatus(trip)]?.group === "upcoming" && (
+        {/* Коли набір уже закритий, рядок «Залишилось N місць» лише
+            збиває з пантелику: місця нібито є, а записатися не можна.
+            Тому показуємо його лише поки набір відкритий. */}
+        {STATUS[autoStatus(trip)]?.group === "upcoming" && autoStatus(trip) !== "closed" && (
           <div style={{ padding: isAdmin ? "0 16px 10px" : "0 16px 13px", fontSize: 12, color: left <= 3 ? C.rasp : C.green, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
             <Users size={13} /> {left > 0 ? `${t("spotsLeft")} ${left} ${t("spotsLeftWord")}`.trim() : t("noSpots")}
           </div>
@@ -5061,7 +5555,7 @@ export default function App() {
               <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16 }}>
                 <h2 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800, color: C.ink }}>{t("arcTitle")}</h2>
                 <p style={{ margin: "0 0 13px", fontSize: 12.5, color: C.muted, lineHeight: 1.5 }}>{t("arcNote")}</p>
-                <DriveArchive folderUrl={DRIVE_URL} />
+                <DriveArchive folderUrl={DRIVE_URL} isAdmin={isAdmin} adminPin={adminPin} />
                 <a href={DRIVE_URL} target="_blank" rel="noreferrer"
                   style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 13.5, fontWeight: 700, textDecoration: "none", marginTop: 4 }}>
                   <Camera size={16} /> {t("driveButton")}
@@ -5069,7 +5563,7 @@ export default function App() {
               </div>
             )}
 
-            {tab === "useful" && <UsefulTab />}
+            {tab === "useful" && <UsefulTab isAdmin={isAdmin} adminPin={adminPin} />}
 
             {/* Admin: add button */}
             {tab === "trips" && isAdmin && (
