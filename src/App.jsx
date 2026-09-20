@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v118 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v119 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -24,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v118";
+const APP_VERSION = "v119";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -410,6 +410,9 @@ const T = {
   upTooBig: { uk: "Відео завелике. Обріжте його або завантажте коротший фрагмент.", en: "Video is too large. Trim it or upload a shorter clip.", de: "Video ist zu groß. Kürzen Sie es oder laden Sie einen kürzeren Clip hoch.", ru: "Видео слишком большое. Обрежьте его или загрузите более короткий фрагмент." },
   usAddImage: { uk: "Додати зображення", en: "Add image", de: "Bild hinzufügen", ru: "Добавить изображение" },
   usDelete: { uk: "Видалити", en: "Delete", de: "Löschen", ru: "Удалить" },
+  usUp: { uk: "Вище", en: "Move up", de: "Nach oben", ru: "Выше" },
+  usDown: { uk: "Нижче", en: "Move down", de: "Nach unten", ru: "Ниже" },
+  usBuiltIn: { uk: "Вбудовані плакати переставляються лише з коду.", en: "Built-in sheets can only be reordered in the code.", de: "Eingebaute Blätter lassen sich nur im Code umsortieren.", ru: "Встроенные плакаты переставляются только из кода." },
   usIntro: { uk: "Корисна інформація для подорожей", en: "Useful information for your trips", de: "Nützliche Infos für Ihre Reisen", ru: "Полезная информация для поездок" },
   secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
   driveNote: { uk: "Спільний архів медіа з цієї поїздки. Додавайте свої — вони будуть доступні всій групі.", en: "A shared media archive from this trip. Add your own — everyone in the group will see them.", de: "Gemeinsames Medienarchiv dieses Ausflugs. Fügen Sie eigene hinzu — die ganze Gruppe sieht sie.", ru: "Общий архив медиа с этой поездки. Добавляйте свои — они будут доступны всей группе." },
@@ -1539,6 +1542,13 @@ const sbAlbumGroups = () => sbRows("album_groups", "select=*&order=sort.asc");
 const sbAlbumMeta = () => sbRows("album_meta", "select=*");
 const sbUsefulSheets = () => sbRows("useful_sheets", "select=*&order=sort.asc");
 const USEFUL_LANGS = ["uk", "en", "ru"];
+// Спільний вигляд для трьох круглих кнопок на картці плаката.
+const sheetBtn = {
+  width: 34, height: 34, borderRadius: "50%", border: "none",
+  background: "rgba(255,255,255,0.92)", cursor: "pointer", padding: 0,
+  display: "flex", alignItems: "center", justifyContent: "center",
+  boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+};
 const sbUploads = () => sbRows("uploads", "select=*&order=created_at.desc");
 
 // Запис у таблицю завантажень іде напряму: додавати фото можуть усі, не
@@ -2274,8 +2284,34 @@ function UsefulTab({ isAdmin, adminPin }) {
     if (inp.current) inp.current.value = "";
   };
 
+  // Порядок зберігається числом у полі sort. Після перестановки
+  // перенумеровуємо весь набір по місцях і записуємо лише ті аркуші,
+  // у яких номер справді змінився — зазвичай це два записи. Простий
+  // обмін значеннями тут не годиться: якщо у двох аркушів однаковий
+  // номер (а так буває після кількох завантажень), обмін нічого б
+  // не змінив.
+  const move = async (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= shown.length) return;
+    if (shown.some((x) => !x.id)) { setNote(t("usBuiltIn")); return; }
+    const next = [...shown];
+    [next[i], next[j]] = [next[j], next[i]];
+    setBusy(true); setNote("");
+    try {
+      for (let k = 0; k < next.length; k++) {
+        if (next[k].sort === k) continue;
+        await sbRpc("save_useful_sheet", {
+          p_id: next[k].id, p_url: next[k].url, p_title: next[k].title || "",
+          p_sort: k, p_lang: next[k].lang || lang, p_pin: adminPin,
+        });
+      }
+      load();
+    } catch (err) { setNote(String(err.message || err).slice(0, 160)); }
+    setBusy(false);
+  };
+
   const del = async (row) => {
-    if (!row.id) { setNote("Вбудовані плакати видаляються лише з коду."); return; }
+    if (!row.id) { setNote(t("usBuiltIn")); return; }
     try { await sbRpc("delete_useful_sheet", { p_id: row.id, p_pin: adminPin }); load(); }
     catch (err) { setNote(String(err.message || err).slice(0, 160)); }
   };
@@ -2326,10 +2362,20 @@ function UsefulTab({ isAdmin, adminPin }) {
               <img src={sh.url} alt={sh.title || ""} loading="lazy" style={{ width: "100%", display: "block" }} />
             </button>
             {isAdmin && (
-              <button onClick={() => del(sh)} aria-label={t("usDelete")}
-                style={{ position: "absolute", top: 10, right: 10, width: 34, height: 34, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.92)", color: C.rasp, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.25)" }}>
-                <Trash2 size={16} />
-              </button>
+              <div style={{ position: "absolute", top: 10, right: 10, display: "flex", gap: 6 }}>
+                <button onClick={() => move(i, -1)} disabled={busy || i === 0} aria-label={t("usUp")}
+                  style={{ ...sheetBtn, color: i === 0 ? C.faint : C.greenDark }}>
+                  <ChevronRight size={16} style={{ transform: "rotate(-90deg)" }} />
+                </button>
+                <button onClick={() => move(i, 1)} disabled={busy || i === shown.length - 1} aria-label={t("usDown")}
+                  style={{ ...sheetBtn, color: i === shown.length - 1 ? C.faint : C.greenDark }}>
+                  <ChevronRight size={16} style={{ transform: "rotate(90deg)" }} />
+                </button>
+                <button onClick={() => del(sh)} disabled={busy} aria-label={t("usDelete")}
+                  style={{ ...sheetBtn, color: C.rasp }}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
             )}
           </div>
         ))}
