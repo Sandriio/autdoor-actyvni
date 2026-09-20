@@ -62,7 +62,7 @@ function encryptPayload(uaPublicB64, authB64, payload) {
 function vapidHeader(audience) {
   const pub = process.env.VAPID_PUBLIC_KEY;
   const priv = process.env.VAPID_PRIVATE_KEY;
-  const sub = process.env.VAPID_SUBJECT || "mailto:tropa.club.trips@gmail.com";
+  const sub = process.env.VAPID_SUBJECT || "mailto:autdoor.actyvni@gmail.com";
   const p = fromB64u(pub);
   const key = crypto.createPrivateKey({
     key: {
@@ -96,7 +96,12 @@ async function sendOne(sub, payload) {
       "Content-Encoding": "aes128gcm",
       "Content-Type": "application/octet-stream",
       TTL: "86400",
-      Urgency: "normal",
+      // Висока терміновість. При «normal» телефон має право притримати
+      // сповіщення до виходу з режиму сну — на Android це легко дає
+      // десятки хвилин затримки вже ПІСЛЯ того, як годинник спрацював.
+      // «high» будить пристрій одразу. Для кількох сповіщень на поїздку
+      // різниця в батареї непомітна.
+      Urgency: "high",
     },
     body,
   });
@@ -202,10 +207,10 @@ export default async function handler(req, res) {
     const payloadFor = (lang) => {
       const m = pack ? (pack[lang] || pack.uk || pack.en || Object.values(pack)[0]) : null;
       return JSON.stringify({
-        title: (m && m.title) || title || "Tropa Club",
+        title: (m && m.title) || title || "Аутдор Активні",
         body: (m && m.body) || body || "",
         url: url || "/",
-        tag: tag || "tropa",
+        tag: tag || "autdoor",
       });
     };
     const cache = {};
