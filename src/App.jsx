@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v115 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v116 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -24,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v115";
+const APP_VERSION = "v116";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -813,6 +813,10 @@ const STATUS = {
   cancelled: { tkey: "stCancelled", group: "past",     badge: true,  bg: "rgba(0,0,0,0.28)", fg: "#ffffff" },
   postponed: { tkey: "stPostponed", group: "upcoming", badge: true,  bg: "rgba(0,0,0,0.28)", fg: "#ffffff" },
 };
+// Стани, за яких показується кількість вільних місць. Усе інше —
+// мовчить. Один перелік на весь застосунок: картка в списку й
+// сторінка поїздки мусять казати те саме.
+const SHOW_SPOTS_IN = ["upcoming", "recruiting"];
 const STATUS_ORDER = ["upcoming", "recruiting", "closed", "ongoing", "postponed", "done", "cancelled"];
 
 // Стан поїздки за годинником.
@@ -2356,10 +2360,14 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
           </div>
           <ChevronRight size={18} color={C.faint} />
         </div>
-        {/* Коли набір уже закритий, рядок «Залишилось N місць» лише
-            збиває з пантелику: місця нібито є, а записатися не можна.
-            Тому показуємо його лише поки набір відкритий. */}
-        {STATUS[autoStatus(trip)]?.group === "upcoming" && autoStatus(trip) !== "closed" && (
+        {/* Кількість вільних місць має сенс лише поки на поїздку справді
+            можна записатися. За станів «набір завершено», «триває»,
+            «перенесено», «завершено» і «скасовано» цей рядок лише збиває
+            з пантелику: місця нібито є, а записатися не можна.
+            Перелік дозволених станів, а не перелік заборонених — новий
+            стан тоді за замовчуванням нічого не показує, і про нього не
+            доведеться згадувати окремо. */}
+        {SHOW_SPOTS_IN.includes(autoStatus(trip)) && (
           <div style={{ padding: isAdmin ? "0 16px 10px" : "0 16px 13px", fontSize: 12, color: left <= 3 ? C.rasp : C.green, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
             <Users size={13} /> {left > 0 ? `${t("spotsLeft")} ${left} ${t("spotsLeftWord")}`.trim() : t("noSpots")}
           </div>
@@ -3004,7 +3012,9 @@ function BookingSection({ trip, taken, onBooked, isAdmin }) {
           <span style={{ fontSize: 12.5, color: C.yellowInk, lineHeight: 1.5 }}>{t("bkNeedsApproval")}</span>
         </div>
       )}
-      {spots > 0 && !done && (
+      {/* Те саме правило, що й на картці: без цього кількість місць
+         зникала зі списку, але лишалася на сторінці поїздки. */}
+      {spots > 0 && !done && SHOW_SPOTS_IN.includes(autoStatus(trip)) && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
           <Users size={16} style={{ color: full ? C.rasp : C.green, flexShrink: 0 }} />
           <span style={{ fontSize: 13.5, color: C.ink, fontWeight: 600 }}>
