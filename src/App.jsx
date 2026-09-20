@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v117 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v118 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -24,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v117";
+const APP_VERSION = "v118";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -1538,6 +1538,7 @@ async function sbRows(table, query) {
 const sbAlbumGroups = () => sbRows("album_groups", "select=*&order=sort.asc");
 const sbAlbumMeta = () => sbRows("album_meta", "select=*");
 const sbUsefulSheets = () => sbRows("useful_sheets", "select=*&order=sort.asc");
+const USEFUL_LANGS = ["uk", "en", "ru"];
 const sbUploads = () => sbRows("uploads", "select=*&order=created_at.desc");
 
 // Запис у таблицю завантажень іде напряму: додавати фото можуть усі, не
@@ -2069,7 +2070,8 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
         {list.map((g) => (
           renaming && renaming.id === g.id ? (
             <div key={g.id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 16, padding: 14 }}>
-              <input value={renaming.title} onChange={(e) => setRenaming({ ...renaming, title: e.target.value })} autoFocus
+              <input value={renaming.title} placeholder={renaming.hint || ""}
+                onChange={(e) => setRenaming({ ...renaming, title: e.target.value })} autoFocus
                 style={{ width: "100%", padding: "11px", borderRadius: 10, border: `1px solid ${C.line}`, fontSize: 15, fontWeight: 700, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={renameGroup} style={{ flex: 1, background: C.green, color: "#fff", border: "none", borderRadius: 10, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{t("mcSave")}</button>
@@ -2089,7 +2091,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
                 </span>
               </button>
               {isAdmin && (
-                <button onClick={() => setRenaming({ id: g.id, title: g.title })} aria-label={t("mcRename")}
+                <button onClick={() => setRenaming({ id: g.id, title: (groups.find((x) => x.id === g.id) || {}).title || "", hint: g.title })} aria-label={t("mcRename")}
                   style={{ background: "none", border: "none", padding: "10px 6px", cursor: "pointer", color: C.muted, display: "flex" }}>
                   <Pencil size={17} />
                 </button>
@@ -2230,6 +2232,7 @@ function UsefulTab({ isAdmin, adminPin }) {
   const [open, setOpen] = useState(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  const [lang, setLang] = useState(CURRENT_LANG);   // який набір показуємо
   const inp = useRef(null);
 
   // Плакати лежать у базі, а не в коді: інакше кожен новий аркуш вимагав
@@ -2240,6 +2243,15 @@ function UsefulTab({ isAdmin, adminPin }) {
       .then((rows) => setSheets(rows && rows.length > 0 ? rows : USEFUL_FALLBACK))
       .catch(() => setSheets(USEFUL_FALLBACK));
   }, []);
+
+  // Плакати зберігаються окремими наборами на кожну мову. Поки набору
+  // для мови немає — показуємо український, щоб розділ не був порожнім
+  // у того, хто ввімкнув англійську раніше, ніж ти встиг завантажити
+  // англійські аркуші.
+  const forLang = (rows, lg) => {
+    const own = (rows || []).filter((r) => (r.lang || "uk") === lg);
+    return own.length > 0 ? own : (rows || []).filter((r) => (r.lang || "uk") === "uk");
+  };
   useEffect(() => { load(); }, [load]);
 
   const add = async (e) => {
@@ -2247,13 +2259,13 @@ function UsefulTab({ isAdmin, adminPin }) {
     if (files.length === 0) return;
     setBusy(true); setNote("");
     try {
-      let n = (sheets || []).length;
+      let n = shown.length;
       for (const f of files) {
         const up = await sbUploadMedia(f);
         await sbRpc("save_useful_sheet", {
           p_id: `s${Date.now()}${Math.random().toString(36).slice(2, 5)}`,
           p_url: up.url, p_title: String(f.name || "").replace(/\.[a-z0-9]+$/i, "").slice(0, 80),
-          p_sort: n++, p_pin: adminPin,
+          p_sort: n++, p_lang: lang, p_pin: adminPin,
         });
       }
       load();
@@ -2275,7 +2287,8 @@ function UsefulTab({ isAdmin, adminPin }) {
       </div>
     );
   }
-  const cur = open != null ? sheets[open] : null;
+  const shown = forLang(sheets, lang);
+  const cur = open != null ? shown[open] : null;
 
   return (
     <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16 }}>
@@ -2283,6 +2296,21 @@ function UsefulTab({ isAdmin, adminPin }) {
       {note !== "" && <p style={{ fontSize: 11.5, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{note}</p>}
       {isAdmin && (
         <div style={{ marginBottom: 12 }}>
+          {/* Набір плакатів на кожну мову свій. Кнопки такі самі, як вибір
+              мови вгорі: обираєш мову — бачиш і завантажуєш саме її аркуші.
+              Читачеві перемикач не потрібен, йому показується його мова. */}
+          <div style={{ display: "flex", gap: 7, marginBottom: 11 }}>
+            {USEFUL_LANGS.map((lg) => (
+              <button key={lg} onClick={() => { setLang(lg); setOpen(null); }}
+                style={{
+                  flex: 1, padding: "9px 0", borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
+                  fontSize: 12.5, fontWeight: 800, letterSpacing: .3, textTransform: "uppercase",
+                  background: lang === lg ? C.yellow : "transparent",
+                  color: lang === lg ? C.greenDark : C.muted,
+                  border: `1.5px solid ${lang === lg ? C.yellow : C.line}`,
+                }}>{lg === "uk" ? "UA" : lg.toUpperCase()}</button>
+            ))}
+          </div>
           <input ref={inp} type="file" accept="image/*" multiple onChange={add} style={{ display: "none" }} />
           <button onClick={() => inp.current && inp.current.click()} disabled={busy}
             style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", background: busy ? C.greenSoft : C.green, color: busy ? C.greenDark : "#fff", border: "none", borderRadius: 12, padding: "11px", fontSize: 13, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
@@ -2291,7 +2319,7 @@ function UsefulTab({ isAdmin, adminPin }) {
         </div>
       )}
       <div style={{ display: "grid", gap: 12 }}>
-        {sheets.map((sh, i) => (
+        {shown.map((sh, i) => (
           <div key={sh.id || sh.url} style={{ position: "relative" }}>
             <button onClick={() => setOpen(i)}
               style={{ display: "block", width: "100%", padding: 0, border: `2px solid ${C.page}`, borderRadius: 12, overflow: "hidden", cursor: "pointer", fontFamily: "inherit", background: C.greenSoft, lineHeight: 0 }}>
@@ -2305,7 +2333,7 @@ function UsefulTab({ isAdmin, adminPin }) {
             )}
           </div>
         ))}
-        {sheets.length === 0 && <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>{t("gEmpty")}</p>}
+        {shown.length === 0 && <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>{t("gEmpty")}</p>}
       </div>
       {cur && (
         <UsefulSheetViewer
@@ -2313,7 +2341,7 @@ function UsefulTab({ isAdmin, adminPin }) {
           title={cur.title || ""}
           onClose={() => setOpen(null)}
           onPrev={open > 0 ? () => setOpen(open - 1) : null}
-          onNext={open < sheets.length - 1 ? () => setOpen(open + 1) : null}
+          onNext={open < shown.length - 1 ? () => setOpen(open + 1) : null}
         />
       )}
     </div>
