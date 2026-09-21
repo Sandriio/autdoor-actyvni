@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v119 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v120 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -24,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v119";
+const APP_VERSION = "v120";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -2237,12 +2237,15 @@ function UsefulSheetViewer({ sheet, title, onClose, onPrev, onNext }) {
   );
 }
 
-function UsefulTab({ isAdmin, adminPin }) {
+function UsefulTab({ isAdmin, adminPin, appLang }) {
   const [sheets, setSheets] = useState(null);
   const [open, setOpen] = useState(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
-  const [lang, setLang] = useState(CURRENT_LANG);   // який набір показуємо
+  const [lang, setLang] = useState(appLang || CURRENT_LANG);   // який набір показуємо
+  // Коли людина міняє мову застосунку вгорі, плакати перемикаються
+  // слідом. Вибір кнопками нижче діє, доки мову вгорі знову не змінять.
+  useEffect(() => { if (appLang) { setLang(appLang); setOpen(null); } }, [appLang]);
   const inp = useRef(null);
 
   // Плакати лежать у базі, а не в коді: інакше кожен новий аркуш вимагав
@@ -2330,23 +2333,26 @@ function UsefulTab({ isAdmin, adminPin }) {
     <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16 }}>
       <h2 style={{ margin: "0 0 14px", fontSize: 14.5, fontWeight: 800, color: C.ink, lineHeight: 1.5 }}>{t("usIntro")}</h2>
       {note !== "" && <p style={{ fontSize: 11.5, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{note}</p>}
+      {/* Перемикач мови плакатів — для всіх, не лише для організатора:
+          плакати бувають різними мовами, і обирати, якою читати, має
+          кожен. Кнопки дослівно ті самі, що й вибір мови вгорі, тому
+          стоять на такій самій зеленій смузі — на світлій картці білий
+          текст тих кнопок просто зник би. */}
+      <div style={{ display: "flex", gap: 6, justifyContent: "center", background: C.page, borderRadius: 16, padding: "11px 10px", marginBottom: 14 }}>
+        {USEFUL_LANGS.map((lg) => (
+          <button key={lg} onClick={() => { setLang(lg); setOpen(null); }} style={{
+            display: "flex", alignItems: "center", justifyContent: "center", padding: "7px 16px", borderRadius: 20,
+            border: lang === lg ? `1.5px solid ${C.yellow}` : "1.5px solid rgba(255,255,255,0.25)",
+            background: lang === lg ? "rgba(253,228,70,0.18)" : "rgba(255,255,255,0.06)",
+            color: lang === lg ? "#fff" : "rgba(255,255,255,0.7)",
+            fontSize: 13, fontWeight: lang === lg ? 700 : 500, cursor: "pointer", letterSpacing: 0.5, fontFamily: "inherit",
+          }}>
+            {lg === "uk" ? "UA" : lg.toUpperCase()}
+          </button>
+        ))}
+      </div>
       {isAdmin && (
         <div style={{ marginBottom: 12 }}>
-          {/* Набір плакатів на кожну мову свій. Кнопки такі самі, як вибір
-              мови вгорі: обираєш мову — бачиш і завантажуєш саме її аркуші.
-              Читачеві перемикач не потрібен, йому показується його мова. */}
-          <div style={{ display: "flex", gap: 7, marginBottom: 11 }}>
-            {USEFUL_LANGS.map((lg) => (
-              <button key={lg} onClick={() => { setLang(lg); setOpen(null); }}
-                style={{
-                  flex: 1, padding: "9px 0", borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
-                  fontSize: 12.5, fontWeight: 800, letterSpacing: .3, textTransform: "uppercase",
-                  background: lang === lg ? C.yellow : "transparent",
-                  color: lang === lg ? C.greenDark : C.muted,
-                  border: `1.5px solid ${lang === lg ? C.yellow : C.line}`,
-                }}>{lg === "uk" ? "UA" : lg.toUpperCase()}</button>
-            ))}
-          </div>
           <input ref={inp} type="file" accept="image/*" multiple onChange={add} style={{ display: "none" }} />
           <button onClick={() => inp.current && inp.current.click()} disabled={busy}
             style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", background: busy ? C.greenSoft : C.green, color: busy ? C.greenDark : "#fff", border: "none", borderRadius: 12, padding: "11px", fontSize: 13, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
@@ -5657,7 +5663,7 @@ export default function App() {
               </div>
             )}
 
-            {tab === "useful" && <UsefulTab isAdmin={isAdmin} adminPin={adminPin} />}
+            {tab === "useful" && <UsefulTab isAdmin={isAdmin} adminPin={adminPin} appLang={lang} />}
 
             {/* Admin: add button */}
             {tab === "trips" && isAdmin && (
