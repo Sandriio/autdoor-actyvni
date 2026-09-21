@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v120 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v121 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -24,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v120";
+const APP_VERSION = "v121";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -410,6 +410,8 @@ const T = {
   upTooBig: { uk: "Відео завелике. Обріжте його або завантажте коротший фрагмент.", en: "Video is too large. Trim it or upload a shorter clip.", de: "Video ist zu groß. Kürzen Sie es oder laden Sie einen kürzeren Clip hoch.", ru: "Видео слишком большое. Обрежьте его или загрузите более короткий фрагмент." },
   usAddImage: { uk: "Додати зображення", en: "Add image", de: "Bild hinzufügen", ru: "Добавить изображение" },
   usDelete: { uk: "Видалити", en: "Delete", de: "Löschen", ru: "Удалить" },
+  upDeleteAsk: { uk: "Видалити цей файл? Повернути його не вийде.", en: "Delete this file? It cannot be restored.", de: "Diese Datei löschen? Sie lässt sich nicht wiederherstellen.", ru: "Удалить этот файл? Вернуть его не получится." },
+  upDeleteFail: { uk: "Не вдалося видалити", en: "Could not delete", de: "Löschen fehlgeschlagen", ru: "Не удалось удалить" },
   usUp: { uk: "Вище", en: "Move up", de: "Nach oben", ru: "Выше" },
   usDown: { uk: "Нижче", en: "Move down", de: "Nach unten", ru: "Ниже" },
   usBuiltIn: { uk: "Вбудовані плакати переставляються лише з коду.", en: "Built-in sheets can only be reordered in the code.", de: "Eingebaute Blätter lassen sich nur im Code umsortieren.", ru: "Встроенные плакаты переставляются только из кода." },
@@ -1690,6 +1692,55 @@ function sortByDate(list) {
   return [...list].sort((a, b) => key(b) - key(a) || (a.name < b.name ? 1 : -1));
 }
 
+// ── Хто що завантажив ───────────────────────────────────────────────
+// Облікових записів немає, тож «моє фото» визначаємо за пристроєм. При
+// першому завантаженні телефон отримує випадковий ключ і зберігає його в
+// себе. У базу йде НЕ ключ, а його відбиток SHA-256. Таблицю завантажень
+// може прочитати будь-хто, тому ключ у відкритому вигляді там був би
+// рівно тим самим, що пароль на дверях: прочитав — і видаляй чуже. З
+// відбитка ключ назад не відновити, тож видалити може лише той пристрій,
+// який файл завантажив.
+//
+// Наслідок, про який варто знати: якщо людина очистить дані браузера або
+// змінить телефон, вона вже не зможе видалити свої давні фото. Організатор
+// може видалити будь-яке — тоді й варто звернутися до нього.
+const OWNER_KEY = "tropa_owner_token";
+
+function ownerToken() {
+  try {
+    let tk = localStorage.getItem(OWNER_KEY);
+    if (!tk) {
+      const b = new Uint8Array(16);
+      crypto.getRandomValues(b);
+      tk = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+      localStorage.setItem(OWNER_KEY, tk);
+    }
+    return tk;
+  } catch { return ""; }
+}
+
+async function sha256hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf), (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+// Видалення йде через сервер, а не напряму в сховище. Щоб файл справді
+// звільнив місце, його треба видаляти через API сховища, а для цього
+// потрібен дозвіл. Дати його застосунку — означало б дозволити будь-кому
+// видалити будь-який файл напряму, в обхід перевірки. Тому сервер спершу
+// перевіряє право (ключ пристрою або PIN), а вже тоді видаляє своїм ключем.
+async function deleteUpload(id, pin) {
+  const body = pin ? { id, pin } : { id, token: ownerToken() };
+  const r = await fetch("/api/delete-upload", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    let msg = "";
+    try { msg = (await r.json()).error || ""; } catch { /* порожня відповідь */ }
+    throw new Error(msg || `HTTP ${r.status}`);
+  }
+}
+
 // ── Завантаження файлів ─────────────────────────────────────────────
 // Кнопка однакова для всіх: і організатор, і учасник додають свої фото
 // сюди ж. Різниця лише в тому, що видаляти може тільки організатор.
@@ -1710,6 +1761,7 @@ function UploadButton({ folderId, onDone }) {
           id: `u${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
           folder_id: folderId || "root",
           url: up.url, kind: up.kind, name: String(f.name || "").slice(0, 120),
+          owner_hash: await sha256hex(ownerToken()),
         });
         ok++;
       } catch (err) { bad.push(String(err.message || err)); }
@@ -1747,6 +1799,9 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
   // Файли, для яких прямий шлях не спрацював: по одному, а не на всю
   // галерею, щоб одне збійне відео не переводило решту на рамку Диска.
   const [driveFallback, setDriveFallback] = useState({});
+  const [myHash, setMyHash] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [delNote, setDelNote] = useState("");
   const id = driveFolderId(folderUrl);
 
   useEffect(() => {
@@ -1764,12 +1819,17 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
     if (!albumId) { setUps([]); return; }
     sbUploads().then((rows) => setUps(
       (rows || []).filter((r) => r.folder_id === albumId).map((r) => ({
-        id: r.id, name: r.name || "", upUrl: r.url,
+        id: r.id, name: r.name || "", upUrl: r.url, owner: r.owner_hash || "",
         mimeType: r.kind === "video" ? "video/mp4" : "image/jpeg",
       }))
     )).catch(() => setUps([]));
   }, [albumId]);
   useEffect(() => { loadUps(); }, [loadUps]);
+  useEffect(() => {
+    let dead = false;
+    sha256hex(ownerToken()).then((h) => { if (!dead) setMyHash(h); }).catch(() => {});
+    return () => { dead = true; };
+  }, []);
 
   // Відкритий файл рахуємо ДО виходів із функції: нижче стоїть ще один
   // useEffect, а гачки не можна оголошувати після return — React вимагає,
@@ -1875,6 +1935,33 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
           )}
           <button onClick={(e) => { e.stopPropagation(); setOpen(null); }}
             style={{ position: "absolute", top: "calc(14px + env(safe-area-inset-top))", right: 14, width: 38, height: 38, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.9)", color: C.ink, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+          {/* Видалити можна лише те, що додали в застосунку: архів на Диску
+              застосунок тільки читає. Учасник бачить кошик на своїх файлах,
+              організатор — на всіх. */}
+          {cur.upUrl && (isAdmin || (myHash && cur.owner === myHash)) && (
+            <button disabled={deleting}
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (!window.confirm(t("upDeleteAsk"))) return;
+                setDeleting(true); setDelNote("");
+                try {
+                  await deleteUpload(cur.id, isAdmin ? adminPin : "");
+                  setOpen(null);
+                  loadUps();
+                } catch (err) {
+                  setDelNote(`${t("upDeleteFail")}: ${String(err.message || err).slice(0, 90)}`);
+                }
+                setDeleting(false);
+              }}
+              aria-label={t("usDelete")}
+              style={{ position: "absolute", top: "calc(14px + env(safe-area-inset-top))", left: 14, width: 38, height: 38, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.9)", color: C.rasp, cursor: deleting ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {deleting ? <Loader2 size={17} /> : <Trash2 size={17} />}
+            </button>
+          )}
+          {delNote !== "" && (
+            <p onClick={(e) => e.stopPropagation()}
+              style={{ position: "absolute", top: "calc(60px + env(safe-area-inset-top))", left: 14, right: 14, margin: 0, background: "rgba(255,255,255,0.94)", color: C.rasp, fontSize: 12.5, padding: "9px 11px", borderRadius: 10, lineHeight: 1.4 }}>{delNote}</p>
+          )}
           {/* Гортання без закривання: люди дивляться підряд. */}
           {open > 0 && (
             <button onClick={(e) => { e.stopPropagation(); setOpen(open - 1); }}
