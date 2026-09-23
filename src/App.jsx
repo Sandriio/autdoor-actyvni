@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v123 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v124 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -24,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v123";
+const APP_VERSION = "v124";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -3658,6 +3658,35 @@ function OrganizerBookings({ trip, pin, onChanged }) {
 
 // Сповіщення про зміну часу. Складається тут, а не в годиннику: лише
 // застосунок знає, коли саме ви вирішили, що зміна варта розсилки.
+// Ручне оголошення про поїздку. Текст свідомо той самий, що й в
+// автоматичного «набір відкрито» (api/push-cron.js): група має
+// отримати однакове сповіщення, хоч би як воно надійшло — само за
+// розкладом чи кнопкою.
+function announceMsgs(trip) {
+  const out = {};
+  const prev = CURRENT_LANG;
+  for (const lang of ["uk", "en", "ru"]) {
+    CURRENT_LANG = lang;
+    const name = tc(trip.title);
+    const when = tc(trip.dateLabel) || trip.date || "";
+    out[lang] = {
+      uk: { title: "Відкрито запис у групу", body: `Запис у групу на ${when} до ${name} відкритий. Встигніть записатися!` },
+      en: { title: "Sign-up is open", body: `Sign-up for the trip to ${name} on ${when} is open. Grab your spot!` },
+      ru: { title: "Открыта запись в группу", body: `Запись в группу на ${when} до ${name} открыта. Успейте записаться!` },
+    }[lang];
+  }
+  CURRENT_LANG = prev;
+  return out;
+}
+
+// Коли «набір відкрито» приходить саме: за 6 днів до поїздки о 18:00.
+// Потрібно лише для підказки біля кнопки — чи ще прийде автоматичне.
+function autoOpenMoment(trip) {
+  const m = String((trip && trip.date) || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return new Date(+m[1], +m[2] - 1, +m[3] - 6, 18, 0, 0);
+}
+
 function timeChangeMsgs(trip) {
   const out = {};
   const prev = CURRENT_LANG;
@@ -3813,6 +3842,41 @@ function PushDiagnostics({ pin, trip }) {
     return `${when} (${minAgo} хв тому)${minAgo > 40 ? " — ЗАДОВГО, годинник стоїть" : ""}`;
   };
 
+  // Займаємо в журналі ТОЙ САМИЙ ключ, що й автоматичне «набір
+  // відкрито». Тоді оголошення приходить рівно один раз: натиснув
+  // вручну — автоматичне вже не повториться; прийшло автоматичне —
+  // кнопка не надішле вдруге; подвійне натискання теж нічого не задвоїть.
+  // Якщо ж саме надсилання не вдалося, ключ звільняємо — інакше журнал
+  // вважав би оголошення надісланим, і повторити було б неможливо.
+  const announce = async () => {
+    if (isDraft(trip)) return;
+    if (!window.confirm("Надіслати всім оголошення про цю поїздку?")) return;
+    setBusy(true); setState("");
+    const key = `open:${trip.id}`;
+    try {
+      const fresh = await sbRpc("push_log_claim", { p_key: key });
+      if (fresh !== true) {
+        setState("Оголошення про цю поїздку вже надсилалося раніше — автоматично або вручну. Повторно не надсилаю, щоб група не отримала його двічі.");
+        return;
+      }
+      let r = null;
+      try { r = await pushSendMsgs(pin, announceMsgs(trip), `trip-${trip.id}`); }
+      catch (e) {
+        await sbRpc("push_log_release", { p_key: key, p_pin: pin }).catch(() => {});
+        setState(`Не вдалося надіслати: ${String((e && e.message) || e).slice(0, 160)}. Можна натиснути ще раз.`);
+        return;
+      }
+      if (!r || !r.sent) {
+        await sbRpc("push_log_release", { p_key: key, p_pin: pin }).catch(() => {});
+        setState("Нікому не надіслано — жодна підписка не спрацювала. Можна повторити пізніше.");
+        return;
+      }
+      setState(`Оголошення надіслано: ${r.sent}${r.failed ? `, не вдалось ${r.failed}` : ""}. Автоматичне вже не повториться.`);
+    } catch (e) {
+      setState("Помилка журналу сповіщень: " + String((e && e.message) || e).slice(0, 160));
+    } finally { setBusy(false); }
+  };
+
   const sendTimeChange = async () => {
     if (!window.confirm("Надіслати всім сповіщення про зміну часу?")) return;
     setBusy(true); setState("");
@@ -3883,6 +3947,33 @@ function PushDiagnostics({ pin, trip }) {
           поля: під час редагування час міняється кілька разів, і кожна
           проміжна правка підняла б тривогу всій групі. Момент, коли
           зміна остаточна, знаєте тільки ви. */}
+      {/* Оголошення про поїздку. Автоматичне «набір відкрито» приходить
+          лише за 6 днів до дати й лише того дня — опублікуєш пізніше, і
+          група про поїздку не дізнається. Ця кнопка закриває цей пробіл. */}
+      {trip && (() => {
+        const draft = isDraft(trip);
+        const at = autoOpenMoment(trip);
+        const ahead = at && at.getTime() > Date.now();
+        const day = at ? `${String(at.getDate()).padStart(2, "0")}.${String(at.getMonth() + 1).padStart(2, "0")}` : "";
+        return (
+          <div style={{ marginTop: 10, border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, background: "#fff" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.ink, marginBottom: 6 }}>Нова поїздка</div>
+            <p style={{ fontSize: 11.5, color: draft ? C.rasp : C.muted, lineHeight: 1.5, margin: "0 0 9px" }}>
+              {draft
+                ? "Поїздка ще в розробці. Спершу опублікуй і збережи її: сповіщення містить назву, тож надіслане зараз розкрило б чернетку."
+                : ahead
+                  ? `Автоматично «набір відкрито» прийде ${day} о 18:00. Якщо надішлеш зараз — воно вже не повториться.`
+                  : "Час автоматичного оголошення минув — воно приходить лише за 6 днів до поїздки. Якщо група його не отримала, надішли вручну."}
+            </p>
+            <button onClick={announce} disabled={busy || draft}
+              style={{ width: "100%", border: `1.5px solid ${draft ? C.line : C.green}`, background: draft ? C.pageSoft : busy ? C.greenSoft : C.green,
+                color: draft ? C.faint : busy ? C.greenDark : "#fff", borderRadius: 10, padding: "11px", fontSize: 12.5, fontWeight: 700,
+                cursor: draft || busy ? "default" : "pointer", fontFamily: "inherit" }}>
+              {busy ? "Надсилаю…" : "Оголосити поїздку"}
+            </button>
+          </div>
+        );
+      })()}
       {trip && (
         <div style={{ marginTop: 10, border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, background: "#fff" }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: C.ink, marginBottom: 6 }}>Змінився час</div>
