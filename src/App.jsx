@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v126 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v127 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -24,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v126";
+const APP_VERSION = "v127";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -552,9 +552,11 @@ const T = {
   destFallback: { uk: "місця призначення", en: "the destination", de: "dem Ziel", ru: "места назначения" },
   // meeting
   meetingPlace: { uk: "Місце зустрічі", en: "Meeting point", de: "Treffpunkt", ru: "Место встречи" },
+  meetTimeLabel: { uk: "Час збору", en: "Meeting time", de: "Treffzeit", ru: "Время сбора" },
   departure: { uk: "відправлення · приходьте за 15 хв", en: "departure · arrive 15 min early", de: "Abfahrt · 15 Min. früher da sein", ru: "отправление · приходите за 15 мин" },
   openGeo: { uk: "Відкрити геолокацію в картах", en: "Open location in Maps", de: "Standort in Karten öffnen", ru: "Открыть геолокацию в картах" },
   openFullRoute: { uk: "Відкрити повний маршрут", en: "Open full route", de: "Vollständige Route öffnen", ru: "Открыть полный маршрут" },
+  routeTimeNote: { uk: "Час на точках умовний і може не співпадати", en: "Times at the stops are approximate and may differ", de: "Die Zeiten an den Punkten sind ungefähr und können abweichen", ru: "Время на точках условное и может не совпадать" },
   routeTbd: { uk: "Маршрут уточнюється.", en: "Route to be confirmed.", de: "Route wird noch bestätigt.", ru: "Маршрут уточняется." },
   listTbd: { uk: "Список уточнюється.", en: "List to be confirmed.", de: "Liste wird noch bestätigt.", ru: "Список уточняется." },
   // CTA
@@ -4203,12 +4205,17 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
   });
   const taken = takenOf(trip, counts);
   const left = Math.max(0, (Number(trip.spots) || 0) - taken);
-  const Section = ({ icon, title, children, accent = C.green }) => (
+  // `note` — дрібний рядок під назвою розділу. Стоїть саме тут, у шапці,
+  // а не першим абзацом вмісту: так він читається як уточнення до назви й
+  // не плутається з текстом, який пише організатор. Без нього шапка
+  // виглядає точно як раніше.
+  const Section = ({ icon, title, children, accent = C.green, note }) => (
     <div style={{ background: C.card, borderRadius: 18, padding: 18, marginBottom: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: note ? 3 : 14 }}>
         <div style={{ width: 32, height: 32, borderRadius: 10, background: accent + "16", color: accent, display: "flex", alignItems: "center", justifyContent: "center" }}>{icon}</div>
         <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700, color: C.ink }}>{title}</h3>
       </div>
+      {note && <p style={{ margin: "0 0 14px", paddingLeft: 41, fontSize: 11.5, color: C.muted, lineHeight: 1.4 }}>{note}</p>}
       {children}
     </div>
   );
@@ -4271,7 +4278,13 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           // й дорогу, потім вирішуєш їхати, а якщо є питання — контакти
           // поруч. Раніше форма запису стояла на початку й відсувала
           // опис, задля якого сторінку й відкривають.
-          const list = resolveSections(trip).filter((s) => s.visible !== false);
+          // Розділ «Фото та відео» організаторові на цій сторінці не
+          // потрібен: архів він відкриває з вкладки «Медіаконтент», а тут
+          // блок лише додавав прокрутки дорогою до керування поїздкою.
+          // Учасники бачать його як і раніше — для них він і зроблений.
+          const list = resolveSections(trip)
+            .filter((s) => s.visible !== false)
+            .filter((s) => !(isAdmin && s.type === "drive"));
           const rest = list.filter((s) => s.type !== "booking");
           const book = list.filter((s) => s.type === "booking");
           if (book.length === 0) return list;
@@ -4401,6 +4414,19 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
               icon: <MapPin size={17} />, accent: C.green,
               body: (
                 <>
+                  {/* Час збору окремою плашкою, першим рядком. Досі він жив
+                      тільки в редакторі: учасник вичитував його з речення
+                      про місце зустрічі, а якщо організатор не вписав час у
+                      те речення — не бачив зовсім. Плашка вузька, по вмісту:
+                      година — це кілька знаків, розтягувати їх на всю
+                      ширину нема сенсу. Порожнє поле — плашки немає. */}
+                  {String(trip.meetTime || "").trim() !== "" && (
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12, padding: "8px 13px", background: C.yellowSoft, border: `1px solid ${C.yellow}`, borderRadius: 11 }}>
+                      <Clock size={15} style={{ color: C.yellowInk, flexShrink: 0 }} />
+                      <span style={{ fontSize: 12, color: C.yellowInk, fontWeight: 600 }}>{t("meetTimeLabel")}</span>
+                      <span style={{ fontSize: 15.5, fontWeight: 800, color: C.yellowInk, letterSpacing: -0.2 }}>{String(trip.meetTime).trim()}</span>
+                    </div>
+                  )}
                   {trip.coords && <div style={{ marginBottom: 12 }}><MeetingMap lat={trip.coords.lat} lng={trip.coords.lng} accent="meeting" /></div>}
                   <div style={{ padding: 13, background: C.greenSoft, borderRadius: 12, display: "flex", gap: 10, alignItems: "flex-start" }}>
                     <div style={{ color: C.green, marginTop: 1 }}><MapPin size={18} /></div>
@@ -4422,6 +4448,10 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
             },
             route: {
               icon: <Mountain size={17} />, accent: C.green,
+              // Години на точках — план, а не розклад: група йде своїм
+              // темпом, і кожна зупинка зсуває решту. Попередження стоїть
+              // під назвою, щоб його прочитали до самих годин, а не після.
+              note: t("routeTimeNote"),
               body: (
                 <>
                   {/* Верхню оглядову карту прибрано: вона не реагувала на вибір
@@ -4637,7 +4667,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           const r = renderers[sec.type];
           if (!r) return null;
           return (
-            <Section key={sec.type} icon={r.icon} title={tc(sec.title)} accent={r.accent}>
+            <Section key={sec.type} icon={r.icon} title={tc(sec.title)} accent={r.accent} note={r.note}>
               {r.body}
             </Section>
           );
@@ -5254,6 +5284,16 @@ function TripForm({ initial, onSave, onCancel }) {
             );
           })}
 
+          {/* Кнопка стоїть ОДРАЗУ під переліком відправлень, а не в кінці
+              картки. Відправлення додаються одне за одним, і раніше після
+              кожного доводилось прокручувати повз «Відправлення назад», щоб
+              дістатись кнопки. Дорога назад одна на всю поїздку — її
+              заповнюють один раз, тож вона й посунулась нижче. */}
+          <button onClick={() => { const n = journeys.length; set({ journeys: [...journeys, { legs: [blankLeg()] }] }); setOpenJourney(n); setOpenLeg(n + ":0"); }}
+            style={{ width: "100%", border: `1.5px dashed ${C.green}`, background: C.greenSoft, color: C.greenDark, borderRadius: 10, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}>
+            + Додати відправлення з іншого міста
+          </button>
+
           {/* Одне поле часу — свідомо, без станцій і пересадок. */}
           <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 12, background: "#fff" }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: C.rasp, marginBottom: 7 }}>Відправлення назад</div>
@@ -5268,10 +5308,6 @@ function TripForm({ initial, onSave, onCancel }) {
               українським для англомовних. Порожні поля — блок не показується.
             </p>
           </div>
-          <button onClick={() => { const n = journeys.length; set({ journeys: [...journeys, { legs: [blankLeg()] }] }); setOpenJourney(n); setOpenLeg(n + ":0"); }}
-            style={{ width: "100%", border: `1.5px dashed ${C.green}`, background: C.greenSoft, color: C.greenDark, borderRadius: 10, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 12 }}>
-            + Додати відправлення з іншого міста
-          </button>
           <Field label="Примітка про квитки"><input style={inp} value={t.priceNote} onChange={(e) => set({ priceNote: e.target.value })} placeholder="Bayern-Ticket ~29 €/особа" /></Field>
         </div>
 
