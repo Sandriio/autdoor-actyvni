@@ -1,4 +1,6 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c2 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c3 ═══
+// c3 — відмітку пульсу пише сам сервер службовим ключем бази; у звіті
+//      видно, чи вона записалась. Потрібен supabase-cron-ping.sql.
 // c2 — чернетки пропускаються: поїздка «в розробці» не розсилає
 //      сповіщень зі своєю назвою. c1 — без цього захисту.
 // ═══════════════════════════════════════════════════════════════════
@@ -16,6 +18,7 @@
 // Кожен виклик лишає відмітку часу в базі. У режимі організатора видно,
 // коли годинник озивався востаннє. Якщо «ніколи» — cron-job.org не
 // працює, і шукати помилку в текстах сповіщень немає сенсу.
+// Чи записалась відмітка — видно в полі "pulse" будь-якої відповіді.
 //
 // ЗАХИСТ ВІД ПОВТОРІВ
 // Кожна відправка позначається унікальним ключем у таблиці push_log.
@@ -295,10 +298,36 @@ export default async function handler(req, res) {
 
   // Пульс. Ставимо ДО надсилання: навіть якщо далі щось впаде, буде
   // видно, що годинник живий і о котрій озивався.
-  await sb("cron_ping", {
-    p_secret: process.env.CRON_SECRET,
-    p_note: `${nowText} · поїздок ${(trips || []).length} · на часі ${planned.length}`,
-  }).catch(() => {});
+  //
+  // Відмітку пише сам сервер СЛУЖБОВИМ ключем бази — тим самим, яким
+  // видаляються завантаження. Раніше функція в базі звіряла власну
+  // копію CRON_SECRET, вписану прямо в її текст. Коли ключ замінили
+  // (він засвітився на скріншоті), Vercel і cron-job.org отримали
+  // новий, а копія в базі лишилась старою. База мовчки відхиляла кожну
+  // відмітку, і з 20.09 здавалося, що годинник стоїть, хоча він
+  // працював. Тепер ключ годинника живе лише у Vercel і cron-job.org, і
+  // наступна заміна нічого не зламає.
+  //
+  // І помилка більше не ковтається мовчки: результат іде у відповідь —
+  // і у звіт ?debug=1, і в історію викликів cron-job.org.
+  const beat = await (async () => {
+    const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!KEY) return "не записано: у Vercel немає SUPABASE_SERVICE_ROLE_KEY";
+    try {
+      const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/cron_ping`, {
+        method: "POST",
+        headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ p_note: `${nowText} · поїздок ${(trips || []).length} · на часі ${planned.length}` }),
+      });
+      if (r.ok) return "записано";
+      const txt = (await r.text()).slice(0, 200);
+      // Найімовірніша причина — не виконано supabase-cron-ping.sql:
+      // тоді в базі ще стара функція з двома параметрами.
+      return `не записано: помилка ${r.status} ${txt}`;
+    } catch (e) {
+      return `не записано: ${String((e && e.message) || e).slice(0, 200)}`;
+    }
+  })();
 
   if (debug) {
     res.status(200).json({
@@ -306,6 +335,7 @@ export default async function handler(req, res) {
       window: "від моменту й пізніше",
       trips: report,
       planned: planned.map((p) => p.key),
+      pulse: beat,
       note: "РЕЖИМ ЗВІТУ — нічого не надіслано",
     });
     return;
@@ -325,5 +355,5 @@ export default async function handler(req, res) {
     (ok ? sent : skipped).push(p.key + (ok ? "" : ": помилка надсилання"));
   }
 
-  res.status(200).json({ berlin: nowText, planned: planned.length, sent, skipped });
+  res.status(200).json({ berlin: nowText, pulse: beat, planned: planned.length, sent, skipped });
 }
