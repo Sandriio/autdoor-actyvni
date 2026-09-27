@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v127 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v128 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -24,7 +24,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v127";
+const APP_VERSION = "v128";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -468,8 +468,8 @@ const T = {
   usDown: { uk: "Нижче", en: "Move down", de: "Nach unten", ru: "Ниже" },
   usBuiltIn: { uk: "Вбудовані плакати переставляються лише з коду.", en: "Built-in sheets can only be reordered in the code.", de: "Eingebaute Blätter lassen sich nur im Code umsortieren.", ru: "Встроенные плакаты переставляются только из кода." },
   usIntro: { uk: "Корисна інформація для подорожей", en: "Useful information for your trips", de: "Nützliche Infos für Ihre Reisen", ru: "Полезная информация для поездок" },
-  secDrive: { uk: "Фото та відео", en: "Photos & videos", de: "Fotos & Videos", ru: "Фото и видео" },
-  driveNote: { uk: "Спільний архів медіа з цієї поїздки. Додавайте свої — вони будуть доступні всій групі.", en: "A shared media archive from this trip. Add your own — everyone in the group will see them.", de: "Gemeinsames Medienarchiv dieses Ausflugs. Fügen Sie eigene hinzu — die ganze Gruppe sieht sie.", ru: "Общий архив медиа с этой поездки. Добавляйте свои — они будут доступны всей группе." },
+  // secDrive і driveNote прибрані разом із розділом «Фото та відео»
+  // всередині поїздки — тексти більше нема де показувати.
   driveHomeNote: { uk: "Архів медіа з усіх поїздок", en: "Media archive from all trips", de: "Medienarchiv aller Ausflüge", ru: "Архив медиа со всех поездок" },
   driveButton: { uk: "Відкрити Google Диск", en: "Open Google Drive", de: "Google Drive öffnen", ru: "Открыть Google Диск" },
   secCafes: { uk: "Де поїсти та випити", en: "Where to eat & drink", de: "Essen & Trinken", ru: "Где поесть и выпить" },
@@ -556,7 +556,7 @@ const T = {
   departure: { uk: "відправлення · приходьте за 15 хв", en: "departure · arrive 15 min early", de: "Abfahrt · 15 Min. früher da sein", ru: "отправление · приходите за 15 мин" },
   openGeo: { uk: "Відкрити геолокацію в картах", en: "Open location in Maps", de: "Standort in Karten öffnen", ru: "Открыть геолокацию в картах" },
   openFullRoute: { uk: "Відкрити повний маршрут", en: "Open full route", de: "Vollständige Route öffnen", ru: "Открыть полный маршрут" },
-  routeTimeNote: { uk: "Час на точках умовний і може не співпадати", en: "Times at the stops are approximate and may differ", de: "Die Zeiten an den Punkten sind ungefähr und können abweichen", ru: "Время на точках условное и может не совпадать" },
+  routeTimeNote: { uk: "Час на точках умовний і може не збігатися", en: "Times at the stops are approximate and may differ", de: "Die Zeiten an den Punkten sind ungefähr und können abweichen", ru: "Время на точках условное и может не совпадать" },
   routeTbd: { uk: "Маршрут уточнюється.", en: "Route to be confirmed.", de: "Route wird noch bestätigt.", ru: "Маршрут уточняется." },
   listTbd: { uk: "Список уточнюється.", en: "List to be confirmed.", de: "Liste wird noch bestätigt.", ru: "Список уточняется." },
   // CTA
@@ -2855,11 +2855,19 @@ const DEFAULT_SECTIONS = [
   { type: "route", tkey: "secRoute" },
   { type: "cafes", tkey: "secCafes" },
   { type: "packing", tkey: "secPacking" },
-  { type: "drive", tkey: "secDrive" },
   { type: "contact", tkey: "secContact" },
 ];
-// Спільний архів фото й відео з усіх поїздок. Окрема поїздка може мати
-// власне посилання (поле driveUrl) — тоді показується воно.
+// Розділи, яких у поїздці більше немає. Прибрати їх зі списку вище
+// недостатньо: у вже збережених поїздках вони лежать у власному масиві
+// sections і повернулись би самі. Тому кожен такий тип відсіюється при
+// читанні — і на сторінці поїздки, і в редакторі структури.
+//  • drive — «Фото та відео». Архів переїхав у власну вкладку
+//    «Медіаконтент», де є теки, альбоми й завантаження. Копія тієї ж
+//    кнопки всередині кожної поїздки лише вела на той самий Диск.
+const RETIRED_SECTIONS = new Set(["drive"]);
+// Спільний архів фото й відео з усіх поїздок — коренева тека вкладки
+// «Медіаконтент». Одна на весь застосунок: окремих тек для окремих
+// поїздок більше немає, всередині цієї теки їх заміняють альбоми.
 const DRIVE_URL = "https://drive.google.com/drive/folders/17zaBzXwcsTBnjvf7ncOlzltQNaVTGOyi?usp=drive_link";
 
 // ── Фото й відео з Google Диска ──────────────────────────────────────
@@ -2901,7 +2909,7 @@ async function driveList(folderId, onlyFolders) {
 const SECTION_LABELS = {
   about: "Про місце", booking: "Запис у поїздку", difficulty: "Складність", weather: "Погода",
   travel: "Транспорт", meeting: "Точка збору", route: "Маршрут",
-  cafes: "Кафе/їжа", packing: "Спорядження", drive: "Фото та відео", contact: "Контакт",
+  cafes: "Кафе/їжа", packing: "Спорядження", contact: "Контакт",
 };
 // Вбудована назва розділу поточною мовою. Потрібна і для показу, і для
 // підказки в редакторі: якщо організатор лишає поле порожнім, застосунок
@@ -2983,11 +2991,13 @@ const resolveSections = (trip) => {
     // ВАЖЛИВО: збережені секції можуть містити лише технічний ключ (tkey)
     // без назви — тоді заголовок треба взяти з перекладу, інакше секція
     // рендериться без підпису (лишається сама іконка).
-    const stored = trip.sections.map((s) => ({
-      visible: true,
-      ...s,
-      title: (s.title && String(s.title).trim() !== "") ? s.title : sectionDefaultTitle(s),
-    }));
+    const stored = trip.sections
+      .filter((s) => !RETIRED_SECTIONS.has(s.type))
+      .map((s) => ({
+        visible: true,
+        ...s,
+        title: (s.title && String(s.title).trim() !== "") ? s.title : sectionDefaultTitle(s),
+      }));
     // Розділи, доданих у застосунок після збереження цієї поїздки, у її
     // списку відсутні. Дописуємо їх у кінець, інакше нове ніколи не
     // з'явилось би у старих поїздках.
@@ -4278,13 +4288,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           // й дорогу, потім вирішуєш їхати, а якщо є питання — контакти
           // поруч. Раніше форма запису стояла на початку й відсувала
           // опис, задля якого сторінку й відкривають.
-          // Розділ «Фото та відео» організаторові на цій сторінці не
-          // потрібен: архів він відкриває з вкладки «Медіаконтент», а тут
-          // блок лише додавав прокрутки дорогою до керування поїздкою.
-          // Учасники бачать його як і раніше — для них він і зроблений.
-          const list = resolveSections(trip)
-            .filter((s) => s.visible !== false)
-            .filter((s) => !(isAdmin && s.type === "drive"));
+          const list = resolveSections(trip).filter((s) => s.visible !== false);
           const rest = list.filter((s) => s.type !== "booking");
           const book = list.filter((s) => s.type === "booking");
           if (book.length === 0) return list;
@@ -4586,31 +4590,8 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                 </div>
               ),
             },
-            drive: {
-              icon: <Camera size={17} />, accent: C.green,
-              body: (() => {
-                const url = (trip.driveUrl && String(trip.driveUrl).trim() !== "") ? String(trip.driveUrl).trim() : DRIVE_URL;
-                return (
-                  <>
-                    <p style={{ margin: "0 0 13px", fontSize: 13.5, color: C.inkSoft, lineHeight: 1.5 }}>{t("driveNote")}</p>
-                    {/* Фото показуємо прямо тут, а не тільки посиланням:
-                        кнопка забирає людину із застосунку, і назад вона
-                        здебільшого не повертається.
-                        Сітка з'являється лише тоді, коли в поїздки є ВЛАСНА
-                        тека. Спільний архів тут не показуємо: у ньому лежать
-                        альбоми всіх поїздок, і в картці однієї це збивало б
-                        з пантелику. */}
-                    {trip.driveUrl && String(trip.driveUrl).trim() !== "" && (
-                      <DriveGallery folderUrl={url} limit={12} />
-                    )}
-                    <a href={url} target="_blank" rel="noreferrer"
-                      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 13.5, fontWeight: 700, textDecoration: "none" }}>
-                      <Camera size={16} /> {t("driveButton")}
-                    </a>
-                  </>
-                );
-              })(),
-            },
+            // Розділу «Фото та відео» тут більше немає — див.
+            // RETIRED_SECTIONS. Медіа живуть у вкладці «Медіаконтент».
             contact: {
               icon: <MessageCircle size={17} />, accent: C.rasp,
               body: (() => {
@@ -4853,9 +4834,10 @@ function TripForm({ initial, onSave, onCancel }) {
     // Розділи, що з'явились у застосунку пізніше, дописуємо в кінець —
     // інакше їх не можна було б ні перейменувати, ні сховати, ні
     // переставити в уже збереженій поїздці.
-    const have = new Set(t.sections.map((x) => x.type));
+    const kept = t.sections.filter((s) => !RETIRED_SECTIONS.has(s.type));
+    const have = new Set(kept.map((x) => x.type));
     const missing = DEFAULT_SECTIONS.filter((d) => !have.has(d.type)).map((d) => ({ ...d, visible: true }));
-    return t.sections.concat(missing);
+    return kept.concat(missing);
   })();
   const setSections = (next) => set({ sections: next });
   const renameSection = (i, title) => setSections(sections.map((s, j) => j === i ? { ...s, title } : s));
@@ -4916,7 +4898,10 @@ function TripForm({ initial, onSave, onCancel }) {
                 : <>Заповніть: від цього залежать день тижня біля дати, порядок поїздок у списку та прогноз погоди.</>}
             </p>
           </Field>
-          <Field label="Google Диск для цієї поїздки (необов'язково)"><input style={inp} value={t.driveUrl || ""} onChange={(e) => set({ driveUrl: e.target.value })} placeholder="Порожньо — показується спільний архів" /></Field>
+          {/* Поле «Google Диск для цієї поїздки» прибрано разом із розділом
+              «Фото та відео»: більше нема місця, де воно показувалось би.
+              Саме значення в базі лишається — якщо колись знадобиться
+              власна тека для поїздки, воно нікуди не зникло. */}
           {/* Перемикач ручної погоди. Прогноз — зручність, а не істина:
               сервіси розходяться між собою, і перевірити їх зсередини
               застосунку неможливо. Тому останнє слово лишається за
