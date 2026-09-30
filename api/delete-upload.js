@@ -1,3 +1,8 @@
+// ═══ Tropa Club · api/delete-upload.js · ВЕРСІЯ x3 ═══
+// x3 — прибирає й копію, номер якої не встиг записатися (зв'язок із
+//      мостом урвався на півдорозі).
+// x2 — разом із файлом прибирає і його копію на Google Диску (див.
+//      api/drive-copy.js). x1 — лише сховище застосунку.
 // ═══════════════════════════════════════════════════════════════════
 // Видалення файлу, доданого в застосунку
 //
@@ -24,6 +29,8 @@
 // ЗМІННІ СЕРЕДОВИЩА (Vercel → проєкт → Environment Variables)
 //   SUPABASE_URL               — уже є
 //   SUPABASE_SERVICE_ROLE_KEY  — саме service_role, НЕ anon
+//   DRIVE_BRIDGE_URL, DRIVE_BRIDGE_SECRET — міст до Google Диска; без них
+//     видалення працює як раніше, лише копія на Диску лишається.
 // ═══════════════════════════════════════════════════════════════════
 
 import crypto from "crypto";
@@ -101,7 +108,7 @@ export default async function handler(req, res) {
 
   try {
     // 1. Знайти запис
-    const r = await fetch(`${URL}/rest/v1/uploads?id=eq.${encodeURIComponent(id)}&select=id,url,owner_hash`, { headers: h });
+    const r = await fetch(`${URL}/rest/v1/uploads?id=eq.${encodeURIComponent(id)}&select=id,url,owner_hash,drive_id`, { headers: h });
     if (!r.ok) {
       res.status(502).json({ error: `база відповіла ${r.status}: ${(await r.text()).slice(0, 120)}` });
       return;
@@ -129,6 +136,42 @@ export default async function handler(req, res) {
       return;
     }
 
+    // 2а. Копія на Google Диску. Прибираємо її ПЕРШОЮ: якщо міст зараз не
+    //     відповідає, краще нічого не видаляти й сказати про це, ніж
+    //     прибрати фото із застосунку, а на Диску лишити — тоді воно
+    //     повернулося б у галерею вже з Диска, і видалити його там
+    //     людина не змогла б.
+    //     Стан поля drive_id — див. api/drive-copy.js. Номер копії відомий —
+    //     прибираємо її за номером; інакше міст пошукає копію за підписом
+    //     (буває, що копія вже є, а номер не встиг записатися).
+    const driveId = String(row.drive_id || "");
+    const known = driveId !== "" && !/^(pending|retry|skip):/.test(driveId);
+    const B = process.env.DRIVE_BRIDGE_URL, S = process.env.DRIVE_BRIDGE_SECRET;
+    if (B && S && !driveId.startsWith("skip:")) {
+      let bad = "";
+      try {
+        const br = await fetch(B, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ secret: S, action: "trash", id: known ? driveId : "", uploadId: row.id }), redirect: "follow",
+        });
+        const txt = await br.text();
+        let j = null;
+        try { j = JSON.parse(txt); } catch { /* не JSON — міст не відповідає як слід */ }
+        if (!j) bad = "міст не відповідає";
+        // Файлу на Диску вже немає — теж годиться: прибирати нічого.
+        else if (j.error && !/not found|не знайдено|Access denied|No item with the given ID/i.test(j.error)) bad = j.error;
+      } catch (e) {
+        bad = String((e && e.message) || e);
+      }
+      // Копія точно є (її номер записаний) — тоді без її прибирання не
+      // видаляємо нічого. Якщо номера немає, копії найімовірніше й не
+      // було, тож збій мосту не заважає видалити фото.
+      if (bad && known) {
+        res.status(502).json({ error: `не вдалося прибрати копію з Google Диска (${bad.slice(0, 100)}). Спробуйте за хвилину.` });
+        return;
+      }
+    }
+
     // 3. Чи посилається на той самий файл ще хтось. Таблицю завантажень
     //    може доповнити будь-хто, тож хтось міг би створити власний запис
     //    із посиланням на чуже фото, а потім «видалити своє» — і разом
@@ -153,6 +196,18 @@ export default async function handler(req, res) {
     if (!Array.isArray(gone) || gone.length === 0) {
       res.status(500).json({ error: "база нічого не видалила: у ключа немає права. Перевір, що в Vercel саме service_role, а не anon." });
       return;
+    }
+
+    // 4а. Поки ми видаляли, копія на Диск могла саме завершитися й записати
+    //     свій номер (людина видалила фото відразу після завантаження).
+    //     База віддає рядок таким, яким він був у мить видалення: якщо там
+    //     з'явився номер копії, якого ми ще не прибирали, — прибираємо.
+    const lateId = String((gone[0] && gone[0].drive_id) || "");
+    if (B && S && lateId && lateId !== (known ? driveId : "") && !/^(pending|retry|skip):/.test(lateId)) {
+      await fetch(B, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret: S, action: "trash", id: lateId, uploadId: row.id }), redirect: "follow",
+      }).catch(() => {});
     }
 
     // 5. Видалити сам файл зі сховища, щоб звільнити місце. Робимо ПІСЛЯ
