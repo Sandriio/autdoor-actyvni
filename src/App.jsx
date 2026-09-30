@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v129 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v130 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -25,7 +25,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v129";
+const APP_VERSION = "v130";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -61,7 +61,40 @@ const isStandalone = () =>
 
 async function pushRegister() {
   if (!pushSupported()) return null;
-  return navigator.serviceWorker.register("/sw.js");
+  const reg = await navigator.serviceWorker.register("/sw.js");
+  // Перевіряємо, чи немає нового фонового скрипта, при КОЖНОМУ відкритті
+  // застосунку. Без цього браузер робить це сам лише раз на добу, і
+  // виправлення у сповіщеннях (як-от значок) доїжджало до телефона із
+  // запізненням на день-два — або здавалося, що не доїхало зовсім.
+  try { reg.update().catch(() => {}); } catch { /* старий браузер */ }
+  return reg;
+}
+// Найменша версія фонового скрипта (public/sw.js), з якою узгоджено цей
+// застосунок. Порівнюємо числа, а не рядки: інакше «v10» вийшло б
+// меншим за «v4».
+const SW_EXPECTED = 4;
+const swNum = (v) => { const m = String(v || "").match(/^v(\d+)/); return m ? Number(m[1]) : 0; };
+// Яку версію фонового скрипта виконує саме цей телефон. Скрипт відповідає
+// на запитання через MessageChannel. Три можливі відповіді:
+//   "v4-badge" — версія, яку назвав сам скрипт;
+//   null       — скрипт є, але мовчить: це стара версія (до v4), яка
+//                такого запитання ще не знає;
+//   undefined  — скрипта ще немає (перший візит) або сповіщення тут не
+//                підтримуються. Тоді нічого не показуємо, щоб не лякати
+//                хибним «застарілим».
+async function swVersion() {
+  try {
+    if (!pushSupported()) return undefined;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const w = reg && reg.active;
+    if (!w) return undefined;
+    return await new Promise((res) => {
+      const ch = new MessageChannel();
+      const timer = setTimeout(() => res(null), 1500);
+      ch.port1.onmessage = (e) => { clearTimeout(timer); res(String(e.data || "") || null); };
+      w.postMessage("sw-version", [ch.port2]);
+    });
+  } catch { return undefined; }
 }
 async function pushSubscribe(lang) {
   const reg = await navigator.serviceWorker.ready;
@@ -288,26 +321,83 @@ function bookErrorKey(e) {
 // ── Завантаження фото в Supabase Storage ───────────────────────────────
 // Фото стискається до розумного розміру прямо на пристрої (щоб швидко
 // вантажилось і не з'їдало квоту), заливається в публічний bucket "photos",
-// а в поїздку записується постійне публічне посилання.
-function downscaleImage(file, maxW, quality) {
+// а в поїздку записується постійне публічне посилання. Заодно зникають
+// службові дані знімка, зокрема координати місця, де його зроблено: файл
+// лежить за публічним посиланням, і їм там не місце.
+//
+// ЧОМУ КРОКАМИ. Safari — а на iPhone ним по суті є будь-який браузер —
+// зменшує картинку одним махом грубо: із 24-мегапіксельного знімка в
+// 1800 пікселів він фактично бере кожен третій піксель, і на дрібних
+// деталях (листя, трава, волосся, написи) з'являються «сходинки» й зерно.
+// Chrome на Android робить це акуратніше, тому з Android різниці й не
+// було видно, а з iPhone фото «втрачали якість». Тепер картинка
+// зменшується щонайбільше вдвічі за крок, з увімкненим якісним
+// згладжуванням, — результат однаково чистий на обох.
+//
+// opts.short / opts.long — межі для КОРОТШОЇ й довшої сторони (фото в
+// медіатеку). Раніше межа була лише для ширини, тож вертикальний знімок
+// виходив 1800×2400, а такий самий горизонтальний — лише 1800×1350.
+// Тепер коротша сторона однакова за будь-якої орієнтації.
+// opts.maxW — межа для ширини (обкладинки поїздок, як і раніше).
+function downscaleImage(file, opts) {
+  const { short = 0, long = 0, maxW = 0, quality = 0.85 } = opts || {};
   return new Promise((resolve, reject) => {
+    const src = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      const scale = Math.min(1, maxW / img.width);
-      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
-      const cv = document.createElement("canvas");
-      cv.width = w; cv.height = h;
-      cv.getContext("2d").drawImage(img, 0, 0, w, h);
-      cv.toBlob((b) => (b ? resolve(b) : reject(new Error("Не вдалося обробити зображення"))), "image/jpeg", quality);
+      URL.revokeObjectURL(src);
+      try {
+        const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
+        let scale = 1;
+        if (short > 0 || long > 0) {
+          if (short > 0) scale = Math.min(scale, short / Math.min(W, H));
+          if (long > 0) scale = Math.min(scale, long / Math.max(W, H));
+        } else if (maxW > 0) scale = Math.min(1, maxW / W);
+        const tw = Math.max(1, Math.round(W * scale)), th = Math.max(1, Math.round(H * scale));
+        const canvasOf = (w, h) => {
+          const c = document.createElement("canvas");
+          c.width = w; c.height = h;
+          const g = c.getContext("2d");
+          g.imageSmoothingEnabled = true;
+          g.imageSmoothingQuality = "high";
+          return [c, g];
+        };
+        // Проміжне полотно не більше ~16 Мп — це межа Safari на iPhone.
+        // Більше полотно там тихо лишається порожнім.
+        const LIMIT = 16e6;
+        let cur = img, cw = W, ch = H, spent = null;
+        while (cw > tw * 2) {
+          let nw = Math.max(tw, Math.floor(cw / 2)), nh = Math.max(th, Math.floor(ch / 2));
+          if (nw * nh > LIMIT) {
+            const f = Math.sqrt(LIMIT / (nw * nh));
+            nw = Math.max(tw, Math.floor(nw * f)); nh = Math.max(th, Math.floor(nh * f));
+          }
+          const [c, g] = canvasOf(nw, nh);
+          g.drawImage(cur, 0, 0, nw, nh);
+          // Попереднє полотно звільняємо одразу: пам'ять під полотна на
+          // iPhone обмежена, а людина може вибрати двадцять фото за раз.
+          if (spent) { spent.width = 0; spent.height = 0; }
+          spent = c; cur = c; cw = nw; ch = nh;
+        }
+        const [out, g] = canvasOf(tw, th);
+        g.drawImage(cur, 0, 0, tw, th);
+        if (spent) { spent.width = 0; spent.height = 0; }
+        out.toBlob((b) => {
+          out.width = 0; out.height = 0;
+          if (b) resolve(b); else reject(new Error("Не вдалося обробити зображення"));
+        }, "image/jpeg", quality);
+      } catch (e) {
+        reject(new Error("Не вдалося обробити зображення"));
+      }
     };
-    img.onerror = () => reject(new Error("Файл не схожий на зображення"));
-    img.src = URL.createObjectURL(file);
+    img.onerror = () => { URL.revokeObjectURL(src); reject(new Error("Файл не схожий на зображення")); };
+    img.src = src;
   });
 }
 async function sbUploadImage(file) {
   if (!sbConfigured()) throw new Error("База даних не підключена");
   const name = `trip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
-  const blob = await downscaleImage(file, 1600, 0.85);
+  const blob = await downscaleImage(file, { maxW: 1600, quality: 0.85 });
   const r = await fetch(`${SUPABASE_URL}/storage/v1/object/photos/${name}`, {
     method: "POST",
     headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": "image/jpeg" },
@@ -1896,10 +1986,16 @@ async function sbAddUpload(row) {
   if (!r.ok) throw new Error((await r.text()).slice(0, 160));
 }
 
-// Завантаження файлу у сховище. Фото стискаємо в браузері — телефонне
-// фото на 4 МБ після стиснення важить близько 400 КБ, і місця вистачає
-// на тисячі знімків. Відео стиснути так не можна, тому воно йде як є,
-// і саме тому стоїть обмеження розміру.
+// Завантаження файлу у сховище. Фото стискаємо в браузері: коротша
+// сторона до 1800 пікселів — рівно стільки, скільки вертикальні знімки
+// мали й досі, тепер і горизонтальні; довша — не більше 3200. Цього з
+// запасом вистачає на весь екран телефона навіть із наближенням. Знімок
+// важить близько 1–1,5 МБ, тож у безкоштовний гігабайт сховища
+// вміщається кілька сотень фото. Відео стиснути так не можна, тому воно
+// йде як є, і саме тому стоїть обмеження розміру.
+const UPLOAD_PHOTO_SHORT = 1800;
+const UPLOAD_PHOTO_LONG = 3200;
+const UPLOAD_PHOTO_QUALITY = 0.86;
 const UPLOAD_VIDEO_MAX_MB = 45;
 
 async function sbUploadMedia(file) {
@@ -1910,7 +2006,7 @@ async function sbUploadMedia(file) {
   }
   const ext = isVid ? (String(file.name).split(".").pop() || "mp4").toLowerCase() : "jpg";
   const name = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const body = isVid ? file : await downscaleImage(file, 1800, 0.85);
+  const body = isVid ? file : await downscaleImage(file, { short: UPLOAD_PHOTO_SHORT, long: UPLOAD_PHOTO_LONG, quality: UPLOAD_PHOTO_QUALITY });
   const r = await fetch(`${SUPABASE_URL}/storage/v1/object/photos/${name}`, {
     method: "POST",
     headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": isVid ? file.type : "image/jpeg" },
@@ -4087,6 +4183,12 @@ function PushDiagnostics({ pin, trip }) {
   const [subs, setSubs] = useState(null);
   const [beat, setBeat] = useState(null);
   const [mine, setMine] = useState(null); // true | false | null (невідомо)
+  // undefined — ще не перевірено або сповіщення тут не підтримуються
+  const [sw, setSw] = useState(undefined);
+  useEffect(() => {
+    if (!pushSupported()) return;
+    swVersion().then((v) => setSw(v));
+  }, []);
 
   useEffect(() => {
     if (!sbConfigured()) return;
@@ -4221,6 +4323,16 @@ function PushDiagnostics({ pin, trip }) {
           </button>
         )}
       </div>
+      {/* Версія фонового скрипта саме на цьому телефоні. Значок у рядку
+          стану малює саме він, тож якщо тут стара версія — нові значки ще
+          не доїхали, і перевіряти їх тестовим сповіщенням рано. */}
+      {sw !== undefined && (
+        <p style={{ fontSize: 11.5, lineHeight: 1.45, margin: "0 2px 9px", color: swNum(sw) >= SW_EXPECTED ? C.greenDark : C.rasp }}>
+          {swNum(sw) >= SW_EXPECTED
+            ? <>Фоновий скрипт на цьому телефоні: <b>{sw}</b> — актуальний.</>
+            : <>Фоновий скрипт на цьому телефоні <b>застарий</b>{sw ? ` (${sw})` : ""}. Закрийте застосунок повністю й відкрийте знову.</>}
+        </p>
+      )}
       <button onClick={test} disabled={busy}
         style={{ width: "100%", border: `1.5px solid ${C.green}`, background: busy ? C.greenSoft : "transparent", color: C.greenDark, borderRadius: 10, padding: "11px", fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
         {busy ? "Перевіряю…" : "Надіслати тестове сповіщення"}
