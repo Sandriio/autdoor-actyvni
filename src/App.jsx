@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v130 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v131 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -25,7 +25,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v130";
+const APP_VERSION = "v131";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -431,7 +431,9 @@ const T = {
   // Назва однакова всіма мовами: це власна назва, а не опис. Те саме
   // правило, що ми щойно застосували до Allgäu й Immenstadt.
   appName: { uk: "Tropa Club", en: "Tropa Club", de: "Tropa Club", ru: "Tropa Club" },
-  appSubtitle: { uk: "Твій шлях до нової подорожі", en: "Your path to a new journey", de: "Dein Weg zu neuen Reisen", ru: "Путь к новому путешествию" },
+  // Девіз звертається до людини на «ти» — у кожній мові. Російський
+  // варіант довго губив «Твой» і звучав як безособовий заголовок.
+  appSubtitle: { uk: "Твій шлях до нової подорожі", en: "Your path to a new journey", de: "Dein Weg zu neuen Reisen", ru: "Твой путь к новому путешествию" },
   upcomingTrips: { uk: "Найближчі поїздки", en: "Upcoming trips", de: "Kommende Ausflüge", ru: "Ближайшие поездки" },
   futureTrips: { uk: "Майбутні поїздки", en: "Later trips", de: "Weitere Ausflüge", ru: "Будущие поездки" },
   avgCheck: { uk: "середній чек", en: "average check", de: "im Schnitt", ru: "средний чек" },
@@ -552,6 +554,13 @@ const T = {
   usDelete: { uk: "Видалити", en: "Delete", de: "Löschen", ru: "Удалить" },
   upDeleteAsk: { uk: "Видалити цей файл? Повернути його не вийде.", en: "Delete this file? It cannot be restored.", de: "Diese Datei löschen? Sie lässt sich nicht wiederherstellen.", ru: "Удалить этот файл? Вернуть его не получится." },
   upDeleteFail: { uk: "Не вдалося видалити", en: "Could not delete", de: "Löschen fehlgeschlagen", ru: "Не удалось удалить" },
+  // Рядок стану для організатора: докопіювання фото із застосунку на Диск.
+  dcRun: { uk: "Копіюю фото із застосунку на Google Диск…", en: "Copying app photos to Google Drive…", de: "Fotos aus der App werden auf Google Drive kopiert…", ru: "Копирую фото из приложения на Google Диск…" },
+  dcLeft: { uk: "лишилось", en: "left", de: "übrig", ru: "осталось" },
+  dcDone: { uk: "Скопійовано на Google Диск", en: "Copied to Google Drive", de: "Auf Google Drive kopiert", ru: "Скопировано на Google Диск" },
+  dcQueue: { uk: "Ще чекають копіювання на Google Диск", en: "Still waiting to be copied to Google Drive", de: "Warten noch auf die Kopie zu Google Drive", ru: "Ещё ждут копирования на Google Диск" },
+  dcFail: { uk: "Не вдалося скопіювати на Google Диск", en: "Could not copy to Google Drive", de: "Kopieren zu Google Drive fehlgeschlagen", ru: "Не удалось скопировать на Google Диск" },
+  dcOff: { uk: "Копіювання на Google Диск ще не налаштоване", en: "Copying to Google Drive is not set up yet", de: "Kopieren zu Google Drive ist noch nicht eingerichtet", ru: "Копирование на Google Диск ещё не настроено" },
   usUp: { uk: "Вище", en: "Move up", de: "Nach oben", ru: "Выше" },
   draftTitle: { uk: "Нова поїздка в розробці", en: "A new trip is in the works", de: "Eine neue Reise ist in Arbeit", ru: "Новая поездка в разработке" },
   draftSub: { uk: "З'явиться тут, щойно буде готова", en: "It will appear here as soon as it's ready", de: "Sie erscheint hier, sobald sie fertig ist", ru: "Появится здесь, как только будет готова" },
@@ -2168,6 +2177,25 @@ async function deleteUpload(id, pin) {
   }
 }
 
+// ── Копія на Google Диск ────────────────────────────────────────────
+// Кожне нове фото чи відео сервер (api/drive-copy.js) копіює ще й в альбом
+// на Google Диску організатора. Людині це не заважає: застосунок не чекає
+// на копію й не показує помилок. Файли йдуть по одному, щоб не смикати
+// міст десятком запитів разом. Що не встигло піти (телефон закрили, міст
+// збоїв), застосунок організатора докопіює сам у «Медіаконтенті».
+let driveCopyQueue = Promise.resolve();
+function queueDriveCopy(id) {
+  driveCopyQueue = driveCopyQueue
+    .then(() => fetch("/api/drive-copy", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }), keepalive: true,
+    }))
+    .catch(() => { /* не вийшло — докопіюється пізніше */ });
+}
+// Номер копії на Диску — лише справжній, без службових станів
+// («копіюється», «повторити», «не копіювати»).
+const realDriveId = (v) => (v && !String(v).includes(":") ? String(v) : "");
+
 // ── Завантаження файлів ─────────────────────────────────────────────
 // Кнопка однакова для всіх: і організатор, і учасник додають свої фото
 // сюди ж. Різниця лише в тому, що видаляти може тільки організатор.
@@ -2184,12 +2212,14 @@ function UploadButton({ folderId, onDone }) {
     for (const f of files) {
       try {
         const up = await sbUploadMedia(f);
+        const rowId = `u${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
         await sbAddUpload({
-          id: `u${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
+          id: rowId,
           folder_id: folderId || "root",
           url: up.url, kind: up.kind, name: String(f.name || "").slice(0, 120),
           owner_hash: await sha256hex(ownerToken()),
         });
+        queueDriveCopy(rowId);
         ok++;
       } catch (err) { bad.push(String(err.message || err)); }
     }
@@ -2220,7 +2250,9 @@ function UploadButton({ folderId, onDone }) {
 // Диска: свій робити немає сенсу, а цей уміє все й нічого не важить.
 function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
   const [files, setFiles] = useState(null);
-  const [ups, setUps] = useState([]);
+  // null — ще вантажиться. Сітку показуємо, лише коли прийшли обидва
+  // переліки: інакше копія з Диска на мить з'являлася б окремо від фото.
+  const [ups, setUps] = useState(null);
   const [err, setErr] = useState("");
   const [open, setOpen] = useState(null);   // індекс відкритого файлу
   // Файли, для яких прямий шлях не спрацював: по одному, а не на всю
@@ -2248,6 +2280,7 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
       (rows || []).filter((r) => r.folder_id === albumId).map((r) => ({
         id: r.id, name: r.name || "", upUrl: r.url, owner: r.owner_hash || "",
         mimeType: r.kind === "video" ? "video/mp4" : "image/jpeg",
+        driveId: realDriveId(r.drive_id),
       }))
     )).catch(() => setUps([]));
   }, [albumId]);
@@ -2261,8 +2294,11 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
   // Відкритий файл рахуємо ДО виходів із функції: нижче стоїть ще один
   // useEffect, а гачки не можна оголошувати після return — React вимагає,
   // щоб їх щоразу викликали однакову кількість разів.
-  // Спершу те, що додали люди, потім архів із Диска.
-  const all = files ? [...ups, ...files] : null;
+  // Спершу те, що додали люди, потім архів із Диска. Копії фото із
+  // застосунку на Диску не показуємо: те саме фото вже стоїть у сітці, і
+  // лише ця його версія має кошик для автора.
+  const copiedToDrive = new Set((ups || []).map((u) => u.driveId).filter(Boolean));
+  const all = files && ups ? [...ups, ...files.filter((f) => !copiedToDrive.has(f.id))] : null;
   const cur = all && open != null ? all[open] : null;
   const isVideo = (f) => String((f && f.mimeType) || "").startsWith("video/");
 
@@ -2283,8 +2319,8 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
   }, [cur && cur.id]);
 
   if (!id) return null;
-  if (files === null) return <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>{t("gLoading")}</p>;
   if (err !== "") return <p style={{ fontSize: 12, color: C.rasp, margin: "0 0 10px", lineHeight: 1.45 }}>{t("gError")}</p>;
+  if (all === null) return <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>{t("gLoading")}</p>;
   const shown = limit ? all.slice(0, limit) : all;
 
   return (
@@ -2427,6 +2463,65 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
   const [note, setNote] = useState("");
   const id = driveFolderId(folderUrl);
 
+  // Докопіювання на Google Диск. Нове фото копіюється на Диск одразу після
+  // завантаження; що з якоїсь причини не пішло (телефон закрили, міст
+  // збоїв, фото додані ще до появи мосту), застосунок організатора
+  // докопіює сам, щойно відкриється ця вкладка, — порціями, доки черга не
+  // спорожніє. Учасникам нічого з цього не видно.
+  const [sync, setSync] = useState(null);   // { state: run|done|queue|fail|off, copied, left, error }
+  useEffect(() => {
+    if (!isAdmin || !adminPin) return;
+    let dead = false, answered = false;
+    // Індикатор — лише якщо перша порція триває довше за мить: коли
+    // копіювати нічого, рядок не повинен блимати.
+    const slow = setTimeout(() => { if (!dead && !answered) setSync({ state: "run", copied: 0, left: 0 }); }, 1500);
+    (async () => {
+      let copied = 0;
+      for (let round = 0; round < 60 && !dead; round++) {
+        let r, j = null;
+        try {
+          r = await fetch("/api/drive-copy", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ backfill: true, pin: adminPin }),
+          });
+          j = await r.json().catch(() => null);
+        } catch (e) {
+          if (!dead) setSync({ state: "fail", copied, left: 0, error: String((e && e.message) || e).slice(0, 120) });
+          return;
+        }
+        answered = true;
+        if (dead) return;
+        // Не JSON — функції на сервері ще немає (файл не завантажено): мовчимо.
+        if (!j) { setSync(null); return; }
+        if (r.status === 503) { setSync({ state: "off" }); return; }
+        if (!r.ok) { setSync({ state: "fail", copied, left: 0, error: String(j.error || `HTTP ${r.status}`).slice(0, 120) }); return; }
+        copied += Number(j.copied) || 0;
+        const left = Number(j.left) || 0;
+        if (j.error) { setSync({ state: "fail", copied, left, error: String(j.error).slice(0, 120) }); return; }
+        if (left > 0 && Number(j.copied) > 0) { setSync({ state: "run", copied, left }); continue; }
+        setSync(copied > 0 ? { state: "done", copied, left } : left > 0 ? { state: "queue", copied, left } : null);
+        return;
+      }
+    })();
+    return () => { dead = true; clearTimeout(slow); };
+  }, [isAdmin, adminPin]);
+
+  const syncLine = isAdmin && sync && (
+    <p style={{ display: "flex", alignItems: "flex-start", gap: 7, fontSize: 11.5, lineHeight: 1.45, margin: "0 0 10px", color: sync.state === "fail" ? C.rasp : C.muted }}>
+      {sync.state === "run"
+        ? <span style={{ width: 12, height: 12, marginTop: 1.5, borderRadius: "50%", border: `2px solid ${C.line}`, borderTopColor: C.green, animation: "dcSpin 0.8s linear infinite", flexShrink: 0, boxSizing: "border-box" }} />
+        : <Cloud size={14} style={{ flexShrink: 0, marginTop: 0.5 }} />}
+      <span>
+        {sync.state === "run" && `${t("dcRun")}${sync.left ? ` ${t("dcLeft")}: ${sync.left}` : ""}`}
+        {sync.state === "done" && `${t("dcDone")}: ${sync.copied}${sync.left ? ` · ${t("dcQueue")}: ${sync.left}` : ""}`}
+        {sync.state === "queue" && `${t("dcQueue")}: ${sync.left}`}
+        {sync.state === "fail" && `${t("dcFail")}: ${sync.error}`}
+        {sync.state === "off" && t("dcOff")}
+      </span>
+      {sync.state === "run" && <style>{"@keyframes dcSpin { to { transform: rotate(360deg); } }"}</style>}
+    </p>
+  );
+
   const reloadMeta = useCallback(() => {
     Promise.all([sbAlbumGroups(), sbAlbumMeta()]).then(([g, m]) => {
       setGroups(g || []);
@@ -2490,6 +2585,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
       <>
         {back(() => setView({ type: "group", id: view.groupId, title: view.groupTitle }), t("arcBack"))}
         <p style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, margin: "0 0 10px" }}>{view.name}</p>
+        {syncLine}
         <DriveGallery folderUrl={`https://drive.google.com/drive/folders/${view.id}`} albumId={view.id} isAdmin={isAdmin} adminPin={adminPin} />
       </>
     );
@@ -2502,6 +2598,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
       <>
         {back(() => { setView(null); setEditing(null); }, t("mcAllFolders"))}
         <p style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, margin: "0 0 10px" }}>{view.title}</p>
+        {syncLine}
         {note !== "" && <p style={{ fontSize: 11.5, color: C.rasp, margin: "0 0 9px" }}>{note}</p>}
         <div style={{ display: "grid", gap: 7, marginBottom: 10 }}>
           {inGroup.map((f) => {
@@ -2589,6 +2686,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
 
   return (
     <>
+      {syncLine}
       {note !== "" && <p style={{ fontSize: 11.5, color: C.rasp, margin: "0 0 9px" }}>{note}</p>}
       <div style={{ display: "grid", gap: 9, marginBottom: 12 }}>
         {list.map((g) => (
@@ -3179,14 +3277,24 @@ async function driveList(folderId, onlyFolders) {
     ? "mimeType = 'application/vnd.google-apps.folder'"
     : "(mimeType contains 'image/' or mimeType contains 'video/')";
   const q = `'${folderId}' in parents and trashed = false and ${kind}`;
-  const url = `${DRIVE_FILES}?q=${encodeURIComponent(q)}`
-    + `&key=${GDRIVE_KEY}&pageSize=200`
-    + `&fields=${encodeURIComponent("files(id,name,mimeType,createdTime)")}`
+  const base = `${DRIVE_FILES}?q=${encodeURIComponent(q)}`
+    + `&key=${GDRIVE_KEY}&pageSize=1000`
+    + `&fields=${encodeURIComponent("nextPageToken,files(id,name,mimeType,createdTime)")}`
     + `&orderBy=${encodeURIComponent(onlyFolders ? "name desc" : "createdTime desc")}`;
-  const r = await fetch(url);
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((j.error && j.error.message) || `HTTP ${r.status}`);
-  return j.files || [];
+  // Диск віддає перелік сторінками. Раніше бралася лише перша (до 200
+  // файлів), і найстаріші знімки великого альбому просто не показувались —
+  // а тепер в альбомі лежать ще й копії фото із застосунку.
+  const out = [];
+  let token = "";
+  for (let page = 0; page < 10; page++) {
+    const r = await fetch(token ? `${base}&pageToken=${encodeURIComponent(token)}` : base);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((j.error && j.error.message) || `HTTP ${r.status}`);
+    out.push(...(j.files || []));
+    token = j.nextPageToken || "";
+    if (!token) break;
+  }
+  return out;
 }
 const SECTION_LABELS = {
   about: "Про місце", booking: "Запис у поїздку", difficulty: "Складність", weather: "Погода",
@@ -4740,14 +4848,19 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
                   {/* Час збору окремою плашкою, першим рядком. Досі він жив
                       тільки в редакторі: учасник вичитував його з речення
                       про місце зустрічі, а якщо організатор не вписав час у
-                      те речення — не бачив зовсім. Плашка вузька, по вмісту:
-                      година — це кілька знаків, розтягувати їх на всю
-                      ширину нема сенсу. Порожнє поле — плашки немає. */}
+                      те речення — не бачив зовсім. Порожнє поле — плашки
+                      немає.
+                      Плашка на всю ширину, підпис і година майже одного
+                      розміру: коли підпис був удвічі дрібніший, в інших
+                      мовах («Meeting time», «Время сбора») він губився, а
+                      сама плашка виглядала як дрібна примітка, а не як
+                      головне, що людина має запам'ятати. Годину виділяє
+                      не розмір, а яскрава «таблетка» праворуч. */}
                   {String(trip.meetTime || "").trim() !== "" && (
-                    <div style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12, padding: "8px 13px", background: C.yellowSoft, border: `1px solid ${C.yellow}`, borderRadius: 11 }}>
-                      <Clock size={15} style={{ color: C.yellowInk, flexShrink: 0 }} />
-                      <span style={{ fontSize: 12, color: C.yellowInk, fontWeight: 600 }}>{t("meetTimeLabel")}</span>
-                      <span style={{ fontSize: 15.5, fontWeight: 800, color: C.yellowInk, letterSpacing: -0.2 }}>{String(trip.meetTime).trim()}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, padding: "11px 12px 11px 14px", background: C.yellowSoft, border: `1.5px solid ${C.yellow}`, borderRadius: 14 }}>
+                      <Clock size={22} style={{ color: C.yellowInk, flexShrink: 0 }} />
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 18, fontWeight: 700, color: C.yellowInk, lineHeight: 1.25 }}>{t("meetTimeLabel")}</span>
+                      <span style={{ flexShrink: 0, fontSize: 20, fontWeight: 800, color: C.yellowInk, background: C.yellow, borderRadius: 10, padding: "5px 12px", letterSpacing: -0.2, fontVariantNumeric: "tabular-nums" }}>{String(trip.meetTime).trim()}</span>
                     </div>
                   )}
                   {trip.coords && <div style={{ marginBottom: 12 }}><MeetingMap lat={trip.coords.lat} lng={trip.coords.lng} accent="meeting" /></div>}
