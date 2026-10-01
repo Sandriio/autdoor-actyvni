@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v131 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v132 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -25,7 +25,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v131";
+const APP_VERSION = "v132";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -72,7 +72,8 @@ async function pushRegister() {
 // Найменша версія фонового скрипта (public/sw.js), з якою узгоджено цей
 // застосунок. Порівнюємо числа, а не рядки: інакше «v10» вийшло б
 // меншим за «v4».
-const SW_EXPECTED = 4;
+// v5 — натискання на сповіщення веде в потрібне місце (див. goDeliver).
+const SW_EXPECTED = 5;
 const swNum = (v) => { const m = String(v || "").match(/^v(\d+)/); return m ? Number(m[1]) : 0; };
 // Яку версію фонового скрипта виконує саме цей телефон. Скрипт відповідає
 // на запитання через MessageChannel. Три можливі відповіді:
@@ -134,15 +135,124 @@ async function pushSend(pin, title, body, url, tag) {
   return j0;
 }
 // Те саме, але з готовими текстами по мовах: кожен пристрій отримає свою.
-async function pushSendMsgs(pin, msgs, tag) {
+// url — куди вести після натискання на сповіщення (див. goLink).
+async function pushSendMsgs(pin, msgs, tag, url) {
   const r = await fetch("/api/push", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pin, msgs, url: "/", tag: tag || "tropa" }),
+    body: JSON.stringify({ pin, msgs, url: url || "/", tag: tag || "tropa" }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
 }
+
+// ── Перехід зі сповіщення ─────────────────────────────────────────────
+// Натискання на сповіщення відкриває не просто застосунок, а те місце,
+// про яке сповіщення: поїздку, її запис, місце збору, а організатора —
+// вхід за PIN і список заявок. Куди саме — вирішує той, хто надсилає, і
+// вкладає в сповіщення адресу виду «/?trip=t123&to=booking».
+//
+// Фоновий скрипт (public/sw.js) доставляє адресу трьома шляхами, бо
+// телефони поводяться по-різному:
+//   • застосунок закритий — він відкривається одразу за цією адресою;
+//   • застосунок уже відкритий — отримує повідомлення й переходить сам,
+//     без перезавантаження, тож організатор не втрачає вхід;
+//   • про запас — записка в сховищі браузера: iPhone буває відкриває
+//     головну сторінку замість адреси, і тоді застосунок бере записку.
+// Кожен перехід має номер (gid): хоч би скількома шляхами він прийшов,
+// виконується один раз.
+//
+// Куди можна вести (to): top — сторінка поїздки згори, booking — запис,
+// meeting — місце й час збору, contact — контакти, manage — список
+// заявок організатора (спершу PIN), home — список поїздок,
+// photos — «Медіаконтент».
+const GO_CACHE = "tropa-go";     // ті самі назви, що в public/sw.js
+const GO_KEY = "/__tropa-go";
+const GO_PLACES = ["top", "booking", "meeting", "contact", "manage", "home", "photos"];
+const goLink = (tripId, to) =>
+  `/?trip=${encodeURIComponent(String(tripId))}${to ? `&to=${to}` : ""}`;
+function parseGo(href) {
+  try {
+    const u = new URL(href, window.location.origin);
+    const trip = String(u.searchParams.get("trip") || "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 100);
+    const raw = String(u.searchParams.get("to") || "").trim();
+    const to = GO_PLACES.includes(raw) ? raw : (trip ? "top" : "");
+    if (!trip && !to) return null;
+    return { trip, to, gid: String(u.searchParams.get("gid") || "").slice(0, 40) };
+  } catch { return null; }
+}
+const goInbox = { queue: [], listener: null, seen: new Set() };
+// Записка лежить, доки її не прибере застосунок. Прибираємо лише ту, чий
+// перехід уже виконано: нова записка від щойно натиснутого сповіщення
+// мусить дочекатися своєї черги.
+async function goDropNote() {
+  try {
+    if (!("caches" in window)) return;
+    const box = await caches.open(GO_CACHE);
+    const r = await box.match(GO_KEY);
+    if (!r) return;
+    const j = await r.json().catch(() => null);
+    const stale = !j || !j.id || Date.now() - Number(j.at || 0) > 3 * 60 * 1000;
+    if (stale || goInbox.seen.has(String(j.id))) await box.delete(GO_KEY);
+  } catch { /* сховище недоступне */ }
+}
+function goDeliver(href, gid) {
+  const g = parseGo(href);
+  if (!g) return;
+  const id = String(gid || g.gid || "");
+  if (id && goInbox.seen.has(id)) { goDropNote(); return; }
+  if (id) goInbox.seen.add(id);
+  goDropNote();
+  if (goInbox.listener) goInbox.listener(g); else goInbox.queue.push(g);
+}
+async function goReadNote() {
+  try {
+    if (!("caches" in window)) return;
+    const box = await caches.open(GO_CACHE);
+    const r = await box.match(GO_KEY);
+    if (!r) return;
+    const j = await r.json().catch(() => null);
+    // Записка старша за три хвилини — натискання було давно, і людина вже
+    // сама пішла, куди хотіла. Така лише прибирається.
+    if (!j || !j.go || Date.now() - Number(j.at || 0) > 3 * 60 * 1000) { goDropNote(); return; }
+    goDeliver(String(j.go), String(j.id || ""));
+  } catch { /* сховище недоступне */ }
+}
+if (typeof window !== "undefined") {
+  // 1. Застосунок відкрили за адресою зі сповіщення.
+  try {
+    const p = new URLSearchParams(window.location.search);
+    if (p.has("trip") || p.has("to")) {
+      goDeliver(window.location.href, p.get("gid") || "");
+      // Прибираємо службове з адресного рядка, інакше оновлення сторінки
+      // повторило б перехід. Решту (напр. ?v=4) не чіпаємо.
+      ["trip", "to", "gid"].forEach((k) => p.delete(k));
+      const q = p.toString();
+      window.history.replaceState(window.history.state, "", window.location.pathname + (q ? `?${q}` : "") + window.location.hash);
+    }
+  } catch { /* старий браузер */ }
+  // 2. Повідомлення від фонового скрипта, коли застосунок уже відкритий.
+  //    Слухач ставимо тут, ще до першого малювання, щоб не загубити
+  //    повідомлення, яке прийшло під час запуску.
+  try {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("message", (e) => {
+        const d = e && e.data;
+        if (d && d.type === "tropa-go" && typeof d.go === "string") goDeliver(d.go, String(d.id || ""));
+      });
+    }
+  } catch { /* без фонового скрипта */ }
+  // 3. Записка: при запуску, ще двічі трохи згодом (вона може з'явитися на
+  //    мить пізніше за сам запуск) і щоразу, коли застосунок повертається
+  //    на екран.
+  goReadNote();
+  setTimeout(goReadNote, 1200);
+  setTimeout(goReadNote, 3500);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") { goReadNote(); setTimeout(goReadNote, 1200); }
+  });
+}
+
 const sbHeaders = () => ({
   apikey: SUPABASE_ANON_KEY,
   Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
@@ -277,10 +387,12 @@ const sbMarkAdminDevice = async (pin) => {
 };
 // Сповістити організатора про нову заявку. Ключ заявки замінює тут
 // авторизацію: він доводить, що заявка справді щойно створена.
-const notifyOrganizer = (id, token) =>
+// tripId лише каже, яку поїздку відкрити організаторові після натискання
+// на сповіщення, — жодних прав він не дає.
+const notifyOrganizer = (id, token, tripId) =>
   fetch("/api/push", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ notifyBooking: { id, token } }),
+    body: JSON.stringify({ notifyBooking: { id, token, tripId } }),
   }).catch(() => {});
 
 const sbClaimBooking = (tripId, name, contact) =>
@@ -676,6 +788,7 @@ const T = {
   pinWrong: { uk: "Невірний PIN.", en: "Wrong PIN.", de: "Falscher PIN.", ru: "Неверный PIN." },
   pinFailed: { uk: "Не вдалося перевірити. Спробуйте ще раз.", en: "Could not verify. Please try again.", de: "Prüfung fehlgeschlagen. Bitte erneut versuchen.", ru: "Не удалось проверить. Попробуйте ещё раз." },
   pinDesc: { uk: "Введіть PIN-код, щоб додавати й редагувати поїздки.", en: "Enter the PIN to add and edit trips.", de: "PIN eingeben, um Ausflüge hinzuzufügen und zu bearbeiten.", ru: "Введите PIN-код, чтобы добавлять и редактировать поездки." },
+  pinForBooking: { uk: "Нова заявка чекає на підтвердження. Введіть PIN — і відкриється список записів.", en: "A new sign-up is waiting for approval. Enter the PIN to open the list.", de: "Eine neue Anmeldung wartet auf Bestätigung. PIN eingeben, um die Liste zu öffnen.", ru: "Новая заявка ждёт подтверждения. Введите PIN — откроется список записей." },
   cancel: { uk: "Скасувати", en: "Cancel", de: "Abbrechen", ru: "Отмена" },
   enter: { uk: "Увійти", en: "Enter", de: "Eintreten", ru: "Войти" },
   // statuses
@@ -3736,7 +3849,7 @@ function BookingSection({ trip, taken, onBooked, isAdmin }) {
       rememberBooking(trip.id, saveRec);
       setMine(saveRec);
       // Заявка, що чекає, — привід одразу постукати організаторові.
-      if (saveRec.status === "pending" && saveRec.id) notifyOrganizer(saveRec.id, saveRec.token);
+      if (saveRec.status === "pending" && saveRec.id) notifyOrganizer(saveRec.id, saveRec.token, trip.id);
       setDone(true); setOpen(false);
       if (onBooked) onBooked();
     } catch (e) {
@@ -4203,7 +4316,8 @@ function SituationPush({ trip, kind, pin }) {
     setBusy(true); setDone("");
     try {
       const msgs = situationMsgs(kind, trip, reason, trip.postponedTo);
-      const r = await pushSendMsgs(pin, msgs, `trip-${trip.id}`);
+      // Натискання відкриває саму поїздку згори — там видно її новий стан.
+      const r = await pushSendMsgs(pin, msgs, `trip-${trip.id}`, goLink(trip.id));
       setDone(`Надіслано: ${r.sent}${r.failed ? `, не вдалось ${r.failed}` : ""}`);
     } catch (e) {
       setDone("Помилка: " + String((e && e.message) || e).slice(0, 120));
@@ -4352,7 +4466,7 @@ function PushDiagnostics({ pin, trip }) {
         return;
       }
       let r = null;
-      try { r = await pushSendMsgs(pin, announceMsgs(trip), `trip-${trip.id}`); }
+      try { r = await pushSendMsgs(pin, announceMsgs(trip), `trip-${trip.id}`, goLink(trip.id, "booking")); }
       catch (e) {
         await sbRpc("push_log_release", { p_key: key, p_pin: pin }).catch(() => {});
         setState(`Не вдалося надіслати: ${String((e && e.message) || e).slice(0, 160)}. Можна натиснути ще раз.`);
@@ -4373,7 +4487,7 @@ function PushDiagnostics({ pin, trip }) {
     if (!window.confirm("Надіслати всім сповіщення про зміну часу?")) return;
     setBusy(true); setState("");
     try {
-      const r = await pushSendMsgs(pin, timeChangeMsgs(trip), `trip-${trip.id}`);
+      const r = await pushSendMsgs(pin, timeChangeMsgs(trip), `trip-${trip.id}`, goLink(trip.id, "meeting"));
       setState(`Про зміну часу: надіслано ${r.sent}${r.failed ? `, не вдалось ${r.failed}` : ""}`);
     } catch (e) {
       setState("Помилка: " + String((e && e.message) || e).slice(0, 200));
@@ -4604,7 +4718,30 @@ function RedList({ pin }) {
 }
 
 // ── Detail view ────────────────────────────────────────────────────────
-function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSetPostponedDate, onReorderJourneys, counts, onBooked, adminPin }) {
+function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSetPostponedDate, onReorderJourneys, counts, onBooked, adminPin, focusSec }) {
+  // Перехід зі сповіщення: прокрутити до потрібного розділу. Кілька спроб
+  // упродовж двох з половиною секунд — поки довантажуються фото, карта й
+  // погода, розділ з'їжджає нижче. Щойно людина сама торкнулась екрана,
+  // спроби припиняються: сторінка не смикається їй під пальцем.
+  useEffect(() => {
+    if (!focusSec || focusSec.trip !== trip.id) return undefined;
+    let stop = false;
+    const halt = () => { stop = true; };
+    const place = () => {
+      if (stop) return;
+      const el = focusSec.sec && focusSec.sec !== "top"
+        ? document.querySelector(`[data-sec="${focusSec.sec}"]`) : null;
+      if (el) el.scrollIntoView({ block: "start" });
+      else window.scrollTo(0, 0);
+    };
+    const timers = [0, 300, 800, 1500, 2500].map((ms) => setTimeout(place, ms));
+    const evs = ["touchstart", "wheel", "mousedown", "keydown"];
+    evs.forEach((ev) => window.addEventListener(ev, halt, { passive: true }));
+    return () => {
+      timers.forEach(clearTimeout);
+      evs.forEach((ev) => window.removeEventListener(ev, halt, { passive: true }));
+    };
+  }, [focusSec && focusSec.n]);
   // Одразу показуємо першу точку з координатами, щоб у розділі «Маршрут»
   // карта була видна без зайвого натискання (цю роль раніше виконувала
   // верхня оглядова карта, яку прибрано).
@@ -4640,8 +4777,10 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
   // а не першим абзацом вмісту: так він читається як уточнення до назви й
   // не плутається з текстом, який пише організатор. Без нього шапка
   // виглядає точно як раніше.
-  const Section = ({ icon, title, children, accent = C.green, note }) => (
-    <div style={{ background: C.card, borderRadius: 18, padding: 18, marginBottom: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
+  // data-sec — мітка для переходу зі сповіщення; scrollMarginTop лишає
+  // над розділом місце під годинник і виріз айфона.
+  const Section = ({ icon, title, children, accent = C.green, note, sec }) => (
+    <div data-sec={sec} style={{ background: C.card, borderRadius: 18, padding: 18, marginBottom: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)", scrollMarginTop: "calc(12px + env(safe-area-inset-top))" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: note ? 3 : 14 }}>
         <div style={{ width: 32, height: 32, borderRadius: 10, background: accent + "16", color: accent, display: "flex", alignItems: "center", justifyContent: "center" }}>{icon}</div>
         <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700, color: C.ink }}>{title}</h3>
@@ -5080,7 +5219,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
           const r = renderers[sec.type];
           if (!r) return null;
           return (
-            <Section key={sec.type} icon={r.icon} title={tc(sec.title)} accent={r.accent} note={r.note}>
+            <Section key={sec.type} sec={sec.type} icon={r.icon} title={tc(sec.title)} accent={r.accent} note={r.note}>
               {r.body}
             </Section>
           );
@@ -5092,7 +5231,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
             «Питання? Звʼяжіться зі мною» нижче. */}
 
         {isAdmin && (
-          <div style={{ background: C.card, borderRadius: 18, padding: 16, marginTop: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)" }}>
+          <div data-sec="manage" style={{ background: C.card, borderRadius: 18, padding: 16, marginTop: 14, boxShadow: "0 2px 12px rgba(60,79,44,0.06)", scrollMarginTop: "calc(12px + env(safe-area-inset-top))" }}>
             <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>{t("manageTrip")}</h3>
             <OrganizerBookings trip={trip} pin={adminPin} onChanged={onBooked} />
             <PushDiagnostics pin={adminPin} trip={trip} />
@@ -6286,14 +6425,36 @@ export default function App() {
   // в базі Supabase.
   const [pinBusy, setPinBusy] = useState(false);
   const [pinErr, setPinErr] = useState("");
+  // Перехід зі сповіщення (див. goDeliver). go — куди треба перейти;
+  // focusSec — до якого розділу прокрутити сторінку поїздки.
+  const [go, setGo] = useState(null);
+  const [focusSec, setFocusSec] = useState(null);
+  useEffect(() => {
+    goInbox.listener = (g) => setGo({ ...g, n: Date.now() + Math.random() });
+    const waiting = goInbox.queue.splice(0);
+    if (waiting.length) goInbox.listener(waiting[waiting.length - 1]);
+    return () => { goInbox.listener = null; };
+  }, []);
+  // Сповіщення про заявку веде організатора в список записів, але спершу
+  // потрібен PIN. Куди йти після входу — тут; pinReason змінює підказку
+  // у вікні PIN, щоб було зрозуміло, навіщо воно відкрилось.
+  const afterPin = useRef(null);
+  const [pinReason, setPinReason] = useState("");
+  const openPin = (reason) => { setPin(""); setPinErr(""); setPinReason(reason || ""); setPinOpen(true); };
+  const closePin = () => { setPinOpen(false); setPinReason(""); afterPin.current = null; };
   const tryPin = async (value) => {
     if (String(value).trim() === "") return;
     setPinBusy(true); setPinErr("");
     try {
       const ok = await sbRpc("check_pin", { pin: value });
       if (ok === true) {
-        setIsAdmin(true); setAdminPin(value); setPinOpen(false); setPin("");
+        setIsAdmin(true); setAdminPin(value); setPinOpen(false); setPin(""); setPinReason("");
         sbMarkAdminDevice(value).catch(() => {});
+        if (afterPin.current) {
+          const g = afterPin.current;
+          afterPin.current = null;
+          setGo({ ...g, n: Date.now() + Math.random() });
+        }
       }
       else { setPin(""); setPinErr(t("pinWrong")); }
     } catch (e) {
@@ -6335,6 +6496,31 @@ export default function App() {
     return Math.round((d - new Date(n.getFullYear(), n.getMonth(), n.getDate())) / 86400000);
   };
   const upcoming = upcomingAll.filter((x) => { const n = daysUntil(x.date); return n == null || n <= SOON_DAYS; });
+  // Виконати перехід зі сповіщення. Чекає, поки завантажаться поїздки, і
+  // не перебиває редагування: незбережені правки дорожчі за перехід, тож
+  // він виконається, щойно редактор закриють.
+  useEffect(() => {
+    if (!go || loadingTrips || editing) return;
+    const g = go;
+    setGo(null);
+    if (g.to === "manage" && !isAdmin) {
+      afterPin.current = g;
+      openPin("booking");
+      return;
+    }
+    if (g.to === "photos") {
+      setSelected(null); setFocusSec(null); setTab("photos"); window.scrollTo(0, 0);
+      return;
+    }
+    setTab("trips");
+    if (g.trip && trips.some((x) => x.id === g.trip)) {
+      setSelected(g.trip);
+      setFocusSec({ trip: g.trip, sec: g.to || "top", n: g.n });
+    } else {
+      // Поїздки вже немає (видалили) або вели на список — показуємо список.
+      setSelected(null); setFocusSec(null); window.scrollTo(0, 0);
+    }
+  }, [go, loadingTrips, editing, isAdmin, trips]);
   const later = upcomingAll.filter((x) => { const n = daysUntil(x.date); return n != null && n > SOON_DAYS; });
   const trip = trips.find((t) => t.id === selected);
 
@@ -6452,7 +6638,7 @@ export default function App() {
         {trip && !(isDraft(trip) && !isAdmin) ? (
           <TripDetail
             trip={trip}
-            onBack={() => setSelected(null)}
+            onBack={() => { setSelected(null); setFocusSec(null); }}
             isAdmin={isAdmin}
             onEdit={() => setEditing(toEditable(trip))}
             onDelete={() => deleteTrip(trip.id)}
@@ -6462,6 +6648,7 @@ export default function App() {
             counts={counts}
             onBooked={refreshCounts}
             adminPin={adminPin}
+            focusSec={focusSec}
           />
         ) : (
           <div style={{ padding: "0 16px 30px" }}>
@@ -6594,7 +6781,7 @@ export default function App() {
                   {t("exitOrganizer")}
                 </button>
               ) : (
-                <button onClick={() => { setPinOpen(true); setPin(""); }} aria-label="Режим організатора" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.35)", cursor: "pointer", padding: 6, display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
+                <button onClick={() => { afterPin.current = null; openPin(""); }} aria-label="Режим організатора" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.35)", cursor: "pointer", padding: 6, display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
                   <Settings size={15} /> {t("forOrganizer")}
                 </button>
               )}
@@ -6605,10 +6792,14 @@ export default function App() {
 
         {/* PIN modal */}
         {pinOpen && (
-          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 24 }} onClick={() => setPinOpen(false)}>
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 24 }} onClick={closePin}>
             <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, borderRadius: 18, padding: 22, width: "100%", maxWidth: 320, boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
               <h3 style={{ margin: "0 0 6px", fontSize: 17, fontWeight: 800, color: C.ink }}>{t("pinTitle")}</h3>
-              <p style={{ margin: "0 0 16px", fontSize: 13, color: C.muted }}>{t("pinDesc")}</p>
+              {pinReason === "booking" ? (
+                <p style={{ margin: "0 0 16px", fontSize: 13, lineHeight: 1.45, fontWeight: 600, color: C.yellowInk, background: C.yellowSoft, border: `1.5px solid ${C.yellow}`, borderRadius: 10, padding: "9px 11px" }}>{t("pinForBooking")}</p>
+              ) : (
+                <p style={{ margin: "0 0 16px", fontSize: 13, color: C.muted }}>{t("pinDesc")}</p>
+              )}
               {/* Клавіатура літер і символів. Раніше стояло
                   inputMode="numeric" — телефон показував лише цифрову
                   панель, і ввести літеру чи крапку було просто нічим. */}
@@ -6638,7 +6829,7 @@ export default function App() {
                 <p style={{ fontSize: 12.5, color: C.rasp, margin: "0 0 12px", textAlign: "center", lineHeight: 1.45 }}>{pinErr}</p>
               )}
               <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={() => setPinOpen(false)} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, color: C.muted, borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{t("cancel")}</button>
+                <button onClick={closePin} style={{ flex: 1, background: "#fff", border: `1px solid ${C.line}`, color: C.muted, borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{t("cancel")}</button>
                 <button onClick={() => tryPin(pin)} disabled={pinBusy} style={{ flex: 1, background: pinBusy ? C.pageSoft : C.green, border: "none", color: "#fff", borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 700, cursor: pinBusy ? "default" : "pointer" }}>{pinBusy ? "…" : t("enter")}</button>
               </div>
             </div>
