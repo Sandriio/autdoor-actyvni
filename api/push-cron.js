@@ -1,4 +1,7 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c4 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c5 ═══
+// c5 — дата й місце збору мовою отримувача: день тижня береться з
+//      календарної дати («Субота, 03.10.26» / «Saturday, 03.10.26»),
+//      а не з підпису, який міг бути лише українським.
 // c4 — кожне сповіщення веде у своє місце застосунку: «набір відкрито»
 //      і «мало місць» — до запису, «місць немає» — до контактів,
 //      нагадування — до місця збору, «завершено» — до списку поїздок.
@@ -72,6 +75,24 @@ const tx = (v, lang) => {
   if (typeof v === "string") return v;
   return v[lang] || v.uk || v.en || v.ru || "";
 };
+// Дні тижня — ті самі, що в застосунку (App.jsx → WEEKDAYS).
+const WEEKDAYS = {
+  uk: ["Неділя", "Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота"],
+  en: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+  ru: ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"],
+};
+// Дата поїздки мовою отримувача: «Субота, 03.10.26» — так само, як на
+// картці в застосунку. Раніше бралась з текстового підпису дати: у
+// старих поїздках він лише український, і англійське сповіщення
+// приходило з «Субота», а без підпису — з голим «2026-10-03».
+const whenOf = (tr, lang) => {
+  const m = String((tr && tr.date) || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    const d = new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00Z`);
+    return `${(WEEKDAYS[lang] || WEEKDAYS.uk)[d.getUTCDay()]}, ${m[3]}.${m[2]}.${m[1].slice(2)}`;
+  }
+  return tx(tr && tr.dateLabel, lang);
+};
 
 async function sb(fn, body) {
   const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
@@ -119,7 +140,9 @@ function build(kind, tr, extra) {
   const e = extra || {};
   for (const lang of ["uk", "en", "ru"]) {
     const name = tx(tr.title, lang);
-    const when = tx(tr.dateLabel, lang) || tr.date;
+    const when = whenOf(tr, lang);
+    // Місце збору теж кожною мовою: раніше воно бралось українське для всіх.
+    const place = tx(tr.meetingPoint, lang) || e.station || "";
     out[lang] = ({
       open: {
         uk: { title: "Відкрито запис у групу", body: `Запис у групу на ${when} до ${name} відкритий. Встигніть записатися!` },
@@ -143,9 +166,9 @@ function build(kind, tr, extra) {
         ru: { title: "Набор завершён", body: `Набор в группу на ${when} до ${name} завершён.` },
       },
       meet: {
-        uk: { title: "Нагадування про збір", body: `${when} ${name}: ${e.place}, ${e.time}. Приходьте вчасно.` },
-        en: { title: "Meeting reminder", body: `${when} ${name}: ${e.place}, ${e.time}. Please be on time.` },
-        ru: { title: "Напоминание о сборе", body: `${when} ${name}: ${e.place}, ${e.time}. Приходите вовремя.` },
+        uk: { title: "Нагадування про збір", body: `${when} ${name}: ${place}, ${e.time}. Приходьте вчасно.` },
+        en: { title: "Meeting reminder", body: `${when} ${name}: ${place}, ${e.time}. Please be on time.` },
+        ru: { title: "Напоминание о сборе", body: `${when} ${name}: ${place}, ${e.time}. Приходите вовремя.` },
       },
       end: {
         uk: { title: "Поїздка завершена", body: `Поїздка ${name} завершена. До нових зустрічей!` },
@@ -287,11 +310,13 @@ export default async function handler(req, res) {
         // Три години замість двох: люди їдуть із різних міст, і комусь
         // треба виїхати з дому раніше за сам збір.
         const remindAt = Math.max(0, meetMin - 180);
-        const place = tx(tr.meetingPoint, "uk") || (firstLeg ? firstLeg.from : "");
+        // Запасне місце — станція першого поїзда; саме місце збору build()
+        // бере вже мовою отримувача.
+        const station = firstLeg ? firstLeg.from : "";
         // Вікно від «за 2 години» до самого часу збору. Після збору
         // нагадування вже безглузде, тому далі не надсилаємо.
         if (nowMin >= remindAt && nowMin < meetMin) {
-          planned.push({ key: `meet:${id}`, tag, msgs: build("meet", tr, { place, time: hhmm(meetMin) }), url: goTo(id, GO.meet) });
+          planned.push({ key: `meet:${id}`, tag, msgs: build("meet", tr, { station, time: hhmm(meetMin) }), url: goTo(id, GO.meet) });
         } else {
           why.push(`meet — збір ${hhmm(meetMin)}, вікно ${hhmm(remindAt)}–${hhmm(meetMin)} (за 3 год) · зараз ${hhmm(nowMin)}`);
         }
