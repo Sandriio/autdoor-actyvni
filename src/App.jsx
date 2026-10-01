@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v132 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v133 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -25,7 +25,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v132";
+const APP_VERSION = "v133";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -4727,10 +4727,13 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
     if (!focusSec || focusSec.trip !== trip.id) return undefined;
     let stop = false;
     const halt = () => { stop = true; };
+    // Організаторові розділу запису не показуємо (див. нижче) — сповіщення
+    // «відкрито запис» веде його до «Керування поїздкою».
+    const sec = focusSec.sec === "booking" && isAdmin ? "manage" : focusSec.sec;
     const place = () => {
       if (stop) return;
-      const el = focusSec.sec && focusSec.sec !== "top"
-        ? document.querySelector(`[data-sec="${focusSec.sec}"]`) : null;
+      const el = sec && sec !== "top"
+        ? document.querySelector(`[data-sec="${sec}"]`) : null;
       if (el) el.scrollIntoView({ block: "start" });
       else window.scrollTo(0, 0);
     };
@@ -4842,17 +4845,20 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
         })()}
 
         {(() => {
-          // Запис іде в самий низ в обох режимах, але по-різному.
-          // Організаторові він не потрібен узагалі, тож стоїть останнім.
-          // Учасникові — одразу над контактами: спершу читаєш про місце
-          // й дорогу, потім вирішуєш їхати, а якщо є питання — контакти
-          // поруч. Раніше форма запису стояла на початку й відсувала
-          // опис, задля якого сторінку й відкривають.
+          // Учасникові запис стоїть одразу над контактами: спершу читаєш
+          // про місце й дорогу, потім вирішуєш їхати, а якщо є питання —
+          // контакти поруч. Раніше форма запису стояла на початку й
+          // відсувала опис, задля якого сторінку й відкривають.
+          // Організаторові розділу запису немає зовсім: місця, дедлайн і
+          // повний список (разом із прихованими іменами й контактами) — у
+          // «Керування поїздкою» нижче. Розділ лише дублював його, а заявка,
+          // зроблена з цього ж телефона для перевірки, ще й висіла в ньому
+          // рожевою плашкою.
           const list = resolveSections(trip).filter((s) => s.visible !== false);
           const rest = list.filter((s) => s.type !== "booking");
           const book = list.filter((s) => s.type === "booking");
+          if (isAdmin) return rest;
           if (book.length === 0) return list;
-          if (isAdmin) return [...rest, ...book];
           const ci = rest.findIndex((s) => s.type === "contact");
           return ci < 0
             ? [...rest, ...book]
