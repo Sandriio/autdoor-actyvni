@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v133 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v134 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -25,7 +25,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v133";
+const APP_VERSION = "v134";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -112,6 +112,8 @@ async function pushSubscribe(lang) {
   await sbRpc("push_subscribe", {
     p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_lang: lang || "uk",
   });
+  // Записи, зроблені ще до вмикання сповіщень, — теж на цей телефон.
+  linkAllBookingsPush().catch(() => {});
   return sub;
 }
 async function pushUnsubscribe() {
@@ -165,10 +167,10 @@ async function pushSendMsgs(pin, msgs, tag, url) {
 // Куди можна вести (to): top — сторінка поїздки згори, booking — запис,
 // meeting — місце й час збору, contact — контакти, manage — список
 // заявок організатора (спершу PIN), home — список поїздок,
-// photos — «Медіаконтент».
+// photos — «Медіаконтент», guests — «Хто їде» (рішення щодо заявки).
 const GO_CACHE = "tropa-go";     // ті самі назви, що в public/sw.js
 const GO_KEY = "/__tropa-go";
-const GO_PLACES = ["top", "booking", "meeting", "contact", "manage", "home", "photos"];
+const GO_PLACES = ["top", "booking", "meeting", "contact", "manage", "home", "photos", "guests"];
 const goLink = (tripId, to) =>
   `/?trip=${encodeURIComponent(String(tripId))}${to ? `&to=${to}` : ""}`;
 function parseGo(href) {
@@ -408,10 +410,81 @@ function myBooking(tripId) {
 function rememberBooking(tripId, rec) {
   try {
     const all = JSON.parse(localStorage.getItem(MY_BOOKINGS) || "{}");
-    if (rec) all[tripId] = rec; else delete all[tripId];
+    if (rec) {
+      // Позначку прив'язки до сповіщень (pushEp) не губимо, коли запис
+      // оновлює місце, яке про неї не знає (напр. оновлення стану заявки).
+      const prev = all[tripId];
+      all[tripId] = prev && prev.pushEp && !rec.pushEp && String(prev.id) === String(rec.id)
+        ? { ...rec, pushEp: prev.pushEp } : rec;
+    } else delete all[tripId];
     localStorage.setItem(MY_BOOKINGS, JSON.stringify(all));
   } catch {}
 }
+
+// ── Сповіщення про рішення організатора ──────────────────────────────
+// Коли організатор приймає чи відхиляє заявку, сповіщення має прийти
+// саме тій людині, яка записувалась. Облікових записів немає, тож запис
+// прив'язується до підписки цього телефона: ключ запису (він є лише тут)
+// доводить, що запис свій (booking_link_push, supabase-v134.sql).
+// Прив'язуємо при записі, при «знайти свій запис», при вмиканні
+// сповіщень і при запуску — якщо підписка телефона змінилась. Без
+// увімкнених сповіщень прив'язувати нічого.
+async function currentPushEndpoint() {
+  try {
+    if (!pushSupported()) return "";
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    return sub ? sub.endpoint : "";
+  } catch { return ""; }
+}
+// Що вже прив'язується в цьому відкритті — щоб запис і запуск, які
+// збіглися в часі, не питали базу двічі.
+const pushLinking = new Set();
+async function linkBookingPush(tripId, rec, ep) {
+  if (!rec || !rec.id || !rec.token || !sbConfigured()) return;
+  const endpoint = ep || await currentPushEndpoint();
+  if (!endpoint || rec.pushEp === endpoint) return;
+  const key = `${rec.id}|${endpoint}`;
+  if (pushLinking.has(key)) return;
+  pushLinking.add(key);
+  try {
+    await sbRpc("booking_link_push", { p_id: String(rec.id), p_token: rec.token, p_endpoint: endpoint });
+    // Відповідь «ні» теж остаточна (запис уже видалено) — тож і її
+    // запам'ятовуємо, щоб не питати при кожному запуску.
+    const cur = myBooking(tripId);
+    if (cur && String(cur.id) === String(rec.id)) rememberBooking(tripId, { ...cur, pushEp: endpoint });
+  } catch {
+    // Немає мережі або ще не виконано supabase-v134.sql — наступного разу.
+    pushLinking.delete(key);
+  }
+}
+async function linkAllBookingsPush() {
+  const ep = await currentPushEndpoint();
+  if (!ep) return;
+  let all = {};
+  try { all = JSON.parse(localStorage.getItem(MY_BOOKINGS) || "{}"); } catch { all = {}; }
+  for (const [tripId, rec] of Object.entries(all).slice(0, 30)) {
+    await linkBookingPush(tripId, rec, ep);
+  }
+}
+// Організатор прийняв чи відхилив заявку — сервер надсилає людині
+// сповіщення її мовою. Відповідь каже, чи воно пішло й чому ні.
+async function notifyDecision(pin, id, tripId) {
+  const r = await fetch("/api/push", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin, notifyDecision: { id, tripId } }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+// Що сказати організаторові, коли сповіщення не пішло.
+const DECISION_NOTE = {
+  "no device": "Учасник не отримає сповіщення: на телефоні, з якого він записувався, сповіщення не ввімкнені. Напишіть йому самі.",
+  "notifications off": "Учасник вимкнув сповіщення — напишіть йому самі.",
+  "already sent": "Сповіщення про це рішення вже надсилалось.",
+  "setup needed": "Сповіщення учасникам ще не налаштовані: виконай у Supabase файл supabase-v134.sql.",
+};
 // Повний список з контактами — лише організаторові, за PIN.
 const sbBookings = (tripId, pin) => sbRpc("trip_bookings", { p_trip_id: tripId, pin });
 const sbDeleteBooking = (id, pin) => sbRpc("delete_booking", { p_id: id, pin });
@@ -623,6 +696,8 @@ const T = {
   bkWrongContact: { uk: "Контакт не збігається із записом.", en: "The contact does not match the booking.", de: "Der Kontakt stimmt nicht mit der Anmeldung überein.", ru: "Контакт не совпадает с записью." },
   bkPending: { uk: "Заявку надіслано", en: "Request sent", de: "Anfrage gesendet", ru: "Заявка отправлена" },
   bkPendingNote: { uk: "Організатор підтвердить вашу участь. Місце буде за вами лише після підтвердження — зазирніть сюди пізніше.", en: "The organiser will confirm your place. The spot is only yours once confirmed — check back later.", de: "Die Organisation bestätigt Ihren Platz. Der Platz gilt erst nach der Bestätigung — schauen Sie später noch einmal vorbei.", ru: "Организатор подтвердит ваше участие. Место будет за вами только после подтверждения — загляните сюда позже." },
+  bkPushWillNotify: { uk: "Щойно організатор вирішить, вам прийде сповіщення.", en: "You will get a notification as soon as the organiser decides.", de: "Sobald die Organisation entscheidet, erhalten Sie eine Benachrichtigung.", ru: "Как только организатор решит, вам придёт уведомление." },
+  bkPushHint: { uk: "Щоб дізнатися про рішення одразу, увімкніть сповіщення внизу головного екрана.", en: "To hear about the decision right away, turn on notifications at the bottom of the home screen.", de: "Um die Entscheidung sofort zu erfahren, aktivieren Sie die Benachrichtigungen unten auf der Startseite.", ru: "Чтобы узнать о решении сразу, включите уведомления внизу главного экрана." },
   bkDeclined: { uk: "Заявку відхилено", en: "Request declined", de: "Anfrage abgelehnt", ru: "Заявка отклонена" },
   bkDeclinedNote: { uk: "На жаль, цього разу не вийшло. Зверніться до організатора — можливо, місце ще звільниться.", en: "Unfortunately it did not work out this time. Contact the organiser — a spot may still free up.", de: "Diesmal hat es leider nicht geklappt. Wenden Sie sich an die Organisation — vielleicht wird noch ein Platz frei.", ru: "К сожалению, в этот раз не получилось. Обратитесь к организатору — возможно, место ещё освободится." },
   bkNeedsApproval: { uk: "Записи підтверджує організатор", en: "Bookings are confirmed by the organiser", de: "Anmeldungen werden von der Organisation bestätigt", ru: "Записи подтверждает организатор" },
@@ -3752,6 +3827,14 @@ function BookingSection({ trip, taken, onBooked, isAdmin }) {
   const closed = bookingClosed(trip);
   const full = spots > 0 && left <= 0;
   const dl = deadlineText(trip);
+  // Чи прийде рішення організатора сповіщенням: true — так, false — можна
+  // ввімкнути, null — на цьому пристрої не вийде (вкладка Safari на
+  // iPhone) або ще не відомо. Тоді підказки немає.
+  const [pushOn, setPushOn] = useState(null);
+  useEffect(() => {
+    if (!pushSupported() || (isIOS() && !isStandalone())) return;
+    currentPushEndpoint().then((ep) => setPushOn(Boolean(ep))).catch(() => {});
+  }, []);
 
   // Стан власної заявки перепитуємо щоразу: організатор міг підтвердити
   // або відхилити її, поки застосунок був закритий.
@@ -3805,6 +3888,7 @@ function BookingSection({ trip, taken, onBooked, isAdmin }) {
       };
       rememberBooking(trip.id, rec);
       setMine(rec); setFName(""); setFContact("");
+      linkBookingPush(trip.id, rec).catch(() => {});
     } catch (e) {
       setErr(t(bookErrorKey(e)));
     } finally { setBusy(false); }
@@ -3848,6 +3932,8 @@ function BookingSection({ trip, taken, onBooked, isAdmin }) {
       };
       rememberBooking(trip.id, saveRec);
       setMine(saveRec);
+      // Рішення організатора прийде сповіщенням саме на цей телефон.
+      linkBookingPush(trip.id, saveRec).catch(() => {});
       // Заявка, що чекає, — привід одразу постукати організаторові.
       if (saveRec.status === "pending" && saveRec.id) notifyOrganizer(saveRec.id, saveRec.token, trip.id);
       setDone(true); setOpen(false);
@@ -3924,7 +4010,11 @@ function BookingSection({ trip, taken, onBooked, isAdmin }) {
           {mine.status === "pending" && (
             <div style={{ marginTop: 9, background: C.yellowSoft, borderRadius: 10, padding: "10px 12px", display: "flex", gap: 8, alignItems: "flex-start" }}>
               <Clock size={14} style={{ color: C.yellowInk, flexShrink: 0, marginTop: 1 }} />
-              <span style={{ fontSize: 11.5, color: C.yellowInk, lineHeight: 1.5 }}>{t("bkPendingNote")}</span>
+              <span style={{ fontSize: 11.5, color: C.yellowInk, lineHeight: 1.5 }}>
+                {t("bkPendingNote")}
+                {pushOn === true && <><br />{t("bkPushWillNotify")}</>}
+                {pushOn === false && <><br /><b style={{ fontWeight: 700 }}>{t("bkPushHint")}</b></>}
+              </span>
             </div>
           )}
           {mine.status === "declined" && (
@@ -4004,7 +4094,7 @@ function BookingSection({ trip, taken, onBooked, isAdmin }) {
       )}
 
       {guests && guests.length > 0 && (
-        <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px dashed ${C.greenLine}` }}>
+        <div data-sec="guests" style={{ marginTop: 16, paddingTop: 14, borderTop: `1px dashed ${C.greenLine}`, scrollMarginTop: "calc(12px + env(safe-area-inset-top))" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
             <Users size={15} style={{ color: C.green }} />
             <span style={{ fontSize: 13, fontWeight: 800, color: C.ink }}>
@@ -4040,6 +4130,8 @@ function BookingSection({ trip, taken, onBooked, isAdmin }) {
 // в тій самій розмові.
 function OrganizerBookings({ trip, pin, onChanged }) {
   const [rows, setRows] = useState(null);
+  // Чи дійшло до учасника сповіщення про рішення — { ok, text } або null.
+  const [note, setNote] = useState(null);
   // Імена з червоного списку. Потрібні, щоб позначити заявку, а не щоб
   // її відхилити: імена повторюються, і автоматична відмова за збігом
   // рано чи пізно образила б невинну людину.
@@ -4106,13 +4198,24 @@ function OrganizerBookings({ trip, pin, onChanged }) {
   // Підтвердити або відхилити заявку. Раніше кнопки викликали функцію,
   // якої в цьому компоненті не існувало, — натискання не давало нічого.
   const applyStatus = async (id, status) => {
-    setErr("");
+    setErr(""); setNote(null);
     try {
       await sbSetBookingStatus(id, pin, status);
       load();
       if (onChanged) onChanged();
     } catch (e) {
       setErr("Не вдалося: " + String((e && e.message) || e).slice(0, 140));
+      return;
+    }
+    // Сповіщення учасникові — уже після того, як рішення записане. Його
+    // мова — та, що в застосунку учасника, а не тут.
+    try {
+      const r = await notifyDecision(pin, id, trip.id);
+      setNote(r && r.sent
+        ? { ok: true, text: "Учасникові надіслано сповіщення." }
+        : { ok: false, text: DECISION_NOTE[r && r.note] || "Сповіщення учасникові не надіслано." });
+    } catch (e) {
+      setNote({ ok: false, text: "Сповіщення учасникові не надіслано: " + String((e && e.message) || e).slice(0, 120) });
     }
   };
 
@@ -4184,6 +4287,9 @@ function OrganizerBookings({ trip, pin, onChanged }) {
 
       {err !== "" && (
         <div style={{ background: C.raspSoft, borderRadius: 10, padding: "10px 12px", marginBottom: 10, fontSize: 12, color: C.rasp, lineHeight: 1.5 }}>{err}</div>
+      )}
+      {note && (
+        <div style={{ background: note.ok ? C.greenSoft : C.yellowSoft, borderRadius: 10, padding: "10px 12px", marginBottom: 10, fontSize: 12, color: note.ok ? C.greenDark : C.yellowInk, lineHeight: 1.5 }}>{note.text}</div>
       )}
       {rows === null && <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>Завантаження…</p>}
       {rows && rows.length === 0 && err === "" && <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>Поки ніхто не записався.</p>}
@@ -4261,13 +4367,24 @@ function OrganizerBookings({ trip, pin, onChanged }) {
 // автоматичного «набір відкрито» (api/push-cron.js): група має
 // отримати однакове сповіщення, хоч би як воно надійшло — само за
 // розкладом чи кнопкою.
+// Дата поїздки для сповіщень мовою отримувача: «Субота, 03.10.26» — так
+// само, як на картці. Береться з календарної дати, тож не залежить від
+// того, чи перекладено текстовий підпис (у старих поїздках він лише
+// український).
+function pushWhen(trip, lang) {
+  const lab = autoDateLabel(String((trip && trip.date) || "").slice(0, 10));
+  if (lab[lang]) return lab[lang];
+  const v = trip && trip.dateLabel;
+  if (v && typeof v === "object") return v[lang] || v.uk || "";
+  return String(v || "");
+}
 function announceMsgs(trip) {
   const out = {};
   const prev = CURRENT_LANG;
   for (const lang of ["uk", "en", "ru"]) {
     CURRENT_LANG = lang;
     const name = tc(trip.title);
-    const when = tc(trip.dateLabel) || trip.date || "";
+    const when = pushWhen(trip, lang);
     out[lang] = {
       uk: { title: "Відкрито запис у групу", body: `Запис у групу на ${when} до ${name} відкритий. Встигніть записатися!` },
       en: { title: "Sign-up is open", body: `Sign-up for the trip to ${name} on ${when} is open. Grab your spot!` },
@@ -4292,7 +4409,7 @@ function timeChangeMsgs(trip) {
   for (const lang of ["uk", "en", "ru"]) {
     CURRENT_LANG = lang;
     const name = tc(trip.title);
-    const when = tc(trip.dateLabel) || trip.date || "";
+    const when = pushWhen(trip, lang);
     out[lang] = {
       uk: { title: "Змінився час поїздки", body: `${name}, ${when}. Час відправлення та зустрічі змінився. Перевірте інформацію ще раз.` },
       en: { title: "Trip times changed", body: `${name}, ${when}. The departure and meeting times have changed. Please check the details again.` },
@@ -4374,7 +4491,7 @@ function situationMsgs(kind, trip, reasonCode, newDate) {
   for (const lang of ["uk", "en", "ru"]) {
     CURRENT_LANG = lang;
     const name = tc(trip.title);
-    const when = tc(trip.dateLabel) || trip.date || "";
+    const when = pushWhen(trip, lang);
     const why = reason ? t(reason.tkey) : "";
     const to = String(newDate || "").trim();
     out[lang] = kind === "postponed"
@@ -4508,7 +4625,12 @@ function PushDiagnostics({ pin, trip }) {
       lines.push(`Фоновий скрипт: помилка — ${String(e.message || e)}`);
     }
     try {
-      const r = await pushSend(pin, "Перевірка сповіщень", "Якщо ви це бачите — усе працює.", "/", "test");
+      // Іде всім підписаним, тож кожному — його мовою.
+      const r = await pushSendMsgs(pin, {
+        uk: { title: "Перевірка сповіщень", body: "Якщо ви це бачите — усе працює." },
+        en: { title: "Notification test", body: "If you can see this, everything works." },
+        ru: { title: "Проверка уведомлений", body: "Если вы это видите — всё работает." },
+      }, "test", "/");
       lines.push(`Сервер відповів: надіслано ${r.sent}, не вдалось ${r.failed}${r.removed ? `, прибрано мертвих ${r.removed}` : ""}${r.note ? ` (${r.note})` : ""}`);
     } catch (e) {
       lines.push(`ПОМИЛКА СЕРВЕРА: ${String(e.message || e).slice(0, 220)}`);
@@ -4728,12 +4850,19 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onDelete, onSetStatus, onSe
     let stop = false;
     const halt = () => { stop = true; };
     // Організаторові розділу запису не показуємо (див. нижче) — сповіщення
-    // «відкрито запис» веде його до «Керування поїздкою».
-    const sec = focusSec.sec === "booking" && isAdmin ? "manage" : focusSec.sec;
+    // «відкрито запис» веде його до «Керування поїздкою». Учасникові
+    // «Хто їде» з'являється, щойно довантажиться список; доти — розділ
+    // запису, у якому цей список стоїть.
+    const want = focusSec.sec;
+    const chain = isAdmin && (want === "booking" || want === "guests") ? ["manage"]
+      : want === "guests" ? ["guests", "booking"] : [want];
     const place = () => {
       if (stop) return;
-      const el = sec && sec !== "top"
-        ? document.querySelector(`[data-sec="${sec}"]`) : null;
+      let el = null;
+      for (const sec of chain) {
+        if (sec && sec !== "top") el = document.querySelector(`[data-sec="${sec}"]`);
+        if (el) break;
+      }
       if (el) el.scrollIntoView({ block: "start" });
       else window.scrollTo(0, 0);
     };
@@ -6350,6 +6479,12 @@ export default function App() {
   // й оновлюємо після кожного нового запису, щоб цифра на картці була
   // справжньою, а не вписаною руками.
   const [counts, setCounts] = useState({});
+  // Записи цього телефона — до його підписки на сповіщення (див.
+  // linkBookingPush). Трохи згодом, щоб не гальмувати сам запуск.
+  useEffect(() => {
+    const timer = setTimeout(() => { linkAllBookingsPush().catch(() => {}); }, 2500);
+    return () => clearTimeout(timer);
+  }, []);
   const refreshCounts = useCallback(() => {
     if (!sbConfigured()) return;
     sbBookedCounts().then(setCounts).catch(() => {});
