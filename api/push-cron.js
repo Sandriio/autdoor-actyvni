@@ -1,4 +1,7 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c3 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c4 ═══
+// c4 — кожне сповіщення веде у своє місце застосунку: «набір відкрито»
+//      і «мало місць» — до запису, «місць немає» — до контактів,
+//      нагадування — до місця збору, «завершено» — до списку поїздок.
 // c3 — відмітку пульсу пише сам сервер службовим ключем бази; у звіті
 //      видно, чи вона записалась. Потрібен supabase-cron-ping.sql.
 // c2 — чернетки пропускаються: поїздка «в розробці» не розсилає
@@ -85,14 +88,26 @@ async function sb(fn, body) {
   return txt ? JSON.parse(txt) : null;
 }
 
-async function sendPush(origin, msgs, tag) {
+async function sendPush(origin, msgs, tag, url) {
   const r = await fetch(`${origin}/api/push`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret: process.env.PUSH_SECRET, msgs, url: "/", tag }),
+    body: JSON.stringify({ secret: process.env.PUSH_SECRET, msgs, url: url || "/", tag }),
   });
   return r.ok;
 }
+
+// Куди веде натискання на сповіщення. Застосунок відкриває поїздку й
+// прокручує до розділу, де з новиною можна щось зробити:
+//   booking — запис у поїздку, contact — контакти організатора,
+//   meeting — місце й час збору, home — список усіх поїздок.
+// Без «to» — просто сторінка поїздки згори.
+const goTo = (id, to) => {
+  if (to === "home") return "/?to=home";
+  const base = `/?trip=${encodeURIComponent(String(id))}`;
+  return to ? `${base}&to=${to}` : base;
+};
+const GO = { open: "booking", low: "booking", full: "contact", close: "", meet: "meeting", end: "home" };
 
 // ── Тексти сповіщень трьома мовами ──────────────────────────────────
 function build(kind, tr, extra) {
@@ -223,18 +238,18 @@ export default async function handler(req, res) {
     // сповіщення в понеділок 14.09. Обидва рази це шостий день до.
     const openDay = addDays(date, -6);
     const openDue = nowB.date === openDay && nowMin >= 18 * 60;
-    if (openDue) planned.push({ key: `open:${id}`, tag, msgs: build("open", tr) });
+    if (openDue) planned.push({ key: `open:${id}`, tag, msgs: build("open", tr), url: goTo(id, GO.open) });
     else why.push(`open — потрібен день ${openDay} після 18:00 · зараз ${nowB.date} ${hhmm(nowMin)}`);
 
     // ② Лишається мало місць. Перевіряється щоразу, надсилається один раз.
     const spots = Number(tr.spots) || 0;
     const left = spots - (taken[id] || 0);
     if (days >= 0 && spots > 0 && left > 0 && left <= LOW_SPOTS) {
-      planned.push({ key: `low:${id}`, tag, msgs: build("low", tr, { n: left }) });
+      planned.push({ key: `low:${id}`, tag, msgs: build("low", tr, { n: left }), url: goTo(id, GO.low) });
     } else why.push(`low — треба вільних 1–${LOW_SPOTS} · зараз ${left} з ${spots}`);
     // Місць не лишилось узагалі — інше сповіщення, свій ключ.
     if (days >= 0 && spots > 0 && left <= 0) {
-      planned.push({ key: `full:${id}`, tag, msgs: build("full", tr) });
+      planned.push({ key: `full:${id}`, tag, msgs: build("full", tr), url: goTo(id, GO.full) });
     } else why.push(`full — треба 0 вільних · зараз ${left} з ${spots}`);
 
     // ③ Напередодні о 22:00 — набір завершено. Або пізніше, при першій
@@ -253,7 +268,7 @@ export default async function handler(req, res) {
     const closeDay = dm ? dm[1] : addDays(date, -1);
     const closeMin = dm ? Number(dm[2]) * 60 + Number(dm[3]) : 22 * 60;
     const closeDue = nowB.date === closeDay && nowMin >= closeMin;
-    if (closeDue) planned.push({ key: `close:${id}`, tag, msgs: build("close", tr) });
+    if (closeDue) planned.push({ key: `close:${id}`, tag, msgs: build("close", tr), url: goTo(id, GO.close) });
     else why.push(`close — потрібен день ${closeDay} після ${hhmm(closeMin)} · зараз ${nowB.date} ${hhmm(nowMin)}`);
 
     if (days === 0) {
@@ -276,13 +291,13 @@ export default async function handler(req, res) {
         // Вікно від «за 2 години» до самого часу збору. Після збору
         // нагадування вже безглузде, тому далі не надсилаємо.
         if (nowMin >= remindAt && nowMin < meetMin) {
-          planned.push({ key: `meet:${id}`, tag, msgs: build("meet", tr, { place, time: hhmm(meetMin) }) });
+          planned.push({ key: `meet:${id}`, tag, msgs: build("meet", tr, { place, time: hhmm(meetMin) }), url: goTo(id, GO.meet) });
         } else {
           why.push(`meet — збір ${hhmm(meetMin)}, вікно ${hhmm(remindAt)}–${hhmm(meetMin)} (за 3 год) · зараз ${hhmm(nowMin)}`);
         }
       }
       // ⑤ О 21:00 — поїздка завершена. Або пізніше того ж вечора.
-      if (nowMin >= 21 * 60) planned.push({ key: `end:${id}`, tag, msgs: build("end", tr) });
+      if (nowMin >= 21 * 60) planned.push({ key: `end:${id}`, tag, msgs: build("end", tr), url: goTo(id, GO.end) });
       else why.push(`end — треба після 21:00 · зараз ${hhmm(nowMin)}`);
     } else {
       why.push(`meet — тільки в день поїздки · зараз днів ${days}`);
@@ -334,7 +349,7 @@ export default async function handler(req, res) {
       berlin: nowText,
       window: "від моменту й пізніше",
       trips: report,
-      planned: planned.map((p) => p.key),
+      planned: planned.map((p) => `${p.key} → ${p.url}`),
       pulse: beat,
       note: "РЕЖИМ ЗВІТУ — нічого не надіслано",
     });
@@ -350,7 +365,7 @@ export default async function handler(req, res) {
     // Якщо надсилання впаде, це не має валити весь прохід: решта
     // сповіщень мусить дійти.
     let ok = false;
-    try { ok = await sendPush(origin, p.msgs, p.tag); }
+    try { ok = await sendPush(origin, p.msgs, p.tag, p.url); }
     catch (e) { ok = false; }
     (ok ? sent : skipped).push(p.key + (ok ? "" : ": помилка надсилання"));
   }

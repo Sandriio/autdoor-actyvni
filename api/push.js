@@ -1,3 +1,8 @@
+// ═══ Tropa Club · api/push.js · ВЕРСІЯ p2 ═══
+// p2 — кожне сповіщення несе адресу, куди вести після натискання:
+//      заявка → вхід організатора й список записів цієї поїздки.
+//      Приймаються лише адреси цього ж сайту.
+// p1 — без версії в першому рядку; натискання завжди вело на головну.
 // ═══════════════════════════════════════════════════════════════════
 // Надсилання push-сповіщень
 //
@@ -19,6 +24,14 @@ import crypto from "crypto";
 
 const b64u = (b) => Buffer.from(b).toString("base64url");
 const fromB64u = (s) => Buffer.from(String(s), "base64url");
+
+// Куди вести після натискання на сповіщення. Лише шлях цього ж сайту,
+// що починається з однієї косої: «/?trip=t123&to=booking». Повна адреса
+// чужого сайту чи «//інший.сайт» перетворюються на головну.
+const safeUrl = (u) => (typeof u === "string" && /^\/(?![\/\\])/.test(u) ? u.slice(0, 300) : "/");
+// Номер поїздки для адреси. Лише службові знаки прибираємо — сам номер
+// застосунок однаково звіряє зі списком поїздок.
+const cleanId = (v) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 100);
 
 // Скорочений HKDF: нам завжди потрібен рівно один блок.
 function hkdf(salt, ikm, info, len) {
@@ -165,7 +178,13 @@ export default async function handler(req, res) {
       };
       const subs = await sb("push_list", { p_secret: process.env.PUSH_SECRET, p_only_admin: true });
       if (!subs || subs.length === 0) { res.status(200).json({ sent: 0, note: "no admin device" }); return; }
-      const payload = JSON.stringify({ ...m, url: "/", tag: "booking" });
+      // Натискання веде організатора до вводу PIN, а після нього — у
+      // список записів саме цієї поїздки. Номер поїздки дає база; якщо ні —
+      // той, що надіслав застосунок разом із заявкою (він лише вказує, яку
+      // сторінку відкрити, і нічого не дозволяє).
+      const tripId = cleanId(info.trip_id || info.tripId || notifyBooking.tripId);
+      const go = tripId ? `/?trip=${encodeURIComponent(tripId)}&to=manage` : "/?to=manage";
+      const payload = JSON.stringify({ ...m, url: go, tag: "booking" });
       let ok = 0;
       for (const sub of subs) {
         try { if ((await sendOne(sub, payload)).ok) ok++; } catch (e) {}
@@ -209,7 +228,7 @@ export default async function handler(req, res) {
       return JSON.stringify({
         title: (m && m.title) || title || "Аутдор Активні",
         body: (m && m.body) || body || "",
-        url: url || "/",
+        url: safeUrl(url),
         tag: tag || "autdoor",
       });
     };
