@@ -1,4 +1,9 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c7 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c8 ═══
+// c8 — альбом поїздки на Google Диску створюється сам: у день поїздки з
+//      05:00 міст (Apps Script b3) робить теку «дд.мм.рр: Назва» в архіві
+//      (або бере вже наявну). «Поїздка завершена» о 21:00 веде прямо в цей
+//      альбом, де вгорі — «Додати фото або відео», і просить додати свої
+//      фото. Немає моста b3 — сповіщення веде на список поїздок, як раніше.
 // c7 — «Зміни в розкладі DB»: окреме сповіщення організаторові, щойно
 //      звірка (api/trains.js t2) бачить зміну в самому розкладі — поїзда
 //      немає, інший час відправлення чи прибуття, поїзд не доїде до
@@ -273,6 +278,39 @@ export function buildScheduleMsg(tr, items) {
   return out;
 }
 
+// ── Альбом поїздки на Google Диску (c8) ─────────────────────────────
+// Теку створює «міст» — скрипт Google Apps Script в акаунті організатора
+// (той самий, що копіює фото; версія b3 і новіша). Назва — як у решти
+// альбомів: «04.10.26: Schongau (Lech)»; застосунок сам розкладає альбоми
+// по роках за датою на початку назви. Міст не робить другої теки для тієї
+// ж поїздки: знаходить свою за підписом в описі, а теку, створену вручну з
+// тією самою датою, бере за свою.
+export function albumName(tr) {
+  const m = String((tr && tr.date) || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  const title = tx(tr.title, "uk").replace(/[\\/]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 90);
+  return `${m[3]}.${m[2]}.${m[1].slice(2)}: ${title || "Поїздка"}`;
+}
+async function bridgeAlbum(tr, id) {
+  const url = process.env.DRIVE_BRIDGE_URL, secret = process.env.DRIVE_BRIDGE_SECRET;
+  if (!url || !secret) throw new Error("міст до Диска не налаштовано");
+  const name = albumName(tr);
+  if (!name) throw new Error("у поїздки немає дати");
+  const r = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" }, redirect: "follow",
+    body: JSON.stringify({ action: "album", tripId: String(id), name, secret }),
+    signal: AbortSignal.timeout(25000),
+  });
+  const txt = await r.text();
+  let j = null;
+  try { j = JSON.parse(txt); } catch { /* не JSON — найчастіше сторінка входу Google */ }
+  if (!j) throw new Error(`міст відповів не JSON (${r.status})`);
+  // Міст старішої версії (b2) цієї дії не знає.
+  if (j.error) throw new Error(j.error === "невідома дія" ? "міст старої версії — потрібен b3" : `міст: ${j.error}`);
+  if (!j.id) throw new Error("міст не повернув теку");
+  return j;
+}
+
 // Куди веде натискання на сповіщення. Застосунок відкриває поїздку й
 // прокручує до розділу, де з новиною можна щось зробити:
 //   booking — запис у поїздку, contact — контакти організатора,
@@ -329,6 +367,12 @@ function build(kind, tr, extra) {
         uk: { title: "Поїздка завершена", body: `Поїздка ${name} завершена. До нових зустрічей!` },
         en: { title: "Trip finished", body: `The trip ${name} is over. See you next time!` },
         ru: { title: "Поездка завершена", body: `Поездка ${name} завершена. До новых встреч!` },
+      },
+      // c8: те саме сповіщення, коли є альбом поїздки, — веде в нього.
+      endAlbum: {
+        uk: { title: "Поїздка завершена", body: `Поїздка ${name} завершена. Дякуємо, що були з нами! Додайте свої фото й відео в спільний альбом.` },
+        en: { title: "Trip finished", body: `The trip ${name} is over — thanks for joining! Add your photos and videos to the shared album.` },
+        ru: { title: "Поездка завершена", body: `Поездка ${name} завершена. Спасибо, что были с нами! Добавьте свои фото и видео в общий альбом.` },
       },
     })[kind][lang];
   }
@@ -477,9 +521,27 @@ export default async function handler(req, res) {
           why.push(`meet — збір ${hhmm(meetMin)}, вікно ${hhmm(remindAt)}–${hhmm(meetMin)} (за 3 год) · зараз ${hhmm(nowMin)}`);
         }
       }
-      // ⑤ О 21:00 — поїздка завершена. Або пізніше того ж вечора.
-      if (nowMin >= 21 * 60) planned.push({ key: `end:${id}`, tag, msgs: build("end", tr), url: goTo(id, GO.end) });
-      else why.push(`end — треба після 21:00 · зараз ${hhmm(nowMin)}`);
+      // ⑦ З 05:00 — альбом поїздки на Диску (c8). Ключ журналу займається
+      //    один раз на поїздку; не вийшло — альбом створиться о 21:00,
+      //    разом зі сповіщенням «Поїздка завершена».
+      if (nowMin >= 5 * 60) {
+        planned.push({ key: `album:${id}:${date}`, job: async () => {
+          const a = await bridgeAlbum(tr, id);
+          return `альбом «${a.name}» ${a.created ? "створено" : a.adopted ? "знайдено (створений вручну)" : "уже є"}`;
+        } });
+      } else why.push(`album — у день поїздки з 05:00 · зараз ${hhmm(nowMin)}`);
+      // ⑤ О 21:00 — поїздка завершена. Або пізніше того ж вечора. Веде в
+      //    альбом поїздки, якщо міст його дав; інакше — на список поїздок.
+      if (nowMin >= 21 * 60) {
+        planned.push({
+          key: `end:${id}`, tag, msgs: build("end", tr), url: goTo(id, GO.end),
+          prepare: async (p) => {
+            const a = await bridgeAlbum(tr, id);
+            p.url = `${goTo(id, "album")}&album=${encodeURIComponent(String(a.id))}`;
+            p.msgs = build("endAlbum", tr);
+          },
+        });
+      } else why.push(`end — треба після 21:00 · зараз ${hhmm(nowMin)}`);
     } else {
       why.push(`meet — тільки в день поїздки · зараз днів ${days}`);
     }
@@ -554,6 +616,18 @@ export default async function handler(req, res) {
       try { fresh = await sb("push_log_claim", { p_key: p.key }); }
       catch (e) { skipped.push(`${p.key}: журнал — ${e.message}`); continue; }
       if (!fresh) { skipped.push(`${p.key}: вже надсилалось`); continue; }
+      // Справа без сповіщення (c8: альбом поїздки).
+      if (p.job) {
+        try { sent.push(`${p.key}: ${await p.job()}`); }
+        catch (e) { skipped.push(`${p.key}: ${String((e && e.message) || e).slice(0, 160)}`); }
+        continue;
+      }
+      // Те, що варто робити лише перед справжнім надсиланням (c8: альбом
+      // для «Поїздка завершена»). Не вийшло — сповіщення йде як раніше.
+      if (p.prepare) {
+        try { await p.prepare(p); }
+        catch (e) { skipped.push(`${p.key}: без альбому — ${String((e && e.message) || e).slice(0, 120)}`); }
+      }
       // Якщо надсилання впаде, це не має валити весь прохід: решта
       // сповіщень мусить дійти.
       let ok = false;
@@ -636,7 +710,8 @@ export default async function handler(req, res) {
       berlin: nowText,
       window: "від моменту й пізніше",
       trips: report,
-      planned: planned.concat(trainPlanned).map((p) => `${p.key}${p.items ? ` [змін: ${p.items.length}]` : ""} → ${p.url}${p.admin ? " (лише організаторові)" : ""}`),
+      planned: planned.concat(trainPlanned).map((p) => p.job ? `${p.key} → дія: альбом «${albumName(trips.find((x) => p.key.startsWith(`album:${x.id}:`))?.data || {})}»`
+        : `${p.key}${p.items ? ` [змін: ${p.items.length}]` : ""} → ${p.url}${p.prepare ? " (або в альбом поїздки)" : ""}${p.admin ? " (лише організаторові)" : ""}`),
       schedulePreview: trainPlanned.filter((p) => p.items).map((p) => p.build(p.items).uk),
       trains: trainReport,
       pulse: beat,
