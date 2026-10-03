@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v135 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v136 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -25,7 +25,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v135";
+const APP_VERSION = "v136";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -170,7 +170,7 @@ async function pushSendMsgs(pin, msgs, tag, url) {
 // photos — «Медіаконтент», guests — «Хто їде» (рішення щодо заявки).
 const GO_CACHE = "tropa-go";     // ті самі назви, що в public/sw.js
 const GO_KEY = "/__tropa-go";
-const GO_PLACES = ["top", "booking", "meeting", "contact", "manage", "home", "photos", "guests"];
+const GO_PLACES = ["top", "booking", "meeting", "contact", "manage", "home", "photos", "guests", "travel"];
 const goLink = (tripId, to) =>
   `/?trip=${encodeURIComponent(String(tripId))}${to ? `&to=${to}` : ""}`;
 function parseGo(href) {
@@ -828,6 +828,15 @@ const T = {
   tapToMap: { uk: "Натисніть, щоб показати на карті", en: "Tap to show on the map", de: "Antippen, um auf der Karte zu zeigen", ru: "Нажмите, чтобы показать на карте" },
   legTransfer: { uk: "Пересадка", en: "Transfer", de: "Umstieg", ru: "Пересадка" },
   legMin: { uk: "хв", en: "min", de: "Min", ru: "мин" },
+  // Стан поїздів за даними Deutsche Bahn (v136)
+  trOk: { uk: "за розкладом DB", en: "on time (DB)", de: "planmäßig (DB)", ru: "по расписанию DB" },
+  trCancelled: { uk: "скасовано", en: "cancelled", de: "fällt aus", ru: "отменён" },
+  trPartial: { uk: "не доїде до", en: "won't reach", de: "fährt nicht bis", ru: "не доедет до" },
+  trNotFound: { uk: "немає в розкладі DB", en: "not in DB timetable", de: "nicht im DB-Fahrplan", ru: "нет в расписании DB" },
+  trInstead: { uk: "замість", en: "instead of", de: "statt", ru: "вместо" },
+  trSource: { uk: "Стан поїздів: Deutsche Bahn (Timetables API), опрацьовано застосунком, ліцензія", en: "Train status: Deutsche Bahn (Timetables API), processed by the app, licence", de: "Zugstatus: Deutsche Bahn (Timetables API), von der App aufbereitet, Lizenz", ru: "Состояние поездов: Deutsche Bahn (Timetables API), обработано приложением, лицензия" },
+  trChecked: { uk: "Перевірено о", en: "Checked at", de: "Geprüft um", ru: "Проверено в" },
+  trBoardNote: { uk: "Остаточне слово — за табло на вокзалі.", en: "The station board has the final word.", de: "Maßgeblich ist die Anzeigetafel am Bahnhof.", ru: "Окончательное слово — за табло на вокзале." },
   legHour: { uk: "год", en: "h", de: "Std", ru: "ч" },
   legDetails: { uk: "Деталі поїздки", en: "Journey details", de: "Reisedetails", ru: "Детали поездки" },
   jpShowMore: { uk: "Показати ще", en: "Show more", de: "Mehr anzeigen", ru: "Показать ещё" },
@@ -1507,15 +1516,176 @@ function LegStop({ time, name, platform, last }) {
   );
 }
 
+// ── Стан поїздів за даними Deutsche Bahn (v136) ───────────────────────
+// Сервер (api/trains.js) звіряє вписані поїзди з табло DB напередодні й у
+// день поїздки: за розкладом, запізнення, нова колія, скасування. Тут —
+// лише показ. Ключ поїзда рахуємо ТАК САМО, як сервер (legKey у
+// api/trains.js): за ним стан знаходить свій поїзд. Міняєш одне — міняй і
+// друге.
+const trainStr = (v) => (v == null ? "" : typeof v === "string" ? v : String(v.uk || v.en || v.ru || ""));
+const trainNormName = (s) => trainStr(s).toLowerCase()
+  .replace(/ä/g, "a").replace(/ö/g, "o").replace(/ü/g, "u").replace(/ß/g, "ss")
+  .replace(/ae/g, "a").replace(/oe/g, "o").replace(/ue/g, "u")
+  .replace(/hauptbahnhof/g, "hbf")
+  .replace(/[^a-z0-9]/g, "");
+const trainNormLabel = (s) => trainStr(s).toUpperCase().replace(/[^A-Z0-9]/g, "");
+const trainHHMM = (v) => {
+  const m = trainStr(v).match(/(\d{1,2}):(\d{2})/);
+  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
+};
+const trainLegKey = (l) => `${trainNormName(l && l.from)}|${trainHHMM(l && l.fromTime)}|${trainNormLabel(l && l.train)}`;
+// Стани, які варто показувати. «Ще рано», «поїхав» і «невідомо» мовчать.
+const TRAIN_SHOWN = ["ok", "delay", "platform", "time", "cancelled", "partial", "notfound"];
+const TRAIN_BAD = ["cancelled", "partial", "notfound"];
+
+// Перевірка має сенс напередодні й у день поїздки, поки поїздка жива.
+// DB показує розклад лише на 18 годин наперед, тож раніше питати нічого.
+function trainCheckActive(trip) {
+  if (!trip || isDraft(trip)) return false;
+  const st = String(trip.status || "");
+  if (st === "cancelled" || st === "postponed") return false;
+  const d = String(trip.date || "");
+  const now = berlinNow();
+  const t0 = new Date(`${now.date}T12:00:00Z`);
+  t0.setUTCDate(t0.getUTCDate() + 1);
+  return d === now.date || d === t0.toISOString().slice(0, 10);
+}
+// Стан поїздів для сторінки поїздки: при відкритті, далі кожні 3 хвилини,
+// поки сторінка на екрані, і щоразу, як застосунок повертається на екран.
+// Сервер відповідає з кешу мережі, тож хоч сотня учасників — до DB іде
+// один запит на 2 хвилини.
+function useTrainStatus(trip) {
+  const active = trainCheckActive(trip);
+  const sig = active ? JSON.stringify(tripJourneys(trip).map((j) => filledLegs(j).map(trainLegKey))) : "";
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    if (!active) { setData(null); return undefined; }
+    let stop = false;
+    // v — відбиток переліку поїздів. Організатор виправив поїзд — адреса
+    // інша, і мережевий кеш не віддасть стан для старого переліку.
+    let h = 5381;
+    for (const ch of sig) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+    const v = h.toString(36);
+    const load = () => {
+      fetch(`/api/trains?trip=${encodeURIComponent(trip.id)}&v=${v}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => { if (!stop && j && typeof j === "object") setData(j); })
+        .catch(() => { /* немає мережі — лишаємо попередній стан */ });
+    };
+    load();
+    const iv = setInterval(() => { if (document.visibilityState === "visible") load(); }, 3 * 60 * 1000);
+    const onVis = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { stop = true; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
+  }, [trip && trip.id, active, sig]);
+  if (!active || !data) return { active, data: null, byKey: {} };
+  const byKey = {};
+  (Array.isArray(data.legs) ? data.legs : []).forEach((l) => { if (l && l.key) byKey[l.key] = l; });
+  return { active, data, byKey };
+}
+// Позначки біля поїзда. Колір — за суттю: зелений «усе гаразд»,
+// помаранчевий «зверни увагу», малиновий «так не поїдемо».
+const TR_TONE = {
+  ok: { bg: C.greenSoft, fg: C.greenDark },
+  warn: { bg: "#fdebd6", fg: "#9a4a00" },
+  bad: { bg: C.raspSoft, fg: C.rasp },
+};
+function trainChips(st) {
+  if (!st || !TRAIN_SHOWN.includes(st.state)) return [];
+  const out = [];
+  if (st.state === "cancelled") out.push({ tone: "bad", text: t("trCancelled") });
+  else if (st.state === "notfound") out.push({ tone: "bad", text: t("trNotFound") });
+  else {
+    if (st.partialTo) out.push({ tone: "bad", text: `${t("trPartial")} ${st.partialTo}` });
+    if (st.delay) out.push({ tone: "warn", text: `+${st.delay} ${t("legMin")} · ${st.newTime}` });
+    if (st.platformNow) {
+      out.push({ tone: "warn", text: st.platformWas
+        ? `${t("jpTrack")} ${st.platformNow} ${t("trInstead")} ${st.platformWas}`
+        : `DB: ${t("jpTrack")} ${st.platformNow}` });
+    }
+    if (st.state === "time" && st.dbTime) out.push({ tone: "warn", text: `DB: ${st.dbTime}` });
+    if (out.length === 0) out.push({ tone: "ok", text: `✓ ${t("trOk")}` });
+  }
+  return out;
+}
+function TrainChip({ tone, text }) {
+  const c = TR_TONE[tone] || TR_TONE.ok;
+  return (
+    <span style={{ fontSize: 11.5, fontWeight: 800, color: c.fg, background: c.bg, padding: "4px 10px", borderRadius: 20, whiteSpace: "nowrap" }}>{text}</span>
+  );
+}
+// Підпис джерела під поїздами — вимога ліцензії CC BY 4.0.
+function TrainSource({ data }) {
+  if (!data || !(data.legs || []).some((l) => l && TRAIN_SHOWN.includes(l.state))) return null;
+  return (
+    <p style={{ fontSize: 10.5, color: C.muted, lineHeight: 1.5, margin: "8px 2px 0" }}>
+      {t("trSource")}{" "}
+      <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer" style={{ color: C.muted }}>CC BY 4.0</a>.
+      {data.checkedAt ? ` ${t("trChecked")} ${data.checkedAt}.` : ""} {t("trBoardNote")}
+    </p>
+  );
+}
+// Рядок для організатора в «Керуванні поїздкою»: чи працює звірка і що
+// вона бачить. Написи лише українською, як і решта режиму організатора.
+function TrainCheckPanel({ trip, trains }) {
+  const box = { background: "#fff", borderRadius: 12, padding: "11px 13px", marginTop: 12, border: `1px solid ${C.line}` };
+  const head = <div style={{ fontSize: 12.5, fontWeight: 800, color: C.ink, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><Train size={14} /> Звірка поїздів з DB</div>;
+  const line = (txt, color) => <div style={{ fontSize: 12, color: color || C.inkSoft, lineHeight: 1.5 }}>{txt}</div>;
+  if (!tripJourneys(trip).some((j) => filledLegs(j).length > 0)) return null;
+  const st = String(trip.status || "");
+  if (!trains.active) {
+    if (st === "cancelled" || st === "postponed") return <div style={box}>{head}{line("Вимкнено: поїздку скасовано чи перенесено.")}</div>;
+    return <div style={box}>{head}{line("Почнеться напередодні ввечері: DB показує розклад лише на 18 годин наперед. Про зміни прийде сповіщення тобі на телефон.")}</div>;
+  }
+  const d = trains.data;
+  if (!d) return <div style={box}>{head}{line("Перевіряю…")}</div>;
+  if (d.configured === false) return <div style={box}>{head}{line("Не налаштовано: у Vercel ще немає ключів DB_CLIENT_ID і DB_API_KEY.", C.rasp)}</div>;
+  if (d.auth === false) return <div style={box}>{head}{line("DB не приймає ключі. Перевір DB_CLIENT_ID і DB_API_KEY у Vercel та підписку на Timetables.", C.rasp)}</div>;
+  const legs = Array.isArray(d.legs) ? d.legs : [];
+  const n = (f) => legs.filter(f).length;
+  const ok = n((l) => l.state === "ok");
+  const changed = n((l) => TRAIN_SHOWN.includes(l.state) && l.state !== "ok");
+  const later = legs.filter((l) => l.state === "later");
+  const unknown = n((l) => l.state === "unknown");
+  const departed = n((l) => l.state === "departed");
+  const parts = [];
+  if (ok) parts.push(`за розкладом — ${ok}`);
+  if (changed) parts.push(`зі змінами — ${changed}`);
+  if (later.length) parts.push(`ще рано — ${later.length}`);
+  if (unknown) parts.push(`не вдалося знайти — ${unknown}`);
+  if (departed) parts.push(`уже поїхали — ${departed}`);
+  const first = later.map((l) => l.checkFrom).filter(Boolean).sort()[0];
+  return (
+    <div style={box}>
+      {head}
+      {line(`${d.checkedAt ? `Перевірено о ${d.checkedAt}` : "Перевірено"}: ${parts.join(", ") || "поїздів немає"}.`, changed ? "#9a4a00" : C.inkSoft)}
+      {d.error && line("DB зараз відповідає з помилками — спробую ще раз за кілька хвилин.", C.muted)}
+      {changed > 0 && line("Деталі — у «Як добираємось». Сповіщення про зміни приходить тобі на телефон; групі повідомляєш сам.", C.muted)}
+      {first && line(`Звірка решти почнеться ${first.slice(8, 10)}.${first.slice(5, 7)} о ${first.slice(11, 16)}.`, C.muted)}
+      {unknown > 0 && line("«Не вдалося знайти» — поїзд не знайшовся однозначно. Перевір назву поїзда («RB 6») і час відправлення.", C.muted)}
+    </div>
+  );
+}
+
 // ── Ланцюжок поїздів із пересадками ─────────────────────────────────
 // Згорнута картка показує головне: коли й звідки виїжджати, коли й куди
 // приїде, якими поїздами. Натиск розкриває повний ланцюжок, де кожна
 // пересадка стоїть МІЖ двома поїздами — щоб було видно, на якій станції
 // і скільки часу на неї є.
-function TrainLegs({ legs: rawLegs }) {
+function TrainLegs({ legs: rawLegs, statuses }) {
   const [open, setOpen] = useState(false);
   const legs = (rawLegs || []).filter(legFilled);
   if (legs.length === 0) return null;
+  // Стан поїздів від DB. У згорнутій картці — лише проблеми з назвою
+  // поїзда або одна зелена позначка, якщо все гаразд.
+  const st = (leg) => (statuses ? statuses[trainLegKey(leg)] : null);
+  const legStates = legs.map(st).filter((x) => x && TRAIN_SHOWN.includes(x.state));
+  const problems = legs
+    .map((leg) => ({ leg, s: st(leg) }))
+    .filter(({ s }) => s && TRAIN_SHOWN.includes(s.state) && s.state !== "ok");
+  const summary = problems.length > 0
+    ? problems.flatMap(({ leg, s }) => trainChips(s).map((c) => ({ ...c, text: `${leg.train ? `${leg.train}: ` : ""}${c.text}` })))
+    : (legStates.length > 0 ? [{ tone: "ok", text: `✓ ${t("trOk")}` }] : []);
   const first = legs[0] || {};
   const last = legs[legs.length - 1] || {};
   const trains = legs.map((l) => l.train).filter((x) => x && x.trim() !== "");
@@ -1544,6 +1714,11 @@ function TrainLegs({ legs: rawLegs }) {
             <ChevronRight size={19} />
           </span>
         </div>
+        {summary.length > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 9 }}>
+            {summary.map((c, i) => <TrainChip key={i} tone={c.tone} text={c.text} />)}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 9 }}>
           {trains.map((tr, i) => (
             <span key={i} style={{ fontSize: 11.5, fontWeight: 800, color: C.yellowInk, background: C.yellow, padding: "4px 11px", borderRadius: 20 }}>{tr}</span>
@@ -1592,13 +1767,21 @@ function TrainLegs({ legs: rawLegs }) {
                   </div>
                 )}
                 <LegStop time={leg.fromTime} name={leg.from} platform={leg.platform} />
+                {!(leg.train && leg.train.trim() !== "") && trainChips(st(leg)).length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "-4px 0 8px 75px" }}>
+                    {trainChips(st(leg)).map((c, k) => <TrainChip key={k} tone={c.tone} text={c.text} />)}
+                  </div>
+                )}
                 {leg.train && leg.train.trim() !== "" && (
                   <div style={{ display: "flex", gap: 11, alignItems: "center", margin: "-6px 0 6px" }}>
                     <div style={{ width: 14, display: "flex", justifyContent: "center", flexShrink: 0 }}>
                       <span style={{ width: 2, height: 26, background: C.greenLine }} />
                     </div>
                     <span style={{ minWidth: 50, flexShrink: 0 }} />
-                    <span style={{ fontSize: 11.5, fontWeight: 800, color: C.yellowInk, background: C.yellow, padding: "4px 11px", borderRadius: 20 }}>{leg.train}</span>
+                    <span style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                      <span style={{ fontSize: 11.5, fontWeight: 800, color: C.yellowInk, background: C.yellow, padding: "4px 11px", borderRadius: 20 }}>{leg.train}</span>
+                      {trainChips(st(leg)).map((c, k) => <TrainChip key={k} tone={c.tone} text={c.text} />)}
+                    </span>
                   </div>
                 )}
                 <LegStop time={leg.toTime} name={leg.to} platform={leg.toPlatform} last={i === legs.length - 1} />
@@ -1626,7 +1809,7 @@ function TrainLegs({ legs: rawLegs }) {
 // Напис «Зберігаю… / Порядок збережено» приходить ззовні (note): після
 // збереження сторінка поїздки перемальовується, розділ монтується заново,
 // і власний стан цього компонента на той момент уже скинутий.
-function SortableJourneys({ journeys, onReorder, note }) {
+function SortableJourneys({ journeys, onReorder, note, statuses }) {
   const GAP = 10;
   const items = journeys
     .map((j, idx) => ({ j, idx }))
@@ -1765,7 +1948,7 @@ function SortableJourneys({ journeys, onReorder, note }) {
                 </div>
               )}
               <div style={{ flex: 1, minWidth: 0, borderRadius: 14, boxShadow: dragging ? "0 10px 24px rgba(40,55,30,0.22)" : "none", transition: "box-shadow .15s" }}>
-                <TrainLegs legs={it.j.legs} />
+                <TrainLegs legs={it.j.legs} statuses={statuses} />
               </div>
             </div>
           );
@@ -4852,6 +5035,8 @@ function RedList({ pin }) {
 
 // ── Detail view ────────────────────────────────────────────────────────
 function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onSetStatus, onSetPostponedDate, onReorderJourneys, counts, onBooked, adminPin, focusSec }) {
+  // Стан поїздів від Deutsche Bahn — напередодні й у день поїздки (v136).
+  const trains = useTrainStatus(trip);
   // Перехід зі сповіщення: прокрутити до потрібного розділу. Кілька спроб
   // упродовж двох з половиною секунд — поки довантажуються фото, карта й
   // погода, розділ з'їжджає нижче. Щойно людина сама торкнулась екрана,
@@ -5047,14 +5232,15 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onSetStat
                           Організатор бачить ті самі картки з ручками й
                           може переставити їх перетягуванням. */}
                       {isAdmin && reorderJourneys ? (
-                        <SortableJourneys journeys={tripJourneys(trip)} onReorder={reorderJourneys} note={orderNote} />
+                        <SortableJourneys journeys={tripJourneys(trip)} onReorder={reorderJourneys} note={orderNote} statuses={trains.byKey} />
                       ) : (
                         <div style={{ display: "grid", gap: 10 }}>
                           {tripJourneys(trip)
                             .filter((j) => filledLegs(j).length > 0)
-                            .map((j, i) => <TrainLegs key={i} legs={j.legs} />)}
+                            .map((j, i) => <TrainLegs key={i} legs={j.legs} statuses={trains.byKey} />)}
                         </div>
                       )}
+                      <TrainSource data={trains.data} />
                       {/* Список поїздів веде організатор вручну, тож у ньому
                           є лише ті міста, які він вніс. Підказка потрібна,
                           щоб людина з іншого міста знала, що робити. */}
@@ -5381,6 +5567,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onSetStat
             <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.6 }}>{t("manageTrip")}</h3>
             <OrganizerBookings trip={trip} pin={adminPin} onChanged={onBooked} />
             <PushDiagnostics pin={adminPin} trip={trip} />
+            <TrainCheckPanel trip={trip} trains={trains} />
             <div style={{ height: 16 }} />
             <label style={{ fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 6, display: "block" }}>{t("tripStatus")}</label>
             <select value={trip.status} onChange={(e) => onSetStatus(e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 11, padding: "12px", fontSize: 14, fontWeight: 700, fontFamily: "inherit", background: C.yellowSoft, color: C.yellowInk, cursor: "pointer", marginBottom: 6 }}>
