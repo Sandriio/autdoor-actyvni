@@ -1,4 +1,13 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c5 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c6 ═══
+// c6 — звірка поїздів з табло Deutsche Bahn (api/trains.js): напередодні
+//      з 18:00 і в день поїздки організаторові приходить сповіщення,
+//      якщо поїзд скасовано, він запізнюється на 10+ хв, змінилась
+//      колія чи час або поїзда немає в розкладі DB. Учасникам — ні:
+//      повідомити групу вирішує організатор. Вночі (23:00–05:00) тиша.
+//      Звірка йде ПІСЛЯ решти сповіщень і має власний таймаут: повільна
+//      відповідь DB не затримає нагадування про збір.
+//      Перенесена поїздка (стан «postponed») більше не розсилає сповіщень
+//      за розкладом: її дата в базі — стара, а нова записана лише текстом.
 // c5 — дата й місце збору мовою отримувача: день тижня береться з
 //      календарної дати («Субота, 03.10.26» / «Saturday, 03.10.26»),
 //      а не з підпису, який міг бути лише українським.
@@ -35,6 +44,8 @@
 // в поясі Europe/Berlin, інакше влітку все приїжджало б на дві години
 // раніше.
 // ═══════════════════════════════════════════════════════════════════
+
+export const config = { maxDuration: 60 };
 
 const TZ = "Europe/Berlin";
 // Раніше кожне сповіщення мало вікно завширшки 20 хвилин: «рівно о 09:00
@@ -109,13 +120,88 @@ async function sb(fn, body) {
   return txt ? JSON.parse(txt) : null;
 }
 
-async function sendPush(origin, msgs, tag, url) {
+// onlyAdmin — лише на пристрої організатора (так позначені в базі
+// телефони, з яких входили з PIN).
+async function sendPush(origin, msgs, tag, url, onlyAdmin) {
   const r = await fetch(`${origin}/api/push`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret: process.env.PUSH_SECRET, msgs, url: url || "/", tag }),
+    body: JSON.stringify({ secret: process.env.PUSH_SECRET, msgs, url: url || "/", tag, onlyAdmin: Boolean(onlyAdmin) }),
   });
   return r.ok;
+}
+
+// ── Поїзди: звірка з табло DB (api/trains.js) ────────────────────────
+// Лише організаторові. Вночі тиша: зміну, знайдену між 23:00 і 05:00,
+// надішлемо о п'ятій — ключ у журналі займається лише при надсиланні.
+const TRAIN_QUIET_FROM = 23 * 60;
+const TRAIN_QUIET_TO = 5 * 60;
+const TRAIN_DELAY_PUSH = 10;          // запізнення від 10 хв — уже новина
+const hashKey = (s) => {
+  let h = 5381;
+  for (const ch of String(s)) h = ((h * 33) ^ ch.codePointAt(0)) >>> 0;
+  return h.toString(36);
+};
+const platformSig = (p) => String(p || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
+// Що в поїзді не так — короткими мітками для ключа журналу. Новий набір
+// міток — нове сповіщення; той самий — повтору не буде.
+export function trainIssues(leg) {
+  if (!leg) return [];
+  if (leg.state === "cancelled") return ["c"];
+  if (leg.state === "notfound") return ["nf"];
+  const out = [];
+  if (leg.partialTo) out.push("x");
+  if (Number(leg.delay) >= TRAIN_DELAY_PUSH) out.push(`d${Math.floor(Number(leg.delay) / 10) * 10}`);
+  if (leg.platformNow) out.push(`p${platformSig(leg.platformNow)}`);
+  if (leg.state === "time" && leg.dbTime) out.push(`t${String(leg.dbTime).replace(":", "")}`);
+  return out;
+}
+const TRAIN_TXT = {
+  uk: {
+    title: { c: "Поїзд скасовано", nf: "Поїзда немає в розкладі DB", x: "Поїзд не доїде до кінця", d: (n) => `Затримка поїзда +${n} хв`, p: "Змінилась колія", t: "Інший час за DB" },
+    train: "поїзд", at: "о", from: "з",
+    c: "скасовано", nf: "у розкладі DB не знайдено — можливо, змінився розклад або в поїздці описка",
+    x: (to) => `не доїде до ${to}`, d: (time, n) => `відправиться о ${time} (+${n} хв)`,
+    p: (now, was, typed) => `колія ${now}${was ? ` замість ${was}` : typed ? ` (у поїздці ${typed})` : ""}`,
+    t: (time) => `за DB відправлення о ${time}`, tail: "Перевір на bahn.de.",
+  },
+  en: {
+    title: { c: "Train cancelled", nf: "Train not in the DB timetable", x: "Train won't run the full route", d: (n) => `Train delayed +${n} min`, p: "Platform changed", t: "Different time at DB" },
+    train: "train", at: "at", from: "from",
+    c: "cancelled", nf: "not found in the DB timetable — the schedule may have changed or the trip has a typo",
+    x: (to) => `won't reach ${to}`, d: (time, n) => `departs at ${time} (+${n} min)`,
+    p: (now, was, typed) => `platform ${now}${was ? ` instead of ${was}` : typed ? ` (trip says ${typed})` : ""}`,
+    t: (time) => `DB departure at ${time}`, tail: "Check bahn.de.",
+  },
+  ru: {
+    title: { c: "Поезд отменён", nf: "Поезда нет в расписании DB", x: "Поезд не доедет до конца", d: (n) => `Задержка поезда +${n} мин`, p: "Изменился путь", t: "Другое время у DB" },
+    train: "поезд", at: "в", from: "из",
+    c: "отменён", nf: "в расписании DB не найден — возможно, изменилось расписание или в поездке опечатка",
+    x: (to) => `не доедет до ${to}`, d: (time, n) => `отправится в ${time} (+${n} мин)`,
+    p: (now, was, typed) => `путь ${now}${was ? ` вместо ${was}` : typed ? ` (в поездке ${typed})` : ""}`,
+    t: (time) => `по DB отправление в ${time}`, tail: "Проверь на bahn.de.",
+  },
+};
+export function buildTrainMsg(tr, leg, issues) {
+  const out = {};
+  const order = ["c", "nf", "x", "d", "p", "t"];
+  const main = order.find((k) => issues.some((i) => i.startsWith(k) && (k !== "d" || /^d\d/.test(i)))) || "p";
+  for (const lang of ["uk", "en", "ru"]) {
+    const T = TRAIN_TXT[lang];
+    const parts = [];
+    for (const i of issues) {
+      if (i === "c") parts.push(T.c);
+      else if (i === "nf") parts.push(T.nf);
+      else if (i === "x") parts.push(T.x(leg.partialTo));
+      else if (i.startsWith("d")) parts.push(T.d(leg.newTime, leg.delay));
+      else if (i.startsWith("p")) parts.push(T.p(leg.platformNow, leg.platformWas, leg.platformTyped));
+      else if (i.startsWith("t")) parts.push(T.t(leg.dbTime));
+    }
+    const title = main === "d" ? T.title.d(leg.delay) : T.title[main];
+    const head = `${whenOf(tr, lang)} ${tx(tr.title, lang)}: ${leg.train || T.train} ${T.at} ${leg.time} ${T.from} ${leg.from}`;
+    out[lang] = { title, body: `${head} — ${parts.join("; ")}. ${T.tail}` };
+  }
+  return out;
 }
 
 // Куди веде натискання на сповіщення. Застосунок відкриває поїздку й
@@ -221,6 +307,7 @@ export default async function handler(req, res) {
 
   const planned = [];
   const report = [];
+  const trainTrips = [];
 
   // Поїздки в розробці повністю пропускаємо. Без цього чернетка сама
   // розіслала б усім «набір відкрито» зі своєю назвою — тобто показала
@@ -239,7 +326,7 @@ export default async function handler(req, res) {
       report.push({ id, name, skip: "немає календарної дати — жодне сповіщення неможливе" });
       continue;
     }
-    if (status === "cancelled" || status === "done") {
+    if (status === "cancelled" || status === "done" || status === "postponed") {
       report.push({ id, name, date, skip: `стан «${status}» — сповіщення вимкнені` });
       continue;
     }
@@ -328,6 +415,10 @@ export default async function handler(req, res) {
       why.push(`meet — тільки в день поїздки · зараз днів ${days}`);
     }
 
+    // ⑥ Поїзди: напередодні з 18:00 і в день поїздки.
+    if (days === 0 || (days === 1 && nowMin >= 18 * 60)) trainTrips.push({ id, tr, name });
+    else why.push("trains — звірка з DB напередодні з 18:00 і в день поїздки");
+
     report.push({
       id, name, date, days, status,
       spots, taken: taken[id] || 0,
@@ -369,31 +460,88 @@ export default async function handler(req, res) {
     }
   })();
 
+  // Спершу — звичайні сповіщення; звірка поїздів іде після них (див. c6).
+  const sent = [], skipped = [];
+  const deliver = async (list) => {
+    for (const p of list) {
+      let fresh = false;
+      try { fresh = await sb("push_log_claim", { p_key: p.key }); }
+      catch (e) { skipped.push(`${p.key}: журнал — ${e.message}`); continue; }
+      if (!fresh) { skipped.push(`${p.key}: вже надсилалось`); continue; }
+      // Якщо надсилання впаде, це не має валити весь прохід: решта
+      // сповіщень мусить дійти.
+      let ok = false;
+      try { ok = await sendPush(origin, p.msgs, p.tag, p.url, p.admin); }
+      catch (e) { ok = false; }
+      (ok ? sent : skipped).push(p.key + (ok ? "" : ": помилка надсилання"));
+    }
+  };
+  if (!debug) await deliver(planned);
+
+  // Звірка поїздів. Сам похід у DB робить api/trains.js — той самий, що
+  // показує стан поїздів у застосунку; &fresh=… обходить двохвилинний кеш.
+  const trainReport = [];
+  const trainPlanned = [];
+  const quiet = nowMin >= TRAIN_QUIET_FROM || nowMin < TRAIN_QUIET_TO;
+  await Promise.all(trainTrips.map(async ({ id, tr, name }) => {
+    const item = { id, name, legs: [] };
+    trainReport.push(item);
+    let j = null;
+    try {
+      // Власний таймаут: DB буває повільним, а годинник не може чекати
+      // вічно (cron-job.org сам обриває виклик за 30 секунд).
+      const r = await fetch(`${origin}/api/trains?trip=${encodeURIComponent(String(id))}&fresh=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
+      j = await r.json();
+    } catch (e) {
+      item.error = `api/trains не відповів: ${String((e && e.message) || e).slice(0, 120)}`;
+      return;
+    }
+    if (!j || j.configured === false) { item.note = "не налаштовано: у Vercel немає DB_CLIENT_ID і DB_API_KEY"; return; }
+    if (j.auth === false) {
+      item.error = "DB не приймає ключі";
+      // Раз на добу кажемо організаторові, що звірка не працює: інакше він
+      // думав би, що поїзди просто за розкладом.
+      if (!quiet) trainPlanned.push({
+        key: `trn-auth:${nowB.date}`, tag: "trains", admin: true, url: goTo(id, "travel"),
+        msgs: {
+          uk: { title: "Звірка поїздів з DB не працює", body: "DB не приймає ключі. Перевір DB_CLIENT_ID і DB_API_KEY у Vercel та підписку на Timetables." },
+          en: { title: "DB train check is not working", body: "DB rejects the keys. Check DB_CLIENT_ID and DB_API_KEY in Vercel and the Timetables subscription." },
+          ru: { title: "Сверка поездов с DB не работает", body: "DB не принимает ключи. Проверь DB_CLIENT_ID и DB_API_KEY в Vercel и подписку на Timetables." },
+        },
+      });
+      return;
+    }
+    if (j.error) item.error = j.error;
+    for (const leg of (j.legs || [])) {
+      const issues = trainIssues(leg);
+      item.legs.push(`${leg.train || "поїзд"} ${leg.time} ${leg.from}: ${leg.state}${issues.length ? ` [${issues.join(",")}]` : ""}`);
+      if (issues.length === 0) continue;
+      if (quiet) { item.legs.push("  ↳ тиша 23:00–05:00 — надішлемо зранку"); continue; }
+      // Окремий тег для кожного поїзда: два сповіщення поспіль не
+      // заміщають одне одного на екрані телефона. Дата в ключі — щоб після
+      // перенесення поїздки на інший день та сама зміна знову дійшла.
+      trainPlanned.push({
+        key: `trn:${id}:${tr.date}:${hashKey(leg.key)}:${[...issues].sort().join(",")}`,
+        tag: `trains-${id}-${hashKey(leg.key)}`, admin: true, url: goTo(id, "travel"),
+        msgs: buildTrainMsg(tr, leg, issues),
+      });
+    }
+  }));
+
   if (debug) {
     res.status(200).json({
       berlin: nowText,
       window: "від моменту й пізніше",
       trips: report,
-      planned: planned.map((p) => `${p.key} → ${p.url}`),
+      planned: planned.concat(trainPlanned).map((p) => `${p.key} → ${p.url}${p.admin ? " (лише організаторові)" : ""}`),
+      trains: trainReport,
       pulse: beat,
       note: "РЕЖИМ ЗВІТУ — нічого не надіслано",
     });
     return;
   }
 
-  const sent = [], skipped = [];
-  for (const p of planned) {
-    let fresh = false;
-    try { fresh = await sb("push_log_claim", { p_key: p.key }); }
-    catch (e) { skipped.push(`${p.key}: журнал — ${e.message}`); continue; }
-    if (!fresh) { skipped.push(`${p.key}: вже надсилалось`); continue; }
-    // Якщо надсилання впаде, це не має валити весь прохід: решта
-    // сповіщень мусить дійти.
-    let ok = false;
-    try { ok = await sendPush(origin, p.msgs, p.tag, p.url); }
-    catch (e) { ok = false; }
-    (ok ? sent : skipped).push(p.key + (ok ? "" : ": помилка надсилання"));
-  }
+  await deliver(trainPlanned);
 
-  res.status(200).json({ berlin: nowText, pulse: beat, planned: planned.length, sent, skipped });
+  res.status(200).json({ berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped, trains: trainReport });
 }
