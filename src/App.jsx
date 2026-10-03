@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v137 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v138 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -25,7 +25,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v137";
+const APP_VERSION = "v138";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -5829,6 +5829,238 @@ function makeTripCopy(src) {
   return c;
 }
 
+// ── Взяти з іншої поїздки (v138) ──────────────────────────────────────
+// Копія цілої поїздки (v135) потрібна, коли повторюється вся поїздка. А
+// часто збігається лише частина: ті самі поїзди до Weilheim, та сама
+// точка збору біля каси, ті самі точки маршруту. Тож у редакторі біля
+// трьох блоків — «Поїзди», «Точка збору», «Маршрут» — кнопка «Взяти з
+// іншої поїздки»: обираєш поїздку, бачиш, що саме перенесеться, і
+// переносиш лише цей блок. Решта поїздки, яку редагуєш, не змінюється.
+// Як і в копії поїздки, багатомовні тексти стають українськими (toEditable),
+// а ручні правки перекладу цих текстів переносяться разом із ними.
+const COPY_KINDS = {
+  trains: {
+    button: "Взяти поїзди з іншої поїздки",
+    ask: "З якої поїздки взяти поїзди?",
+    empty: "Інших поїздок із поїздами поки немає.",
+    done: "Звір час поїздів на bahn.de — розклад міг змінитися.",
+  },
+  meeting: {
+    button: "Взяти точку збору з іншої поїздки",
+    ask: "З якої поїздки взяти точку збору?",
+    empty: "Інших поїздок із точкою збору поки немає.",
+    done: "Перевір час збору — він залежить від поїздів.",
+  },
+  route: {
+    button: "Взяти точки маршруту з іншої поїздки",
+    ask: "З якої поїздки взяти точки маршруту?",
+    empty: "Інших поїздок із точками маршруту поки немає.",
+    done: "Перевір точки на карті.",
+  },
+};
+// Справжні координати: не порожні, не нулі й не заготовка нової поїздки
+// (BLANK_TRIP ставить 47.5, 11.0 — це ще не точка збору).
+const copyHasCoords = (c) => {
+  const la = parseFloat(c && c.lat), ln = parseFloat(c && c.lng);
+  if (isNaN(la) || isNaN(ln) || (la === 0 && ln === 0)) return false;
+  return !(la === 47.5 && ln === 11);
+};
+// Що саме можна взяти з поїздки src для блоку kind. null — нічого.
+function copyPart(src, kind) {
+  if (!src) return null;
+  const e = toEditable(src);
+  if (kind === "trains") {
+    const journeys = tripJourneys(e)
+      .map((j) => ({ legs: (j.legs || []).filter(legFilled) }))
+      .filter((j) => j.legs.length > 0);
+    const ret = { returnFrom: e.returnFrom || "", returnTime: e.returnTime || "", returnPlatform: e.returnPlatform || "" };
+    const hasReturn = Object.values(ret).some((v) => String(v).trim() !== "");
+    if (journeys.length === 0 && !hasReturn) return null;
+    return { journeys, ret: hasReturn ? ret : null, manualTr: e.manualTr || {} };
+  }
+  if (kind === "meeting") {
+    const text = String(e.meetingPoint || "").trim();
+    const coords = copyHasCoords(e.coords) ? { lat: e.coords.lat, lng: e.coords.lng } : null;
+    if (!text && !coords) return null;
+    return { text, coords, time: String(e.meetTime || "").trim(), manualTr: e.manualTr || {} };
+  }
+  if (kind === "route") {
+    const points = (e.route || []).filter((p) => p && (String(p.name || "").trim() !== "" || copyHasCoords(p)));
+    if (points.length === 0) return null;
+    return { points, url: String(e.routeUrl || "").trim(), manualTr: e.manualTr || {} };
+  }
+  return null;
+}
+// Поїздки, з яких є що взяти: найновіші зверху.
+function copySources(others, kind, selfId) {
+  return (others || [])
+    .filter((tr) => tr && tr.id !== selfId)
+    .map((tr) => ({ tr, part: copyPart(tr, kind) }))
+    .filter((x) => x.part)
+    .sort((a, b) => String(b.tr.date || "").localeCompare(String(a.tr.date || "")));
+}
+const journeyLabel = (j) => {
+  const ls = j.legs || [];
+  const a = ls[0] || {}, b = ls[ls.length - 1] || {};
+  const n = ls.length;
+  const word = n === 1 ? "поїзд" : n >= 2 && n <= 4 ? "поїзди" : "поїздів";
+  return { route: `${String(a.from || "—").trim()} → ${String(b.to || "—").trim()}`, info: `${a.fromTime || "—"} · ${n} ${word}` };
+};
+const copyChk = { width: 18, height: 18, accentColor: C.green, flexShrink: 0, marginTop: 1 };
+const copyRow = { display: "flex", alignItems: "flex-start", gap: 9, padding: "9px 2px", borderBottom: `1px solid ${C.line}`, cursor: "pointer", fontSize: 13, lineHeight: 1.4, color: C.ink };
+const copyBtn = (main) => ({
+  flex: 1, border: main ? "none" : `1.5px solid ${C.green}`, background: main ? C.green : "#fff",
+  color: main ? "#fff" : C.greenDark, borderRadius: 10, padding: "10px 12px", fontSize: 13, fontWeight: 700,
+  cursor: "pointer", fontFamily: "inherit",
+});
+
+// Що саме перенесеться — і кнопка «взяти». current — що вже є в поїздці,
+// яку редагуєш: від цього залежать слова «додати» чи «замінити».
+function CopyPreview({ kind, part, current, onApply, onBack }) {
+  const [pickJ, setPickJ] = useState(() => (part.journeys || []).map(() => true));
+  const [withRet, setWithRet] = useState(Boolean(part.ret));
+  const [withTime, setWithTime] = useState(Boolean(part.time));
+  const [withUrl, setWithUrl] = useState(Boolean(part.url));
+  const back = <button onClick={onBack} style={copyBtn(false)}>Інша поїздка</button>;
+  if (kind === "trains") {
+    const n = pickJ.filter(Boolean).length;
+    const any = n > 0 || (withRet && part.ret);
+    return (
+      <div>
+        {(part.journeys || []).map((j, i) => {
+          const L = journeyLabel(j);
+          return (
+            <label key={i} style={copyRow}>
+              <input type="checkbox" checked={pickJ[i]} style={copyChk}
+                onChange={() => setPickJ(pickJ.map((v, k) => (k === i ? !v : v)))} />
+              <span><b>{L.route}</b><br /><span style={{ color: C.muted, fontSize: 12 }}>{L.info}</span></span>
+            </label>
+          );
+        })}
+        {part.ret && (
+          <label style={copyRow}>
+            <input type="checkbox" checked={withRet} style={copyChk} onChange={() => setWithRet(!withRet)} />
+            <span>Відправлення назад: <b>{[part.ret.returnFrom, part.ret.returnTime].filter((x) => String(x).trim()).join(", ")}</b></span>
+          </label>
+        )}
+        <p style={{ fontSize: 11.5, color: C.muted, margin: "8px 0 10px", lineHeight: 1.45 }}>
+          {current.filled > 0
+            ? `Відправлення додадуться після твоїх (${current.filled}); наявні не зміняться.`
+            : "Відправлення з'являться в цій поїздці."}
+        </p>
+        <div style={{ display: "flex", gap: 8 }}>
+          {back}
+          <button disabled={!any} onClick={() => onApply({ journeys: part.journeys.filter((_, i) => pickJ[i]), ret: withRet ? part.ret : null })}
+            style={{ ...copyBtn(true), opacity: any ? 1 : 0.45, cursor: any ? "pointer" : "default" }}>
+            Взяти{n > 0 ? ` (${n})` : ""}
+          </button>
+        </div>
+      </div>
+    );
+  }
+  if (kind === "meeting") {
+    const replace = current.has;
+    return (
+      <div>
+        <div style={{ background: "#fff", borderRadius: 10, padding: "10px 12px", fontSize: 13, lineHeight: 1.45, color: C.ink, marginBottom: 8, border: `1px solid ${C.line}` }}>
+          {part.text || <span style={{ color: C.muted }}>Без опису — лише точка на карті</span>}
+          {part.coords && <div style={{ fontSize: 12, color: C.green, fontWeight: 700, marginTop: 4 }}>📍 точка на карті</div>}
+        </div>
+        {part.time && (
+          <label style={copyRow}>
+            <input type="checkbox" checked={withTime} style={copyChk} onChange={() => setWithTime(!withTime)} />
+            <span>і час збору <b>{part.time}</b></span>
+          </label>
+        )}
+        <p style={{ fontSize: 11.5, color: C.muted, margin: "8px 0 10px", lineHeight: 1.45 }}>
+          {replace ? "Замінить точку збору, вписану зараз." : "Точка збору з'явиться в цій поїздці."}
+        </p>
+        <div style={{ display: "flex", gap: 8 }}>
+          {back}
+          <button onClick={() => onApply({ withTime })} style={copyBtn(true)}>{replace ? "Замінити" : "Взяти"}</button>
+        </div>
+      </div>
+    );
+  }
+  // route
+  const pts = part.points || [];
+  return (
+    <div>
+      <ol style={{ margin: "0 0 8px", paddingLeft: 22, fontSize: 13, lineHeight: 1.55, color: C.ink }}>
+        {pts.slice(0, 10).map((p, i) => <li key={i}>{String(p.name || "").trim() || `Точка ${i + 1}`}{p.t ? <span style={{ color: C.muted }}> · {p.t}</span> : null}</li>)}
+      </ol>
+      {pts.length > 10 && <p style={{ fontSize: 12, color: C.muted, margin: "0 0 8px" }}>і ще {pts.length - 10}</p>}
+      {part.url && (
+        <label style={copyRow}>
+          <input type="checkbox" checked={withUrl} style={copyChk} onChange={() => setWithUrl(!withUrl)} />
+          <span>і посилання на повний маршрут</span>
+        </label>
+      )}
+      <p style={{ fontSize: 11.5, color: C.muted, margin: "8px 0 10px", lineHeight: 1.45 }}>
+        {current.count > 0 ? `У цій поїздці вже є точки (${current.count}). Заміни їх або додай нові в кінець.` : "Точки з'являться в цій поїздці."}
+      </p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {back}
+        {current.count > 0 ? (
+          <>
+            <button onClick={() => onApply({ mode: "replace", withUrl })} style={copyBtn(true)}>Замінити</button>
+            <button onClick={() => onApply({ mode: "append", withUrl })} style={copyBtn(false)}>Додати в кінець</button>
+          </>
+        ) : (
+          <button onClick={() => onApply({ mode: "replace", withUrl })} style={copyBtn(true)}>Взяти ({pts.length})</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Кнопка й панель «Взяти з іншої поїздки» всередині блоку редактора.
+function CopyFromTrip({ kind, others, selfId, current, onApply }) {
+  const [open, setOpen] = useState(false);
+  const [srcId, setSrcId] = useState(null);
+  const K = COPY_KINDS[kind];
+  if (!open) {
+    return (
+      <button onClick={() => { setOpen(true); setSrcId(null); }}
+        style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", background: "#fff", border: `1.5px solid ${C.greenLine}`, color: C.greenDark, borderRadius: 10, padding: "9px 12px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>
+        <Copy size={14} /> {K.button}
+      </button>
+    );
+  }
+  const sources = copySources(others, kind, selfId);
+  const sel = sources.find((x) => x.tr.id === srcId) || null;
+  return (
+    <div style={{ background: C.greenTile, border: `1.5px solid ${C.green}`, borderRadius: 14, padding: "12px 13px", marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
+        <Copy size={15} color={C.green} style={{ flexShrink: 0, marginTop: 2 }} />
+        <div style={{ flex: 1, fontSize: 13.5, fontWeight: 800, color: C.ink, lineHeight: 1.35 }}>
+          {sel ? `З поїздки «${ukOf(sel.tr.title) || "без назви"}»${shortDate(sel.tr.date) ? `, ${shortDate(sel.tr.date)}` : ""}` : K.ask}
+        </div>
+        <button onClick={() => { setOpen(false); setSrcId(null); }} aria-label="Закрити"
+          style={{ background: "none", border: "none", color: C.muted, fontSize: 20, lineHeight: 1, cursor: "pointer", padding: "0 2px" }}>×</button>
+      </div>
+      {!sel && sources.length === 0 && <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>{K.empty}</p>}
+      {!sel && sources.length > 0 && (
+        <div style={{ maxHeight: 300, overflowY: "auto", background: "#fff", borderRadius: 10, border: `1px solid ${C.line}` }}>
+          {sources.map(({ tr }, i) => (
+            <button key={tr.id} onClick={() => setSrcId(tr.id)}
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", background: "#fff", border: "none", borderBottom: i === sources.length - 1 ? "none" : `1px solid ${C.line}`, padding: "11px 12px", cursor: "pointer", fontFamily: "inherit" }}>
+              <span style={{ fontSize: 11.5, fontWeight: 800, color: C.greenDark, background: C.greenSoft, borderRadius: 8, padding: "3px 7px", flexShrink: 0 }}>{shortDate(tr.date) || "без дати"}</span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>{ukOf(tr.title) || "Без назви"}</span>
+              <ChevronRight size={16} color={C.muted} />
+            </button>
+          ))}
+        </div>
+      )}
+      {sel && (
+        <CopyPreview key={sel.tr.id} kind={kind} part={sel.part} current={current}
+          onBack={() => setSrcId(null)}
+          onApply={(pick) => { onApply(sel.tr, sel.part, pick); setOpen(false); setSrcId(null); }} />
+      )}
+    </div>
+  );
+}
+
 // Стилі й Field винесені НА РІВЕНЬ МОДУЛЯ навмисно.
 // Якщо оголосити Field усередині TripForm, React вважає його новим типом
 // компонента на кожен рендер, розмонтовує поля вводу після кожного натискання
@@ -5845,8 +6077,10 @@ const Field = ({ label, children }) => (
   <div><label style={lbl}>{label}</label>{children}</div>
 );
 
-function TripForm({ initial, onSave, onCancel }) {
+function TripForm({ initial, onSave, onCancel, others }) {
   const [t, setT] = useState(() => JSON.parse(JSON.stringify(initial)));
+  // Звідки щойно взято блок (v138): «✓ Взято з …» під заголовком блоку.
+  const [copyNote, setCopyNote] = useState(null);
   // Який маршрут і який поїзд усередині нього зараз розгорнуті.
   // Ключ поїзда — рядок «номер_маршруту:номер_поїзда», інакше розгортання
   // поїзда в одному відправленні відкривало б і сусіднє.
@@ -5870,6 +6104,48 @@ function TripForm({ initial, onSave, onCancel }) {
     : (t.legs && t.legs.length > 0 ? [{ legs: t.legs }] : [{ legs: [blankLeg()] }]);
   const set = (patch) => setT((prev) => ({ ...prev, ...patch }));
   const setNested = (key, patch) => setT((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+
+  // «Взяти з іншої поїздки» (v138): переносить лише один блок. Ручні правки
+  // перекладу перенесених текстів (manualTr) беремо разом із ними, але
+  // власні правки цієї поїздки не перезаписуємо.
+  const applyCopy = (kind, src, part, pick) => {
+    const clone = (v) => JSON.parse(JSON.stringify(v));
+    const texts = [];
+    let patch = {};
+    if (kind === "trains") {
+      const mine = journeys.filter((j) => (j.legs || []).some(legFilled));
+      const add = clone(pick.journeys || []);
+      const next = mine.concat(add);
+      patch = { journeys: next.length > 0 ? next : [{ legs: [blankLeg()] }] };
+      if (pick.ret) { Object.assign(patch, clone(pick.ret)); texts.push(pick.ret.returnTime); }
+      setOpenJourney(null); setOpenLeg(null);
+    } else if (kind === "meeting") {
+      patch = { meetingPoint: part.text };
+      if (part.coords) patch.coords = { ...part.coords };
+      if (pick.withTime && part.time) patch.meetTime = part.time;
+      texts.push(part.text);
+      setAddr(""); setAddrResults(null);
+    } else if (kind === "route") {
+      const pts = clone(part.points);
+      patch = { route: pick.mode === "append" ? [...(t.route || []), ...pts] : pts };
+      if (pick.withUrl && part.url) patch.routeUrl = part.url;
+      pts.forEach((pt) => texts.push(pt.name, pt.note, pt.info));
+      setSelStop(null);
+    }
+    const srcTr = part.manualTr || {};
+    const mineTr = { ...(t.manualTr || {}) };
+    texts.map((x) => String(x || "").trim()).filter(Boolean).forEach((x) => {
+      if (srcTr[x] && !mineTr[x]) mineTr[x] = srcTr[x];
+    });
+    set({ ...patch, manualTr: mineTr });
+    const when = shortDate(src.date);
+    setCopyNote({ kind, text: `Взято з «${ukOf(src.title) || "без назви"}»${when ? `, ${when}` : ""}. ${COPY_KINDS[kind].done}` });
+  };
+  const copyNoteFor = (kind) => (copyNote && copyNote.kind === kind ? (
+    <div style={{ display: "flex", gap: 7, alignItems: "flex-start", background: C.greenSoft, color: C.greenDark, borderRadius: 10, padding: "9px 11px", fontSize: 12.5, lineHeight: 1.45, fontWeight: 600, marginBottom: 12 }}>
+      <span style={{ flexShrink: 0 }}>✓</span><span>{copyNote.text}</span>
+    </div>
+  ) : null);
 
 
   // Route editing
@@ -6249,6 +6525,10 @@ function TripForm({ initial, onSave, onCancel }) {
         {/* Train */}
         <div style={card}>
           <h3 style={cardTitle}><Train size={15} /> Поїзди (з пересадками)</h3>
+          <CopyFromTrip kind="trains" others={others} selfId={t.id}
+            current={{ filled: journeys.filter((j) => (j.legs || []).some(legFilled)).length }}
+            onApply={(src, part, pick) => applyCopy("trains", src, part, pick)} />
+          {copyNoteFor("trains")}
           <p style={{ fontSize: 12, color: C.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
             Кожне <b>відправлення</b> — окремий маршрут із власного міста до спільної цілі.
             Усередині відправлення додавайте поїзди; між ними сама з'явиться пересадка.
@@ -6393,6 +6673,10 @@ function TripForm({ initial, onSave, onCancel }) {
         {/* Meeting point */}
         <div style={card}>
           <h3 style={cardTitle}><MapPin size={15} /> Точка збору</h3>
+          <CopyFromTrip kind="meeting" others={others} selfId={t.id}
+            current={{ has: String(t.meetingPoint || "").trim() !== "" || copyHasCoords(t.coords) }}
+            onApply={(src, part, pick) => applyCopy("meeting", src, part, pick)} />
+          {copyNoteFor("meeting")}
           {/* Час збору окремим полем. Від нього відлічуються ТРИ години
               для нагадування — так попросив організатор 18.09: люди їдуть
               із різних міст, і комусь треба виїхати раніше за сам збір.
@@ -6486,6 +6770,10 @@ function TripForm({ initial, onSave, onCancel }) {
         {/* Route */}
         <div style={card}>
           <h3 style={cardTitle}><Mountain size={15} /> Маршрут</h3>
+          <CopyFromTrip kind="route" others={others} selfId={t.id}
+            current={{ count: (t.route || []).length }}
+            onApply={(src, part, pick) => applyCopy("route", src, part, pick)} />
+          {copyNoteFor("route")}
           {t.route.length === 0 && <p style={{ fontSize: 13, color: C.muted, margin: "0 0 12px" }}>Поки немає точок. Додайте першу нижче.</p>}
           {(() => {
             // Карта показує ту точку, яку обрали в списку нижче.
@@ -7163,6 +7451,7 @@ export default function App() {
         <div style={{ maxWidth: 440, margin: "0 auto", background: C.page, minHeight: "100vh", position: "relative" }}>
           <TripForm
             initial={editing === "new" ? BLANK_TRIP() : editing}
+            others={trips}
             onSave={saveTrip}
             onCancel={() => setEditing(null)}
           />
