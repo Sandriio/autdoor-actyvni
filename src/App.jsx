@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v138 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v139 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -25,7 +25,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v138";
+const APP_VERSION = "v139";
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -167,10 +167,11 @@ async function pushSendMsgs(pin, msgs, tag, url) {
 // Куди можна вести (to): top — сторінка поїздки згори, booking — запис,
 // meeting — місце й час збору, contact — контакти, manage — список
 // заявок організатора (спершу PIN), home — список поїздок,
-// photos — «Медіаконтент», guests — «Хто їде» (рішення щодо заявки).
+// photos — «Медіаконтент», guests — «Хто їде» (рішення щодо заявки),
+// album — альбом поїздки в «Медіаконтенті» (&album=<тека Диска>, v139).
 const GO_CACHE = "tropa-go";     // ті самі назви, що в public/sw.js
 const GO_KEY = "/__tropa-go";
-const GO_PLACES = ["top", "booking", "meeting", "contact", "manage", "home", "photos", "guests", "travel"];
+const GO_PLACES = ["top", "booking", "meeting", "contact", "manage", "home", "photos", "guests", "travel", "album"];
 const goLink = (tripId, to) =>
   `/?trip=${encodeURIComponent(String(tripId))}${to ? `&to=${to}` : ""}`;
 function parseGo(href) {
@@ -180,7 +181,8 @@ function parseGo(href) {
     const raw = String(u.searchParams.get("to") || "").trim();
     const to = GO_PLACES.includes(raw) ? raw : (trip ? "top" : "");
     if (!trip && !to) return null;
-    return { trip, to, gid: String(u.searchParams.get("gid") || "").slice(0, 40) };
+    const album = String(u.searchParams.get("album") || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 100);
+    return { trip, to, gid: String(u.searchParams.get("gid") || "").slice(0, 40), album };
   } catch { return null; }
 }
 const goInbox = { queue: [], listener: null, seen: new Set() };
@@ -228,7 +230,7 @@ if (typeof window !== "undefined") {
       goDeliver(window.location.href, p.get("gid") || "");
       // Прибираємо службове з адресного рядка, інакше оновлення сторінки
       // повторило б перехід. Решту (напр. ?v=4) не чіпаємо.
-      ["trip", "to", "gid"].forEach((k) => p.delete(k));
+      ["trip", "to", "gid", "album"].forEach((k) => p.delete(k));
       const q = p.toString();
       window.history.replaceState(window.history.state, "", window.location.pathname + (q ? `?${q}` : "") + window.location.hash);
     }
@@ -707,6 +709,9 @@ const T = {
   bkLeftNote: { uk: "Ваш запис знято. Можете записатися знову, поки є місця.", en: "Your booking is cancelled. You can sign up again while spots last.", de: "Ihre Anmeldung wurde zurückgezogen. Sie können sich erneut anmelden.", ru: "Ваша запись снята. Можете записаться снова, пока есть места." },
   bkNobody: { uk: "Ще ніхто не записався — будьте першим.", en: "Nobody yet — be the first.", de: "Noch niemand — seien Sie die erste Person.", ru: "Пока никто не записался — будьте первым." },
   gLoading: { uk: "Завантажую фото…", en: "Loading photos…", de: "Fotos werden geladen…", ru: "Загружаю фото…" },
+  // Перехід зі сповіщення «Поїздка завершена» в альбом поїздки (v139).
+  albWelcomeTitle: { uk: "Дякуємо, що були з нами!", en: "Thanks for joining the trip!", de: "Danke fürs Mitkommen!", ru: "Спасибо, что были с нами!" },
+  albWelcomeText: { uk: "Додайте свої фото й відео кнопкою нижче — вони збережуться в спільному альбомі, і їх побачать усі учасники.", en: "Add your photos and videos with the button below — they'll be saved in the shared album for everyone to see.", de: "Füge deine Fotos und Videos mit dem Button unten hinzu — sie landen im gemeinsamen Album und alle können sie sehen.", ru: "Добавьте свои фото и видео кнопкой ниже — они сохранятся в общем альбоме, и их увидят все участники." },
   gEmpty: { uk: "Фото ще немає — вони з'являться після поїздки.", en: "No photos yet — they appear after the trip.", de: "Noch keine Fotos — sie erscheinen nach dem Ausflug.", ru: "Фото ещё нет — они появятся после поездки." },
   gError: { uk: "Не вдалося отримати фото з Диска. Скористайтесь кнопкою нижче.", en: "Could not load photos from Drive. Use the button below.", de: "Fotos konnten nicht geladen werden. Bitte Button unten nutzen.", ru: "Не удалось получить фото с Диска. Воспользуйтесь кнопкой ниже." },
   gMore: { uk: "Ще фото у спільному архіві:", en: "More photos in the shared archive:", de: "Weitere Fotos im Archiv:", ru: "Ещё фото в общем архиве:" },
@@ -1639,9 +1644,12 @@ function TrainChip({ tone, text }) {
     <span style={{ fontSize: 11.5, fontWeight: 800, color: c.fg, background: c.bg, padding: "4px 10px", borderRadius: 20, whiteSpace: "nowrap" }}>{text}</span>
   );
 }
-// Підпис джерела під поїздами — вимога ліцензії CC BY 4.0.
-function TrainSource({ data }) {
-  if (!data || !(data.legs || []).some((l) => l && TRAIN_SHOWN.includes(l.state))) return null;
+// Підпис джерела під поїздами — вимога ліцензії CC BY 4.0. Учасникові —
+// лише коли біля поїздів справді щось видно (зелених позначок він не
+// бачить, v139).
+function TrainSource({ data, admin }) {
+  const seen = (l) => l && TRAIN_SHOWN.includes(l.state) && (admin || l.state !== "ok");
+  if (!data || !((data.legs || []).some(seen) || (data.transfers || []).length > 0)) return null;
   return (
     <p style={{ fontSize: 10.5, color: C.muted, lineHeight: 1.5, margin: "8px 2px 0" }}>
       {t("trSource")}{" "}
@@ -1740,7 +1748,9 @@ function TrainLegs({ legs: rawLegs, statuses, transfers, admin }) {
     summary = problems
       .flatMap(({ leg, s }) => trainChips(s).map((c) => ({ ...c, text: `${String(leg.train || "").trim() ? `${String(leg.train).trim()}: ` : ""}${c.text}` })))
       .concat(misses.map((m) => ({ tone: "bad", text: `${t("trMiss")} ${t("trIn")} ${m.at}` })));
-  } else if (rail.length > 0 && settled.length === rail.length && anyOk) {
+  } else if (admin && rail.length > 0 && settled.length === rail.length && anyOk) {
+    // «✓ за розкладом DB» — лише організаторові (v139): учасникові досить
+    // знати про зміни, а зелена позначка біля кожного поїзда — зайвий шум.
     summary = [{ tone: "ok", text: `✓ ${t(rail.length < legs.length ? "trOkTrains" : "trOk")}` }];
   } else if (admin && haveData && settled.length < rail.length) {
     // Організаторові — скільки поїздів картки вже звірено.
@@ -1749,7 +1759,8 @@ function TrainLegs({ legs: rawLegs, statuses, transfers, admin }) {
   // Позначки біля кожного поїзда в розгорнутій картці. Організатор бачить і
   // сірі: чому поїзд ще не звірено.
   const legChips = (leg) => {
-    const c = trainChips(st(leg));
+    // Учасник бачить лише зміни: затримку, іншу колію, скасування.
+    const c = trainChips(st(leg)).filter((x) => admin || x.tone !== "ok");
     if (c.length > 0 || !admin || !haveData) return c;
     const a = trainAdminChip(st(leg));
     return a ? [a] : [];
@@ -2892,7 +2903,7 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
 // У спільній теці лежать не самі знімки, а підтеки — по одній на
 // поїздку. Тому спершу показуємо перелік альбомів, а знімки — коли
 // альбом відкрили. Якщо в теці є й окремі файли, вони теж показуються.
-function DriveArchive({ folderUrl, isAdmin, adminPin }) {
+function DriveArchive({ folderUrl, isAdmin, adminPin, openAlbum }) {
   const [folders, setFolders] = useState(null);
   const [loose, setLoose] = useState(null);
   const [err, setErr] = useState("");
@@ -2906,6 +2917,28 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
 
   const [note, setNote] = useState("");
   const id = driveFolderId(folderUrl);
+
+  // Перехід зі сповіщення «Поїздка завершена» (v139): відкрити альбом
+  // поїздки й показати над ним подяку з проханням додати свої фото. Групу
+  // (рік чи свою папку) рахуємо тут же — як groupOf нижче, бо тут він ще
+  // не оголошений.
+  const [welcome, setWelcome] = useState("");
+  const handledAlbum = useRef(null);
+  useEffect(() => {
+    if (!openAlbum || !openAlbum.id || !Array.isArray(folders)) return;
+    if (handledAlbum.current === openAlbum.n) return;
+    handledAlbum.current = openAlbum.n;
+    const f = folders.find((x) => x.id === openAlbum.id);
+    const gid = (f && meta[f.id] && meta[f.id].group_id) || (f && yearFromName(f.name)) || "other";
+    const own = (groups || []).find((g) => g.id === gid);
+    const gTitle = own && own.title ? own.title
+      : /^\d{4}$/.test(gid) ? t("mcYearLabel").replace("{y}", gid)
+        : gid === "other" ? t("mcOther") : gid;
+    setView({ type: "album", id: openAlbum.id, name: f ? f.name : "", groupId: gid, groupTitle: gTitle });
+    setWelcome(openAlbum.id);
+  }, [openAlbum && openAlbum.n, folders]);
+  // Подяка — лише поки людина в цьому альбомі після сповіщення.
+  useEffect(() => { if (!view || view.type !== "album") setWelcome(""); }, [view]);
 
   // Докопіювання на Google Диск. Нове фото копіюється на Диск одразу після
   // завантаження; що з якоїсь причини не пішло (телефон закрили, міст
@@ -3028,7 +3061,15 @@ function DriveArchive({ folderUrl, isAdmin, adminPin }) {
     return (
       <>
         {back(() => setView({ type: "group", id: view.groupId, title: view.groupTitle }), t("arcBack"))}
-        <p style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, margin: "0 0 10px" }}>{view.name}</p>
+        {view.name && <p style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, margin: "0 0 10px" }}>{view.name}</p>}
+        {welcome === view.id && (
+          <div style={{ background: C.yellowSoft, border: `1.5px solid ${C.yellow}`, borderRadius: 14, padding: "12px 14px", marginBottom: 11 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14.5, fontWeight: 800, color: C.ink, marginBottom: 4 }}>
+              <Camera size={17} color={C.yellowInk} /> {t("albWelcomeTitle")}
+            </div>
+            <div style={{ fontSize: 12.5, color: C.inkSoft, lineHeight: 1.5 }}>{t("albWelcomeText")}</div>
+          </div>
+        )}
         {syncLine}
         <DriveGallery folderUrl={`https://drive.google.com/drive/folders/${view.id}`} albumId={view.id} isAdmin={isAdmin} adminPin={adminPin} />
       </>
@@ -5311,7 +5352,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onSetStat
                             .map((j, i) => <TrainLegs key={i} legs={j.legs} statuses={trains.byKey} transfers={trains.transfers} admin={isAdmin} />)}
                         </div>
                       )}
-                      <TrainSource data={trains.data} />
+                      <TrainSource data={trains.data} admin={isAdmin} />
                       {/* Список поїздів веде організатор вручну, тож у ньому
                           є лише ті міста, які він вніс. Підказка потрібна,
                           щоб людина з іншого міста знала, що робити. */}
@@ -7247,6 +7288,8 @@ export default function App() {
   // Перехід зі сповіщення (див. goDeliver). go — куди треба перейти;
   // focusSec — до якого розділу прокрутити сторінку поїздки.
   const [go, setGo] = useState(null);
+  // Який альбом відкрити в «Медіаконтенті» після переходу зі сповіщення.
+  const [openAlbum, setOpenAlbum] = useState(null);
   const [focusSec, setFocusSec] = useState(null);
   useEffect(() => {
     goInbox.listener = (g) => setGo({ ...g, n: Date.now() + Math.random() });
@@ -7329,6 +7372,13 @@ export default function App() {
     }
     if (g.to === "photos") {
       setSelected(null); setFocusSec(null); setTab("photos"); window.scrollTo(0, 0);
+      return;
+    }
+    // «Поїздка завершена» (v139): одразу альбом поїздки з кнопкою «Додати».
+    if (g.to === "album") {
+      setSelected(null); setFocusSec(null); setTab("photos");
+      setOpenAlbum(g.album ? { id: g.album, n: g.n || Date.now() } : null);
+      window.scrollTo(0, 0);
       return;
     }
     setTab("trips");
@@ -7528,7 +7578,7 @@ export default function App() {
               <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16 }}>
                 <h2 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800, color: C.ink }}>{t("arcTitle")}</h2>
                 <p style={{ margin: "0 0 13px", fontSize: 12.5, color: C.muted, lineHeight: 1.5 }}>{t("arcNote")}</p>
-                <DriveArchive folderUrl={DRIVE_URL} isAdmin={isAdmin} adminPin={adminPin} />
+                <DriveArchive folderUrl={DRIVE_URL} isAdmin={isAdmin} adminPin={adminPin} openAlbum={openAlbum} />
                 <a href={DRIVE_URL} target="_blank" rel="noreferrer"
                   style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: C.green, color: "#fff", borderRadius: 12, padding: "13px", fontSize: 13.5, fontWeight: 700, textDecoration: "none", marginTop: 4 }}>
                   <Camera size={16} /> {t("driveButton")}
