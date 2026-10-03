@@ -1,4 +1,13 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c6 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c7 ═══
+// c7 — «Зміни в розкладі DB»: окреме сповіщення організаторові, щойно
+//      звірка (api/trains.js t2) бачить зміну в самому розкладі — поїзда
+//      немає, інший час відправлення чи прибуття, поїзд не доїде до
+//      станції пересадки, скасовано, пересадку не встигнути. Одне
+//      сповіщення на поїздку з усіма НОВИМИ змінами; кожна зміна
+//      приходить лише раз. Звірка напередодні — увесь день, а не з 18:00:
+//      DB викладає розклад приблизно за 16–18 год до поїзда, і новина
+//      приходить, щойно її видно. Затримки й колії — як і раніше, окремо
+//      про кожен поїзд. Вночі (23:00–05:00) тиша.
 // c6 — звірка поїздів з табло Deutsche Bahn (api/trains.js): напередодні
 //      з 18:00 і в день поїздки організаторові приходить сповіщення,
 //      якщо поїзд скасовано, він запізнюється на 10+ хв, змінилась
@@ -145,61 +154,121 @@ const hashKey = (s) => {
 const platformSig = (p) => String(p || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
 // Що в поїзді не так — короткими мітками для ключа журналу. Новий набір
 // міток — нове сповіщення; той самий — повтору не буде.
+//   c — скасовано, nf — немає в розкладі, x — не доїде до станції,
+//   t0851 — за DB відправлення о 08:51, a0951 — прибуття о 09:51,
+//   d10 — затримка від 10 хв, p5 — колія 5.
 export function trainIssues(leg) {
   if (!leg) return [];
   if (leg.state === "cancelled") return ["c"];
   if (leg.state === "notfound") return ["nf"];
   const out = [];
   if (leg.partialTo) out.push("x");
+  // t1 (стара звірка) писала лише dbTime при стані «time».
+  const dep = leg.depNow || (leg.state === "time" && !leg.arrNow ? leg.dbTime : "");
+  if (dep) out.push(`t${String(dep).replace(":", "")}`);
+  if (leg.arrNow) out.push(`a${String(leg.arrNow).replace(":", "")}`);
   if (Number(leg.delay) >= TRAIN_DELAY_PUSH) out.push(`d${Math.floor(Number(leg.delay) / 10) * 10}`);
   if (leg.platformNow) out.push(`p${platformSig(leg.platformNow)}`);
-  if (leg.state === "time" && leg.dbTime) out.push(`t${String(leg.dbTime).replace(":", "")}`);
   return out;
 }
+// Зміни в самому розкладі — для зведеного сповіщення (c7). Затримка й
+// колія — новини дня поїздки, вони йдуть окремо про кожен поїзд.
+export const scheduleIssue = (i) => i === "c" || i === "nf" || i === "x" || /^[ta]\d{4}$/.test(i);
 const TRAIN_TXT = {
   uk: {
-    title: { c: "Поїзд скасовано", nf: "Поїзда немає в розкладі DB", x: "Поїзд не доїде до кінця", d: (n) => `Затримка поїзда +${n} хв`, p: "Змінилась колія", t: "Інший час за DB" },
+    title: { c: "Поїзд скасовано", nf: "Поїзда немає в розкладі DB", x: "Поїзд не доїде до кінця", d: (n) => `Затримка поїзда +${n} хв`, p: "Змінилась колія", t: "Інший час за DB", a: "Інший час прибуття за DB" },
     train: "поїзд", at: "о", from: "з",
     c: "скасовано", nf: "у розкладі DB не знайдено — можливо, змінився розклад або в поїздці описка",
+    nfShort: "немає в розкладі DB",
     x: (to) => `не доїде до ${to}`, d: (time, n) => `відправиться о ${time} (+${n} хв)`,
     p: (now, was, typed) => `колія ${now}${was ? ` замість ${was}` : typed ? ` (у поїздці ${typed})` : ""}`,
-    t: (time) => `за DB відправлення о ${time}`, tail: "Перевір на bahn.de.",
+    t: (time) => `за DB відправлення о ${time}`,
+    a: (time, typed) => `за DB прибуття о ${time}${typed ? ` (у поїздці ${typed})` : ""}`,
+    miss: (at, arr, dep) => `пересадку в ${at} не встигнути: прибуття ${arr}, відправлення ${dep}`,
+    tail: "Перевір на bahn.de.",
+    sumTitle: "Зміни в розкладі DB", more: (n) => `і ще ${n}`, sumTail: "Перевір і онови «Як добираємось».",
   },
   en: {
-    title: { c: "Train cancelled", nf: "Train not in the DB timetable", x: "Train won't run the full route", d: (n) => `Train delayed +${n} min`, p: "Platform changed", t: "Different time at DB" },
+    title: { c: "Train cancelled", nf: "Train not in the DB timetable", x: "Train won't run the full route", d: (n) => `Train delayed +${n} min`, p: "Platform changed", t: "Different time at DB", a: "Different arrival time at DB" },
     train: "train", at: "at", from: "from",
     c: "cancelled", nf: "not found in the DB timetable — the schedule may have changed or the trip has a typo",
+    nfShort: "not in the DB timetable",
     x: (to) => `won't reach ${to}`, d: (time, n) => `departs at ${time} (+${n} min)`,
     p: (now, was, typed) => `platform ${now}${was ? ` instead of ${was}` : typed ? ` (trip says ${typed})` : ""}`,
-    t: (time) => `DB departure at ${time}`, tail: "Check bahn.de.",
+    t: (time) => `DB departure at ${time}`,
+    a: (time, typed) => `DB arrival at ${time}${typed ? ` (trip says ${typed})` : ""}`,
+    miss: (at, arr, dep) => `connection at ${at} will be missed: arrives ${arr}, departs ${dep}`,
+    tail: "Check bahn.de.",
+    sumTitle: "DB timetable changes", more: (n) => `and ${n} more`, sumTail: "Check and update “Getting there”.",
   },
   ru: {
-    title: { c: "Поезд отменён", nf: "Поезда нет в расписании DB", x: "Поезд не доедет до конца", d: (n) => `Задержка поезда +${n} мин`, p: "Изменился путь", t: "Другое время у DB" },
+    title: { c: "Поезд отменён", nf: "Поезда нет в расписании DB", x: "Поезд не доедет до конца", d: (n) => `Задержка поезда +${n} мин`, p: "Изменился путь", t: "Другое время у DB", a: "Другое время прибытия у DB" },
     train: "поезд", at: "в", from: "из",
     c: "отменён", nf: "в расписании DB не найден — возможно, изменилось расписание или в поездке опечатка",
+    nfShort: "нет в расписании DB",
     x: (to) => `не доедет до ${to}`, d: (time, n) => `отправится в ${time} (+${n} мин)`,
     p: (now, was, typed) => `путь ${now}${was ? ` вместо ${was}` : typed ? ` (в поездке ${typed})` : ""}`,
-    t: (time) => `по DB отправление в ${time}`, tail: "Проверь на bahn.de.",
+    t: (time) => `по DB отправление в ${time}`,
+    a: (time, typed) => `по DB прибытие в ${time}${typed ? ` (в поездке ${typed})` : ""}`,
+    miss: (at, arr, dep) => `на пересадку в ${at} не успеть: прибытие ${arr}, отправление ${dep}`,
+    tail: "Проверь на bahn.de.",
+    sumTitle: "Изменения в расписании DB", more: (n) => `и ещё ${n}`, sumTail: "Проверь и обнови «Как добраться».",
   },
+};
+const issueText = (T, leg, i, short) => {
+  if (i === "c") return T.c;
+  if (i === "nf") return short ? T.nfShort : T.nf;
+  if (i === "x") return T.x(leg.partialTo);
+  if (i.startsWith("d")) return T.d(leg.newTime, leg.delay);
+  if (i.startsWith("p")) return T.p(leg.platformNow, leg.platformWas, leg.platformTyped);
+  if (i.startsWith("t")) return T.t(leg.depNow || leg.dbTime);
+  if (i.startsWith("a")) return T.a(leg.arrNow, leg.arrTyped);
+  return "";
 };
 export function buildTrainMsg(tr, leg, issues) {
   const out = {};
-  const order = ["c", "nf", "x", "d", "p", "t"];
+  const order = ["c", "nf", "x", "d", "p", "t", "a"];
   const main = order.find((k) => issues.some((i) => i.startsWith(k) && (k !== "d" || /^d\d/.test(i)))) || "p";
   for (const lang of ["uk", "en", "ru"]) {
     const T = TRAIN_TXT[lang];
-    const parts = [];
-    for (const i of issues) {
-      if (i === "c") parts.push(T.c);
-      else if (i === "nf") parts.push(T.nf);
-      else if (i === "x") parts.push(T.x(leg.partialTo));
-      else if (i.startsWith("d")) parts.push(T.d(leg.newTime, leg.delay));
-      else if (i.startsWith("p")) parts.push(T.p(leg.platformNow, leg.platformWas, leg.platformTyped));
-      else if (i.startsWith("t")) parts.push(T.t(leg.dbTime));
-    }
+    const parts = issues.map((i) => issueText(T, leg, i)).filter(Boolean);
     const title = main === "d" ? T.title.d(leg.delay) : T.title[main];
     const head = `${whenOf(tr, lang)} ${tx(tr.title, lang)}: ${leg.train || T.train} ${T.at} ${leg.time} ${T.from} ${leg.from}`;
     out[lang] = { title, body: `${head} — ${parts.join("; ")}. ${T.tail}` };
+  }
+  return out;
+}
+// Зведене «Зміни в розкладі DB» (c7). items — лише НОВІ зміни:
+//   { leg, issues } — про поїзд; { transfer } — пересадка, на яку не
+//   встигнути. Не більше трьох у тексті, решта — «і ще N».
+export function buildScheduleMsg(tr, items) {
+  // Той самий поїзд DB часто стоїть у кількох картках (з Augsburg, з
+  // Hochzoll, з Geltendorf). Однакову зміну одного поїзда кажемо раз, так
+  // само й однакову пересадку.
+  const groups = [];
+  const seen = new Map();
+  for (const it of items) {
+    const gk = it.transfer
+      ? `tr|${String(it.transfer.at).trim().toLowerCase()}|${it.transfer.arr}|${it.transfer.dep}`
+      : `lg|${it.leg.dbTrip || it.leg.key}|${[...it.issues].sort().join(",")}`;
+    if (seen.has(gk)) { if (it.leg) seen.get(gk).legs.push(it.leg); continue; }
+    const g = { ...it, legs: it.leg ? [it.leg] : [] };
+    seen.set(gk, g);
+    groups.push(g);
+  }
+  const out = {};
+  for (const lang of ["uk", "en", "ru"]) {
+    const T = TRAIN_TXT[lang];
+    const lines = groups.map((g) => {
+      if (g.transfer) return T.miss(g.transfer.at, g.transfer.arr, g.transfer.dep);
+      const leg = g.leg;
+      const parts = g.issues.map((i) => issueText(T, leg, i, true)).filter(Boolean);
+      const where = g.legs.map((l) => `${T.at} ${l.time} ${T.from} ${l.from}`).join(", ");
+      return `${leg.train || T.train} ${where} — ${parts.join(", ")}`;
+    });
+    const shown = lines.slice(0, 3);
+    if (lines.length > 3) shown.push(T.more(lines.length - 3));
+    out[lang] = { title: T.sumTitle, body: `${whenOf(tr, lang)} ${tx(tr.title, lang)}: ${shown.join("; ")}. ${T.sumTail}` };
   }
   return out;
 }
@@ -415,9 +484,10 @@ export default async function handler(req, res) {
       why.push(`meet — тільки в день поїздки · зараз днів ${days}`);
     }
 
-    // ⑥ Поїзди: напередодні з 18:00 і в день поїздки.
-    if (days === 0 || (days === 1 && nowMin >= 18 * 60)) trainTrips.push({ id, tr, name });
-    else why.push("trains — звірка з DB напередодні з 18:00 і в день поїздки");
+    // ⑥ Поїзди: напередодні (увесь день) і в день поїздки. Поки до поїзда
+    //    понад 18 годин, api/trains.js навіть не питає DB — «ще рано».
+    if (days === 0 || days === 1) trainTrips.push({ id, tr, name });
+    else why.push("trains — звірка з DB напередодні й у день поїздки");
 
     report.push({
       id, name, date, days, status,
@@ -464,6 +534,22 @@ export default async function handler(req, res) {
   const sent = [], skipped = [];
   const deliver = async (list) => {
     for (const p of list) {
+      // Зведене «Зміни в розкладі»: займаємо ключ кожної зміни окремо й
+      // надсилаємо лише нові. Немає нових — нічого не надсилаємо.
+      if (Array.isArray(p.items)) {
+        const fresh = [];
+        for (const it of p.items) {
+          try { if (await sb("push_log_claim", { p_key: it.key })) fresh.push(it); }
+          catch (e) { skipped.push(`${it.key}: журнал — ${e.message}`); }
+        }
+        if (fresh.length === 0) { skipped.push(`${p.key}: змін, яких ще не надсилали, немає`); continue; }
+        let ok = false;
+        try { ok = await sendPush(origin, p.build(fresh), p.tag, p.url, p.admin); }
+        catch (e) { ok = false; }
+        const label = `${p.key} (${fresh.length})`;
+        (ok ? sent : skipped).push(label + (ok ? "" : ": помилка надсилання"));
+        continue;
+      }
       let fresh = false;
       try { fresh = await sb("push_log_claim", { p_key: p.key }); }
       catch (e) { skipped.push(`${p.key}: журнал — ${e.message}`); continue; }
@@ -512,20 +598,37 @@ export default async function handler(req, res) {
       return;
     }
     if (j.error) item.error = j.error;
+    // Зміни розкладу збираємо в одне сповіщення на поїздку (c7). Кожна
+    // зміна має власний ключ у журналі: прийде лише раз, а нова зміна
+    // тієї ж поїздки — новим сповіщенням.
+    const sched = [];
     for (const leg of (j.legs || [])) {
       const issues = trainIssues(leg);
-      item.legs.push(`${leg.train || "поїзд"} ${leg.time} ${leg.from}: ${leg.state}${issues.length ? ` [${issues.join(",")}]` : ""}`);
-      if (issues.length === 0) continue;
+      item.legs.push(`${leg.train || "поїзд"} ${leg.time} ${leg.from}: ${leg.state}${issues.length ? ` [${issues.join(",")}]` : ""}${leg.why ? ` — ${leg.why}` : ""}`);
+      const plan = issues.filter(scheduleIssue);
+      const live = issues.filter((i) => !scheduleIssue(i));
+      if (plan.length) sched.push({ leg, issues: plan, key: `trs:${id}:${tr.date}:${hashKey(leg.key)}:${[...plan].sort().join(",")}` });
+      if (live.length === 0) continue;
       if (quiet) { item.legs.push("  ↳ тиша 23:00–05:00 — надішлемо зранку"); continue; }
       // Окремий тег для кожного поїзда: два сповіщення поспіль не
       // заміщають одне одного на екрані телефона. Дата в ключі — щоб після
       // перенесення поїздки на інший день та сама зміна знову дійшла.
       trainPlanned.push({
-        key: `trn:${id}:${tr.date}:${hashKey(leg.key)}:${[...issues].sort().join(",")}`,
+        key: `trn:${id}:${tr.date}:${hashKey(leg.key)}:${[...live].sort().join(",")}`,
         tag: `trains-${id}-${hashKey(leg.key)}`, admin: true, url: goTo(id, "travel"),
-        msgs: buildTrainMsg(tr, leg, issues),
+        msgs: buildTrainMsg(tr, leg, live),
       });
     }
+    for (const t of (j.transfers || [])) {
+      item.legs.push(`пересадка ${t.at}: прибуття ${t.arr}, відправлення ${t.dep} — не встигнути`);
+      sched.push({ transfer: t, key: `trs:${id}:${tr.date}:${hashKey(t.key)}:miss${String(t.arr).replace(":", "")}-${String(t.dep).replace(":", "")}` });
+    }
+    if (sched.length === 0) return;
+    if (quiet) { item.legs.push("  ↳ зміни в розкладі — тиша 23:00–05:00, надішлемо зранку"); return; }
+    trainPlanned.push({
+      key: `trs:${id}:${tr.date}`, items: sched, tag: `trains-${id}-plan`, admin: true, url: goTo(id, "travel"),
+      build: (fresh) => buildScheduleMsg(tr, fresh),
+    });
   }));
 
   if (debug) {
@@ -533,7 +636,8 @@ export default async function handler(req, res) {
       berlin: nowText,
       window: "від моменту й пізніше",
       trips: report,
-      planned: planned.concat(trainPlanned).map((p) => `${p.key} → ${p.url}${p.admin ? " (лише організаторові)" : ""}`),
+      planned: planned.concat(trainPlanned).map((p) => `${p.key}${p.items ? ` [змін: ${p.items.length}]` : ""} → ${p.url}${p.admin ? " (лише організаторові)" : ""}`),
+      schedulePreview: trainPlanned.filter((p) => p.items).map((p) => p.build(p.items).uk),
       trains: trainReport,
       pulse: beat,
       note: "РЕЖИМ ЗВІТУ — нічого не надіслано",
