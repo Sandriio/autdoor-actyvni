@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v139 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v140 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -25,7 +25,10 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v139";
+const APP_VERSION = "v140";
+// За скільки хвилин до збору приходить нагадування. Те саме число —
+// MEET_BEFORE у api/push-cron.js: міняти обидва разом.
+const MEET_REMIND_MIN = 120;
 
 // ── Етап 2: база даних Supabase ────────────────────────────────────────
 // Після створення проєкту в Supabase встав сюди два значення зі сторінки
@@ -4740,7 +4743,7 @@ function SituationPush({ trip, kind, pin }) {
     try {
       const msgs = situationMsgs(kind, trip, reason, trip.postponedTo);
       // Натискання відкриває саму поїздку згори — там видно її новий стан.
-      const r = await pushSendMsgs(pin, msgs, `trip-${trip.id}`, goLink(trip.id));
+      const r = await pushSendMsgs(pin, msgs, `trip-${trip.id}-${kind}`, goLink(trip.id));
       setDone(`Надіслано: ${r.sent}${r.failed ? `, не вдалось ${r.failed}` : ""}`);
     } catch (e) {
       setDone("Помилка: " + String((e && e.message) || e).slice(0, 120));
@@ -4838,9 +4841,27 @@ function PushDiagnostics({ pin, trip }) {
   useEffect(() => {
     if (!sbConfigured()) return;
     sbRpc("push_count", {}).then((n) => setSubs(Number(n) || 0)).catch(() => setSubs(-1));
-    if (pin) sbRpc("cron_last", { pin }).then(setBeat).catch(() => setBeat({ last_run: null }));
+    // cron_status (v140) знає й попередній виклик годинника — видно, як
+    // часто він озивається. Без supabase-v140.sql — старий cron_last.
+    if (pin) {
+      sbRpc("cron_status", { pin }).then((b) => setBeat(b || { last_run: null }))
+        .catch(() => sbRpc("cron_last", { pin }).then(setBeat).catch(() => setBeat({ last_run: null })));
+    }
     checkMine();
   }, [pin]);
+
+  // Журнал надсилань за розкладом (v140): що, коли й скільки телефонів
+  // прийняли. Пише годинник (api/push-cron.js c9), читає лише організатор.
+  // null — ще читаємо; "nosql" — у базі ще немає supabase-v140.sql.
+  const [journal, setJournal] = useState(null);
+  const tripId = trip ? String(trip.id) : null;
+  const loadJournal = useCallback(() => {
+    if (!sbConfigured() || !pin) return;
+    sbRpc("push_journal_recent", { pin, p_trip: tripId })
+      .then((rows) => setJournal(Array.isArray(rows) ? rows : []))
+      .catch((e) => setJournal(/PGRST202|Could not find the function/.test(String((e && e.message) || e)) ? "nosql" : "error"));
+  }, [pin, tripId]);
+  useEffect(() => { loadJournal(); }, [loadJournal]);
 
   // Чи позначений САМЕ цей пристрій як пристрій організатора. Сповіщення
   // про нові заявки йдуть лише на нього, тож без позначки вони просто
@@ -4868,7 +4889,15 @@ function PushDiagnostics({ pin, trip }) {
     const d = new Date(beat.last_run);
     const minAgo = Math.round((Date.now() - d.getTime()) / 60000);
     const when = d.toLocaleString("uk-UA", { timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
-    return `${when} (${minAgo} хв тому)${minAgo > 40 ? " — ЗАДОВГО, годинник стоїть" : ""}`;
+    const gap = beatGap();
+    return `${when} (${minAgo} хв тому)${minAgo > 40 ? " — ЗАДОВГО, годинник стоїть" : ""}${gap ? ` · перед тим — за ${gap} хв` : ""}`;
+  };
+  // Скільки хвилин між двома останніми викликами годинника (v140). Має
+  // бути 15: рідше — і нагадування про збір може прийти на годину пізніше.
+  const beatGap = () => {
+    if (!beat || !beat.last_run || !beat.prev_run) return 0;
+    const g = Math.round((new Date(beat.last_run).getTime() - new Date(beat.prev_run).getTime()) / 60000);
+    return g > 0 ? g : 0;
   };
 
   // Займаємо в журналі ТОЙ САМИЙ ключ, що й автоматичне «набір
@@ -4889,7 +4918,7 @@ function PushDiagnostics({ pin, trip }) {
         return;
       }
       let r = null;
-      try { r = await pushSendMsgs(pin, announceMsgs(trip), `trip-${trip.id}`, goLink(trip.id, "booking")); }
+      try { r = await pushSendMsgs(pin, announceMsgs(trip), `trip-${trip.id}-open`, goLink(trip.id, "booking")); }
       catch (e) {
         await sbRpc("push_log_release", { p_key: key, p_pin: pin }).catch(() => {});
         setState(`Не вдалося надіслати: ${String((e && e.message) || e).slice(0, 160)}. Можна натиснути ще раз.`);
@@ -4910,7 +4939,7 @@ function PushDiagnostics({ pin, trip }) {
     if (!window.confirm("Надіслати всім сповіщення про зміну часу?")) return;
     setBusy(true); setState("");
     try {
-      const r = await pushSendMsgs(pin, timeChangeMsgs(trip), `trip-${trip.id}`, goLink(trip.id, "meeting"));
+      const r = await pushSendMsgs(pin, timeChangeMsgs(trip), `trip-${trip.id}-time`, goLink(trip.id, "meeting"));
       setState(`Про зміну часу: надіслано ${r.sent}${r.failed ? `, не вдалось ${r.failed}` : ""}`);
     } catch (e) {
       setState("Помилка: " + String((e && e.message) || e).slice(0, 200));
@@ -4954,9 +4983,68 @@ function PushDiagnostics({ pin, trip }) {
           {subs === null ? "…" : subs === -1 ? "?" : `${subs} підписок`}
         </span>
       </div>
-      <div style={{ background: (beat && beat.last_run) ? C.greenSoft : C.raspSoft, borderRadius: 10, padding: "9px 11px", marginBottom: 10 }}>
+      <div style={{ background: (beat && beat.last_run) ? (beatGap() > 20 ? C.yellowSoft : C.greenSoft) : C.raspSoft, borderRadius: 10, padding: "9px 11px", marginBottom: 10 }}>
         <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>Годинник озивався</div>
         <div style={{ fontSize: 12.5, color: (beat && beat.last_run) ? C.greenDark : C.rasp, lineHeight: 1.45 }}>{beatLine()}</div>
+        {beatGap() > 20 && (
+          <div style={{ fontSize: 11.5, color: C.yellowInk, lineHeight: 1.45, marginTop: 4 }}>
+            Годинник озивається рідше, ніж раз на 15 хв — нагадування можуть запізнюватись.
+            У cron-job.org постав розклад «Every 15 minutes».
+          </div>
+        )}
+      </div>
+      {/* Журнал надсилань (v140). Відповідає на «чи пішло сповіщення й
+          скільки телефонів його прийняли» без здогадок. */}
+      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 11px", marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+          <span style={{ flex: 1, fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.4 }}>
+            Надіслано за розкладом
+          </span>
+          {Array.isArray(journal) && (
+            <button onClick={loadJournal}
+              style={{ border: "none", background: "transparent", color: C.greenDark, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", padding: 0 }}>
+              Оновити
+            </button>
+          )}
+        </div>
+        {journal === null && <div style={{ fontSize: 12, color: C.muted }}>…</div>}
+        {journal === "nosql" && (
+          <div style={{ fontSize: 12, color: C.rasp, lineHeight: 1.45 }}>
+            Журналу ще немає: виконай supabase-v140.sql у Supabase (SQL Editor).
+          </div>
+        )}
+        {journal === "error" && <div style={{ fontSize: 12, color: C.rasp, lineHeight: 1.45 }}>Журнал не вдалося прочитати.</div>}
+        {Array.isArray(journal) && journal.length === 0 && (
+          <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.45 }}>
+            {trip ? "Для цієї поїздки за розкладом ще нічого не надсилалось." : "Ще нічого не надсилалось."} Журнал ведеться з v140.
+          </div>
+        )}
+        {Array.isArray(journal) && journal.map((j, i) => {
+          const sent = Number(j.sent) || 0, failed = Number(j.failed) || 0;
+          const note = String(j.note || "");
+          // «Невідомо» — сервер надсилання обірвався: могло й дійти, тож без повтору.
+          const unknown = sent === 0 && /невідомо|не відповів/.test(note);
+          const bad = sent === 0 && !unknown && (failed > 0 || /не вийшло|помилка|не прийняв/.test(note));
+          const when = new Date(j.sent_at).toLocaleString("uk-UA", { timeZone: "Europe/Berlin", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+          const adminOnly = /^(trn|trs)[:-]/.test(String(j.key || ""));
+          const d10 = sent % 10, d100 = sent % 100;
+          const phones = d10 === 1 && d100 !== 11 ? "телефон" : d10 >= 2 && d10 <= 4 && (d100 < 12 || d100 > 14) ? "телефони" : "телефонів";
+          const result = sent > 0
+            ? `✓ прийняли ${sent} ${phones}${failed ? `, не вдалось ${failed}` : ""}`
+            : bad ? "✗ не дійшло" : unknown ? "? чи дійшло — невідомо" : "";
+          return (
+            <div key={`${j.key}-${j.sent_at}-${i}`} style={{ padding: "6px 0", borderTop: i ? `1px solid ${C.line}` : "none" }}>
+              <div style={{ fontSize: 12, color: C.ink, lineHeight: 1.4 }}>
+                <span style={{ color: C.muted }}>{when}</span> · <b>{j.title || j.key}</b>{adminOnly ? <span style={{ color: C.muted }}> · лише вам</span> : null}
+              </div>
+              {(result || note) && (
+                <div style={{ fontSize: 11.5, lineHeight: 1.4, color: bad ? C.rasp : unknown ? C.yellowInk : sent > 0 ? C.greenDark : C.muted }}>
+                  {result}{result && note ? " · " : ""}{note}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       <div style={{ background: mine === true ? C.greenSoft : C.raspSoft, borderRadius: 10, padding: "9px 11px", marginBottom: 10, display: "flex", alignItems: "center", gap: 9 }}>
         <span style={{ flex: 1, fontSize: 12, color: mine === true ? C.greenDark : C.rasp, lineHeight: 1.45 }}>
@@ -6718,24 +6806,23 @@ function TripForm({ initial, onSave, onCancel, others }) {
             current={{ has: String(t.meetingPoint || "").trim() !== "" || copyHasCoords(t.coords) }}
             onApply={(src, part, pick) => applyCopy("meeting", src, part, pick)} />
           {copyNoteFor("meeting")}
-          {/* Час збору окремим полем. Від нього відлічуються ТРИ години
-              для нагадування — так попросив організатор 18.09: люди їдуть
-              із різних міст, і комусь треба виїхати раніше за сам збір.
-              Годинник (api/push-cron.js) рахує саме три; підказка тут
-              довго казала «дві» й показувала на годину пізніший час.
+          {/* Час збору окремим полем. Від нього відлічуються ДВІ години
+              для нагадування (v140: з 18.09 було три — 04.10 організатор
+              попросив дві). Годинник (api/push-cron.js c9, MEET_BEFORE)
+              рахує саме дві; підказка нижче мусить казати те саме.
               Без цього поля годинник брав би час відправлення
               найдальшого міста — а це зовсім інша година. */}
           <Field label="Час збору">
             <input style={{ ...inp, marginBottom: 6 }} value={t.meetTime || ""} onChange={(e) => set({ meetTime: e.target.value })} placeholder="напр. 08:15" />
             <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 12px", lineHeight: 1.45 }}>
               {String(t.meetTime || "").match(/(\d{1,2}):(\d{2})/)
-                ? <>Нагадування учасникам надійде за три години — приблизно о{" "}
+                ? <>Нагадування учасникам надійде за дві години — приблизно о{" "}
                     <b style={{ color: C.greenDark }}>{(() => {
                       const m = String(t.meetTime).match(/(\d{1,2}):(\d{2})/);
-                      const mins = Math.max(0, Number(m[1]) * 60 + Number(m[2]) - 180);
+                      const mins = Math.max(0, Number(m[1]) * 60 + Number(m[2]) - MEET_REMIND_MIN);
                       return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
                     })()}</b>.</>
-                : <>Заповніть — інакше нагадування про збір не надійде: нема від чого відлічувати три години.</>}
+                : <>Заповніть — інакше нагадування про збір не надійде: нема від чого відлічувати дві години.</>}
             </p>
           </Field>
           <Field label="Місце зустрічі (текстом)">
