@@ -1,4 +1,20 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c8 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c9 ═══
+// c9 — сповіщення за розкладом більше не губляться мовчки.
+//      • Не дійшло — повтор. Раніше ключ у журналі займався ДО надсилання,
+//        і якщо сервер надсилання відповідав помилкою, сповіщення вважалось
+//        надісланим назавжди. Тепер ключ звільняється, і наступний виклик
+//        годинника (за 15 хв) пробує ще раз, поки сповіщення на часі; не
+//        більше трьох повторів. Потрібен supabase-v140.sql.
+//      • Журнал надсилань: кожне сповіщення за розкладом записується з
+//        часом і кількістю телефонів, що його прийняли. Організатор бачить
+//        його в панелі «Сповіщення» поїздки (App.jsx v140).
+//      • Кожен вид сповіщення має власний тег (trip-<id>-close тощо). Раніше
+//        всі сповіщення поїздки мали один тег, і на Android ранкове
+//        «нагадування про збір» стирало з екрана вечірнє «набір завершено».
+//      • Нагадування про збір — за ДВІ години (було три), так попросив
+//        організатор 04.10. Текст без «прапорець., 09:25».
+//      • «Мало місць» і «місць немає» вночі (23:00–07:00) не будять — ідуть о 07:00.
+//      • Альбом на Диску (до 25 с чекання) — після сповіщень, а не між ними.
 // c8 — альбом поїздки на Google Диску створюється сам: у день поїздки з
 //      05:00 міст (Apps Script b3) робить теку «дд.мм.рр: Назва» в архіві
 //      (або бере вже наявну). «Поїздка завершена» о 21:00 веде прямо в цей
@@ -71,6 +87,11 @@ const TZ = "Europe/Berlin";
 // журнал push_log — там ключ можна зайняти лише один раз.
 const CATCHUP = true;
 const LOW_SPOTS = 5;      // коли лишається стільки місць — попереджаємо
+const MEET_BEFORE = 120;  // нагадування про збір — за стільки хвилин (c9: було 180)
+const MAX_RETRY = 3;      // скільки разів повторювати сповіщення, яке не дійшло
+// «Мало місць» і «місць немає» — новини не термінові: вночі не будимо.
+const SPOTS_QUIET_FROM = 23 * 60;
+const SPOTS_QUIET_TO = 7 * 60;
 
 function berlinParts(d) {
   const f = new Intl.DateTimeFormat("en-CA", {
@@ -134,15 +155,97 @@ async function sb(fn, body) {
   return txt ? JSON.parse(txt) : null;
 }
 
+// Функції бази, які може викликати лише сервер — службовим ключем
+// (SUPABASE_SERVICE_ROLE_KEY у Vercel). Анонімний ключ, який є в кожному
+// телефоні, їх не викличе.
+async function sbService(fn, body) {
+  const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!KEY) throw new Error("у Vercel немає SUPABASE_SERVICE_ROLE_KEY");
+  const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  if (!r.ok) throw new Error(`${fn}: ${r.status} ${(await r.text()).slice(0, 160)}`);
+  const txt = await r.text();
+  return txt ? JSON.parse(txt) : null;
+}
+
 // onlyAdmin — лише на пристрої організатора (так позначені в базі
 // телефони, з яких входили з PIN).
-async function sendPush(origin, msgs, tag, url, onlyAdmin) {
-  const r = await fetch(`${origin}/api/push`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret: process.env.PUSH_SECRET, msgs, url: url || "/", tag, onlyAdmin: Boolean(onlyAdmin) }),
-  });
-  return r.ok;
+//
+// Відповідь — не просто «так/ні», а скільки телефонів прийняли (c9):
+//   ok      — дійшло хоч до одного телефона або підписок немає взагалі;
+//   unknown — сервер надсилання не відповів; чи пішло — невідомо, тож
+//             повтору не робимо: він міг би задвоїти сповіщення.
+// Раніше бралось лише «сервер відповів 200», навіть якщо жоден телефон
+// сповіщення не прийняв.
+export async function sendPush(origin, msgs, tag, url, onlyAdmin) {
+  let r;
+  try {
+    r = await fetch(`${origin}/api/push`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret: process.env.PUSH_SECRET, msgs, url: url || "/", tag, onlyAdmin: Boolean(onlyAdmin) }),
+      signal: AbortSignal.timeout(25000),
+    });
+  } catch (e) {
+    return { ok: false, unknown: true, sent: 0, failed: 0, note: `сервер надсилання не відповів (${String((e && e.message) || e).slice(0, 80)})` };
+  }
+  let j = null;
+  try { j = await r.json(); } catch { /* не JSON */ }
+  // Помилка з поясненням від самого api/push ({ error }) — він повертає її
+  // лише ДО надсилання, тож повтор безпечний. Будь-що інше (Vercel 502/504
+  // зі своєю сторінкою) могло статися вже після того, як телефони
+  // сповіщення отримали: вважаємо «невідомо» й не повторюємо.
+  if (!r.ok && j && j.error) return { ok: false, sent: 0, failed: 0, note: `сервер надсилання: помилка ${r.status} — ${String(j.error).slice(0, 100)}` };
+  if (!r.ok) return { ok: false, unknown: true, sent: 0, failed: 0, note: `сервер надсилання: помилка ${r.status} без пояснення — чи пішло, невідомо` };
+  const sent = Number(j && j.sent) || 0;
+  const failed = Number(j && j.failed) || 0;
+  if (sent === 0 && failed > 0) return { ok: false, sent, failed, note: "жоден телефон не прийняв" };
+  return { ok: true, sent, failed, note: j && j.note === "no subscribers" ? "жодної підписки" : "" };
+}
+
+// Не дійшло — звільняємо ключ журналу, щоб наступний виклик годинника
+// спробував ще раз (поки сповіщення на часі). Лічильник спроб — ключі
+// «retry:<ключ>:1…3»: після третього повтору здаємось, інакше зламаний
+// сервер надсилання смикався б кожні 15 хвилин без кінця.
+// counterKey — на чому рахувати спроби (за замовчуванням сам ключ).
+export async function allowRetry(key, others, counterKey) {
+  const base = counterKey || key;
+  for (let n = 1; n <= MAX_RETRY; n++) {
+    let fresh = false;
+    try { fresh = await sb("push_log_claim", { p_key: `retry:${base}:${n}` }); }
+    catch (e) { return "повтору не буде: журнал недоступний"; }
+    if (!fresh) continue;
+    // Звільняємо всі ключі, навіть якщо якийсь не вдався: краще повторити
+    // більшість, ніж жодного.
+    let err = null;
+    for (const k of [key, ...(others || [])]) {
+      try { await sbService("push_log_release_srv", { p_key: k }); }
+      catch (e) { err = String((e && e.message) || e); }
+    }
+    if (!err) return `повтор при наступному виклику годинника (${n} з ${MAX_RETRY})`;
+    if (/SUPABASE_SERVICE_ROLE_KEY/.test(err)) return "повтору не буде: у Vercel немає SUPABASE_SERVICE_ROLE_KEY";
+    if (/PGRST202|Could not find the function|: 404 /.test(err)) return "повтору не буде: у базі немає push_log_release_srv — виконай supabase-v140.sql";
+    return `повтору не буде: ключ не звільнився (${err.slice(0, 100)})`;
+  }
+  return `повторів більше не буде — уже було ${MAX_RETRY}`;
+}
+
+// Журнал надсилань (c9): що, коли й скількам телефонам. Без
+// supabase-v140.sql функції немає — тоді просто без запису.
+async function journal(key, title, res) {
+  try {
+    await sbService("push_journal_add", {
+      p_key: key, p_title: String(title || "").slice(0, 200),
+      p_sent: Number(res && res.sent) || 0, p_failed: Number(res && res.failed) || 0,
+      p_note: String((res && res.note) || "").slice(0, 300),
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // ── Поїзди: звірка з табло DB (api/trains.js) ────────────────────────
@@ -288,7 +391,8 @@ export function buildScheduleMsg(tr, items) {
 export function albumName(tr) {
   const m = String((tr && tr.date) || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return "";
-  const title = tx(tr.title, "uk").replace(/[\\/]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 90);
+  // String(): назва буває не рядком (старі записи) — тоді не падаємо.
+  const title = String(tx(tr.title, "uk") || "").replace(/[\\/]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 90);
   return `${m[3]}.${m[2]}.${m[1].slice(2)}: ${title || "Поїздка"}`;
 }
 async function bridgeAlbum(tr, id) {
@@ -322,6 +426,28 @@ const goTo = (id, to) => {
   return to ? `${base}&to=${to}` : base;
 };
 const GO = { open: "booking", low: "booking", full: "contact", close: "", meet: "meeting", end: "home" };
+// Тег сповіщення — свій для кожного виду (c9). Телефон заміняє сповіщення
+// з тим самим тегом новим: колись усі сповіщення поїздки мали тег
+// «trip-<id>», і на Android ранкове нагадування про збір стирало з екрана
+// вечірнє «набір завершено». (iPhone теги поки ігнорує й складає все
+// стосом, тож там і раніше нічого не стиралось.)
+export const tagOf = (id, kind) => `trip-${id}-${kind}`;
+
+// «3 місця», «5 місць», «1 місце» — з правильним закінченням.
+export function spotsWord(n, lang) {
+  const d = n % 10, h = n % 100;
+  if (lang === "en") return `${n} ${n === 1 ? "spot" : "spots"}`;
+  const one = d === 1 && h !== 11, few = d >= 2 && d <= 4 && (h < 12 || h > 14);
+  if (lang === "ru") return `${n} ${one ? "место" : few ? "места" : "мест"}`;
+  return `${n} ${one ? "місце" : few ? "місця" : "місць"}`;
+}
+// Місце збору й час одним реченням: «Збір о 09:25: Вокзал …, платформа 4.»
+// Раніше виходило «…прапорець., 09:25» — крапка з тексту місця, а за нею кома.
+const meetLine = (lead, time, place) => {
+  const p = String(place || "").trim();
+  if (!p) return `${lead} ${time}.`;
+  return `${lead} ${time}: ${p}${/[.!?…]$/.test(p) ? "" : "."}`;
+};
 
 // ── Тексти сповіщень трьома мовами ──────────────────────────────────
 function build(kind, tr, extra) {
@@ -343,9 +469,9 @@ function build(kind, tr, extra) {
         ru: { title: "Открыта запись в группу", body: `Запись в группу на ${when} до ${name} открыта. Успейте записаться!` },
       },
       low: {
-        uk: { title: "Лишається мало місць", body: `Залишилось всього ${e.n} місць у набір до ${when} ${name}!` },
-        en: { title: "Only a few spots left", body: `Only ${e.n} spots left for the trip to ${name} on ${when}!` },
-        ru: { title: "Остаётся мало мест", body: `Осталось всего ${e.n} мест в набор до ${when} ${name}!` },
+        uk: { title: "Лишається мало місць", body: `Залишилось всього ${spotsWord(Number(e.n) || 0, "uk")} у набір до ${when} ${name}!` },
+        en: { title: "Only a few spots left", body: `Only ${spotsWord(Number(e.n) || 0, "en")} left for the trip to ${name} on ${when}!` },
+        ru: { title: "Остаётся мало мест", body: `Осталось всего ${spotsWord(Number(e.n) || 0, "ru")} в набор до ${when} ${name}!` },
       },
       // Місць немає — окреме сповіщення від «мало місць».
       full: {
@@ -359,9 +485,9 @@ function build(kind, tr, extra) {
         ru: { title: "Набор завершён", body: `Набор в группу на ${when} до ${name} завершён.` },
       },
       meet: {
-        uk: { title: "Нагадування про збір", body: `${when} ${name}: ${place}, ${e.time}. Приходьте вчасно.` },
-        en: { title: "Meeting reminder", body: `${when} ${name}: ${place}, ${e.time}. Please be on time.` },
-        ru: { title: "Напоминание о сборе", body: `${when} ${name}: ${place}, ${e.time}. Приходите вовремя.` },
+        uk: { title: "Нагадування про збір", body: `${when}, ${name}. ${meetLine("Збір о", e.time, place)} Приходьте вчасно.` },
+        en: { title: "Meeting reminder", body: `${when}, ${name}. ${meetLine("Meet at", e.time, place)} Please be on time.` },
+        ru: { title: "Напоминание о сборе", body: `${when}, ${name}. ${meetLine("Сбор в", e.time, place)} Приходите вовремя.` },
       },
       end: {
         uk: { title: "Поїздка завершена", body: `Поїздка ${name} завершена. До нових зустрічей!` },
@@ -403,7 +529,7 @@ export default async function handler(req, res) {
   const nowB = berlinParts(new Date());
   const nowMin = nowB.hour * 60 + nowB.minute;
   const nowText = `${nowB.date} ${hhmm(nowMin)}`;
-  const dueAt = (h, m) => nowMin >= h * 60 + m && nowMin < h * 60 + m + WINDOW;
+  const spotsQuiet = nowMin >= SPOTS_QUIET_FROM || nowMin < SPOTS_QUIET_TO;
 
   let trips = [], taken = {};
   try {
@@ -428,6 +554,9 @@ export default async function handler(req, res) {
   // push_log: так жоден ключ не займається завчасно, і коли поїздку
   // опублікують, її сповіщення підуть як звичайно.
   for (const row of (trips || []).filter((r) => !(r && r.data && r.data.draft === true))) {
+    // Одна зіпсована поїздка не має зупинити сповіщення решти (c9): помилка
+    // в її даних іде у звіт, а цикл іде далі.
+    try {
     const tr = row.data || {};
     const id = row.id;
     const name = tx(tr.title, "uk");
@@ -445,7 +574,7 @@ export default async function handler(req, res) {
     }
 
     const days = daysBetween(nowB.date, date);
-    const tag = `trip-${id}`;
+    const tag = (kind) => tagOf(id, kind);
 
     // ① За 7 днів о 09:00 — набір відкрито. Або будь-коли пізніше,
     //    якщо той момент проґавили.
@@ -461,18 +590,22 @@ export default async function handler(req, res) {
     // сповіщення в понеділок 14.09. Обидва рази це шостий день до.
     const openDay = addDays(date, -6);
     const openDue = nowB.date === openDay && nowMin >= 18 * 60;
-    if (openDue) planned.push({ key: `open:${id}`, tag, msgs: build("open", tr), url: goTo(id, GO.open) });
+    if (openDue) planned.push({ key: `open:${id}`, tag: tag("open"), msgs: build("open", tr), url: goTo(id, GO.open) });
     else why.push(`open — потрібен день ${openDay} після 18:00 · зараз ${nowB.date} ${hhmm(nowMin)}`);
 
     // ② Лишається мало місць. Перевіряється щоразу, надсилається один раз.
+    //    Вночі (23:00–07:00) чекає ранку: заявку можуть прийняти й опівночі,
+    //    а будити через це всю групу не варто (c9).
     const spots = Number(tr.spots) || 0;
     const left = spots - (taken[id] || 0);
     if (days >= 0 && spots > 0 && left > 0 && left <= LOW_SPOTS) {
-      planned.push({ key: `low:${id}`, tag, msgs: build("low", tr, { n: left }), url: goTo(id, GO.low) });
+      if (spotsQuiet) why.push(`low — вільних ${left}, але вночі не надсилаємо: піде о 07:00`);
+      else planned.push({ key: `low:${id}`, tag: tag("low"), msgs: build("low", tr, { n: left }), url: goTo(id, GO.low) });
     } else why.push(`low — треба вільних 1–${LOW_SPOTS} · зараз ${left} з ${spots}`);
     // Місць не лишилось узагалі — інше сповіщення, свій ключ.
     if (days >= 0 && spots > 0 && left <= 0) {
-      planned.push({ key: `full:${id}`, tag, msgs: build("full", tr), url: goTo(id, GO.full) });
+      if (spotsQuiet) why.push("full — місць немає, але вночі не надсилаємо: піде о 07:00");
+      else planned.push({ key: `full:${id}`, tag: tag("full"), msgs: build("full", tr), url: goTo(id, GO.full) });
     } else why.push(`full — треба 0 вільних · зараз ${left} з ${spots}`);
 
     // ③ Напередодні о 22:00 — набір завершено. Або пізніше, при першій
@@ -491,7 +624,7 @@ export default async function handler(req, res) {
     const closeDay = dm ? dm[1] : addDays(date, -1);
     const closeMin = dm ? Number(dm[2]) * 60 + Number(dm[3]) : 22 * 60;
     const closeDue = nowB.date === closeDay && nowMin >= closeMin;
-    if (closeDue) planned.push({ key: `close:${id}`, tag, msgs: build("close", tr), url: goTo(id, GO.close) });
+    if (closeDue) planned.push({ key: `close:${id}`, tag: tag("close"), msgs: build("close", tr), url: goTo(id, GO.close) });
     else why.push(`close — потрібен день ${closeDay} після ${hhmm(closeMin)} · зараз ${nowB.date} ${hhmm(nowMin)}`);
 
     if (days === 0) {
@@ -507,25 +640,26 @@ export default async function handler(req, res) {
       if (meetMin == null) {
         why.push("meet — час зустрічі не заповнено: нема від чого відлічувати дві години");
       } else {
-        // Три години замість двох: люди їдуть із різних міст, і комусь
-        // треба виїхати з дому раніше за сам збір.
-        const remindAt = Math.max(0, meetMin - 180);
+        // За ДВІ години до збору (c9; з 18.09 було три — 04.10 організатор
+        // попросив повернути дві).
+        const remindAt = Math.max(0, meetMin - MEET_BEFORE);
         // Запасне місце — станція першого поїзда; саме місце збору build()
         // бере вже мовою отримувача.
         const station = firstLeg ? firstLeg.from : "";
         // Вікно від «за 2 години» до самого часу збору. Після збору
         // нагадування вже безглузде, тому далі не надсилаємо.
         if (nowMin >= remindAt && nowMin < meetMin) {
-          planned.push({ key: `meet:${id}`, tag, msgs: build("meet", tr, { station, time: hhmm(meetMin) }), url: goTo(id, GO.meet) });
+          planned.push({ key: `meet:${id}`, tag: tag("meet"), msgs: build("meet", tr, { station, time: hhmm(meetMin) }), url: goTo(id, GO.meet) });
         } else {
-          why.push(`meet — збір ${hhmm(meetMin)}, вікно ${hhmm(remindAt)}–${hhmm(meetMin)} (за 3 год) · зараз ${hhmm(nowMin)}`);
+          why.push(`meet — збір ${hhmm(meetMin)}, вікно ${hhmm(remindAt)}–${hhmm(meetMin)} (за ${MEET_BEFORE / 60} год) · зараз ${hhmm(nowMin)}`);
         }
       }
       // ⑦ З 05:00 — альбом поїздки на Диску (c8). Ключ журналу займається
-      //    один раз на поїздку; не вийшло — альбом створиться о 21:00,
-      //    разом зі сповіщенням «Поїздка завершена».
+      //    один раз на поїздку; не вийшло — повтор при наступному виклику
+      //    (c9, до трьох разів), а востаннє — о 21:00, разом зі сповіщенням
+      //    «Поїздка завершена».
       if (nowMin >= 5 * 60) {
-        planned.push({ key: `album:${id}:${date}`, job: async () => {
+        planned.push({ key: `album:${id}:${date}`, title: `Альбом на Диску: ${albumName(tr)}`, job: async () => {
           const a = await bridgeAlbum(tr, id);
           return `альбом «${a.name}» ${a.created ? "створено" : a.adopted ? "знайдено (створений вручну)" : "уже є"}`;
         } });
@@ -534,7 +668,7 @@ export default async function handler(req, res) {
       //    альбом поїздки, якщо міст його дав; інакше — на список поїздок.
       if (nowMin >= 21 * 60) {
         planned.push({
-          key: `end:${id}`, tag, msgs: build("end", tr), url: goTo(id, GO.end),
+          key: `end:${id}`, tag: tag("end"), msgs: build("end", tr), url: goTo(id, GO.end),
           prepare: async (p) => {
             const a = await bridgeAlbum(tr, id);
             p.url = `${goTo(id, "album")}&album=${encodeURIComponent(String(a.id))}`;
@@ -557,6 +691,9 @@ export default async function handler(req, res) {
       meetTime: tr.meetTime || (tr.from && tr.from.time) || "не задано",
       why,
     });
+    } catch (e) {
+      report.push({ id: row && row.id, error: `поїздку пропущено через помилку в даних: ${String((e && e.message) || e).slice(0, 160)}` });
+    }
   }
 
   // Пульс. Ставимо ДО надсилання: навіть якщо далі щось впаде, буде
@@ -573,27 +710,37 @@ export default async function handler(req, res) {
   //
   // І помилка більше не ковтається мовчки: результат іде у відповідь —
   // і у звіт ?debug=1, і в історію викликів cron-job.org.
-  const beat = await (async () => {
-    const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!KEY) return "не записано: у Vercel немає SUPABASE_SERVICE_ROLE_KEY";
+  //
+  // Щоденний запасний виклик Vercel (о 08:00) відмітки не ставить (c9):
+  // пульс показує, як часто озивається САМЕ cron-job.org — від нього
+  // залежить, чи прийде нагадування вчасно. Vercel приходить із ключем у
+  // заголовку, cron-job.org — з ?secret= в адресі.
+  const viaVercel = !fromQuery && (Boolean(fromHeader) || /vercel-cron/i.test(String((req.headers && req.headers["user-agent"]) || "")));
+  const beat = viaVercel ? "не ставимо: це запасний виклик Vercel" : await (async () => {
     try {
-      const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/cron_ping`, {
-        method: "POST",
-        headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ p_note: `${nowText} · поїздок ${(trips || []).length} · на часі ${planned.length}` }),
-      });
-      if (r.ok) return "записано";
-      const txt = (await r.text()).slice(0, 200);
+      await sbService("cron_ping", { p_note: `${nowText} · поїздок ${(trips || []).length} · на часі ${planned.length}` });
+      return "записано";
+    } catch (e) {
       // Найімовірніша причина — не виконано supabase-cron-ping.sql:
       // тоді в базі ще стара функція з двома параметрами.
-      return `не записано: помилка ${r.status} ${txt}`;
-    } catch (e) {
       return `не записано: ${String((e && e.message) || e).slice(0, 200)}`;
     }
   })();
 
-  // Спершу — звичайні сповіщення; звірка поїздів іде після них (див. c6).
+  // Спершу — сповіщення людям, потім довгі справи (альбом на Диску чекає
+  // відповіді до 25 с), а звірка поїздів — наприкінці (див. c6).
   const sent = [], skipped = [];
+  let journalOk = null;   // чи пишеться журнал надсилань (supabase-v140.sql)
+  // Одне надсилання: результат — у журнал; не дійшло — дозвіл на повтор.
+  const record = async (key, title, res, retryKeys, counterKey) => {
+    let note = res.note || "";
+    if (!res.ok && !res.unknown) note = `${note}${note ? " · " : ""}${await allowRetry(key, retryKeys, counterKey)}`;
+    else if (res.unknown) note = `${note} · повтору не буде, щоб не задвоїти`;
+    const okJ = await journal(key, title, { ...res, note });
+    journalOk = journalOk === false ? false : okJ;
+    const line = `${key}${res.ok ? `: прийняли ${res.sent}${res.failed ? `, не вдалось ${res.failed}` : ""}` : ""}${note ? ` — ${note}` : ""}`;
+    (res.ok ? sent : skipped).push(line);
+  };
   const deliver = async (list) => {
     for (const p of list) {
       // Зведене «Зміни в розкладі»: займаємо ключ кожної зміни окремо й
@@ -605,21 +752,29 @@ export default async function handler(req, res) {
           catch (e) { skipped.push(`${it.key}: журнал — ${e.message}`); }
         }
         if (fresh.length === 0) { skipped.push(`${p.key}: змін, яких ще не надсилали, немає`); continue; }
-        let ok = false;
-        try { ok = await sendPush(origin, p.build(fresh), p.tag, p.url, p.admin); }
-        catch (e) { ok = false; }
-        const label = `${p.key} (${fresh.length})`;
-        (ok ? sent : skipped).push(label + (ok ? "" : ": помилка надсилання"));
+        let msgs = null;
+        try { msgs = p.build(fresh); } catch (e) { skipped.push(`${p.key}: текст — ${String((e && e.message) || e).slice(0, 120)}`); continue; }
+        const res = await sendPush(origin, msgs, p.tag, p.url, p.admin);
+        // Не дійшло — звільняються ключі саме цих змін: наступний виклик
+        // збере їх знову. Лічильник повторів — на цьому наборі змін: нова
+        // зміна пізніше отримає власні три спроби.
+        const batch = fresh.map((it) => it.key).sort();
+        await record(p.key, msgs.uk && msgs.uk.title, res, batch, `${p.key}:${hashKey(batch.join("|"))}`);
         continue;
       }
       let fresh = false;
       try { fresh = await sb("push_log_claim", { p_key: p.key }); }
       catch (e) { skipped.push(`${p.key}: журнал — ${e.message}`); continue; }
       if (!fresh) { skipped.push(`${p.key}: вже надсилалось`); continue; }
-      // Справа без сповіщення (c8: альбом поїздки).
+      // Справа без сповіщення (c8: альбом поїздки). Не вийшло — повтор.
       if (p.job) {
-        try { sent.push(`${p.key}: ${await p.job()}`); }
-        catch (e) { skipped.push(`${p.key}: ${String((e && e.message) || e).slice(0, 160)}`); }
+        let done = "", why = "";
+        try { done = await p.job(); }
+        catch (e) { why = String((e && e.message) || e).slice(0, 160); }
+        const note = done || `не вийшло: ${why} · ${await allowRetry(p.key)}`;
+        (done ? sent : skipped).push(`${p.key}: ${note}`);
+        const okJ = await journal(p.key, p.title || p.key, { sent: 0, failed: 0, note });
+        journalOk = journalOk === false ? false : okJ;
         continue;
       }
       // Те, що варто робити лише перед справжнім надсиланням (c8: альбом
@@ -630,13 +785,15 @@ export default async function handler(req, res) {
       }
       // Якщо надсилання впаде, це не має валити весь прохід: решта
       // сповіщень мусить дійти.
-      let ok = false;
-      try { ok = await sendPush(origin, p.msgs, p.tag, p.url, p.admin); }
-      catch (e) { ok = false; }
-      (ok ? sent : skipped).push(p.key + (ok ? "" : ": помилка надсилання"));
+      const res = await sendPush(origin, p.msgs, p.tag, p.url, p.admin);
+      await record(p.key, p.msgs && p.msgs.uk && p.msgs.uk.title, res);
     }
   };
-  if (!debug) await deliver(planned);
+  // Сповіщення людям — першими; ті, що чекають на Диск, — за ними; дії без
+  // сповіщення (альбом) — останніми.
+  const rank = (p) => (p.job ? 2 : p.prepare ? 1 : 0);
+  const ordered = planned.map((p, i) => ({ p, i })).sort((a, b) => rank(a.p) - rank(b.p) || a.i - b.i).map((x) => x.p);
+  if (!debug) await deliver(ordered);
 
   // Звірка поїздів. Сам похід у DB робить api/trains.js — той самий, що
   // показує стан поїздів у застосунку; &fresh=… обходить двохвилинний кеш.
@@ -707,11 +864,13 @@ export default async function handler(req, res) {
 
   if (debug) {
     res.status(200).json({
+      version: "c9",
       berlin: nowText,
       window: "від моменту й пізніше",
       trips: report,
-      planned: planned.concat(trainPlanned).map((p) => p.job ? `${p.key} → дія: альбом «${albumName(trips.find((x) => p.key.startsWith(`album:${x.id}:`))?.data || {})}»`
-        : `${p.key}${p.items ? ` [змін: ${p.items.length}]` : ""} → ${p.url}${p.prepare ? " (або в альбом поїздки)" : ""}${p.admin ? " (лише організаторові)" : ""}`),
+      planned: ordered.concat(trainPlanned).map((p) => p.job ? `${p.key} → дія: альбом «${albumName(trips.find((x) => p.key.startsWith(`album:${x.id}:`))?.data || {})}»`
+        : `${p.key}${p.items ? ` [змін: ${p.items.length}]` : ""} → ${p.url}${p.prepare ? " (або в альбом поїздки)" : ""}${p.admin ? " (лише організаторові)" : ""} · тег ${p.tag}`),
+      meetBefore: `нагадування про збір — за ${MEET_BEFORE / 60} год`,
       schedulePreview: trainPlanned.filter((p) => p.items).map((p) => p.build(p.items).uk),
       trains: trainReport,
       pulse: beat,
@@ -722,5 +881,9 @@ export default async function handler(req, res) {
 
   await deliver(trainPlanned);
 
-  res.status(200).json({ berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped, trains: trainReport });
+  res.status(200).json({
+    version: "c9", berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped,
+    journal: journalOk === null ? "нічого не надсилалось" : journalOk ? "записано" : "не пишеться — виконай supabase-v140.sql",
+    trains: trainReport,
+  });
 }
