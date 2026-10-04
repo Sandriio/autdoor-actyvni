@@ -1,4 +1,9 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c9 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c10 ═══
+// c10 — «Мало місць» і «Місць немає» — лише до 22:00 (було до 23:00), так
+//       попросив організатор 04.10; уночі чекають до 07:00.
+//       Стан «Завершено», вибраний колись вручну, більше не вимикає
+//       сповіщень: стан тепер рахується сам за годинником (App.jsx v141),
+//       а вручну ставляться лише «Перенесено» й «Скасовано».
 // c9 — сповіщення за розкладом більше не губляться мовчки.
 //      • Не дійшло — повтор. Раніше ключ у журналі займався ДО надсилання,
 //        і якщо сервер надсилання відповідав помилкою, сповіщення вважалось
@@ -90,7 +95,8 @@ const LOW_SPOTS = 5;      // коли лишається стільки місц
 const MEET_BEFORE = 120;  // нагадування про збір — за стільки хвилин (c9: було 180)
 const MAX_RETRY = 3;      // скільки разів повторювати сповіщення, яке не дійшло
 // «Мало місць» і «місць немає» — новини не термінові: вночі не будимо.
-const SPOTS_QUIET_FROM = 23 * 60;
+// Надсилаються з 07:00 до 22:00 (c10; до того — до 23:00).
+const SPOTS_QUIET_FROM = 22 * 60;
 const SPOTS_QUIET_TO = 7 * 60;
 
 function berlinParts(d) {
@@ -568,7 +574,10 @@ export default async function handler(req, res) {
       report.push({ id, name, skip: "немає календарної дати — жодне сповіщення неможливе" });
       continue;
     }
-    if (status === "cancelled" || status === "done" || status === "postponed") {
+    // «Завершено» тут більше не перевіряється (c10): минулу поїздку й так
+    // нічого не чекає за датою, а збережене колись вручну «Завершено» на
+    // майбутній поїздці мовчки вимикало б усі її сповіщення.
+    if (status === "cancelled" || status === "postponed") {
       report.push({ id, name, date, skip: `стан «${status}» — сповіщення вимкнені` });
       continue;
     }
@@ -594,17 +603,17 @@ export default async function handler(req, res) {
     else why.push(`open — потрібен день ${openDay} після 18:00 · зараз ${nowB.date} ${hhmm(nowMin)}`);
 
     // ② Лишається мало місць. Перевіряється щоразу, надсилається один раз.
-    //    Вночі (23:00–07:00) чекає ранку: заявку можуть прийняти й опівночі,
-    //    а будити через це всю групу не варто (c9).
+    //    Вночі (22:00–07:00) чекає ранку: заявку можуть прийняти й опівночі,
+    //    а будити через це всю групу не варто (c9; з c10 — від 22:00).
     const spots = Number(tr.spots) || 0;
     const left = spots - (taken[id] || 0);
     if (days >= 0 && spots > 0 && left > 0 && left <= LOW_SPOTS) {
-      if (spotsQuiet) why.push(`low — вільних ${left}, але вночі не надсилаємо: піде о 07:00`);
+      if (spotsQuiet) why.push(`low — вільних ${left}, але з 22:00 до 07:00 не надсилаємо: піде о 07:00`);
       else planned.push({ key: `low:${id}`, tag: tag("low"), msgs: build("low", tr, { n: left }), url: goTo(id, GO.low) });
     } else why.push(`low — треба вільних 1–${LOW_SPOTS} · зараз ${left} з ${spots}`);
     // Місць не лишилось узагалі — інше сповіщення, свій ключ.
     if (days >= 0 && spots > 0 && left <= 0) {
-      if (spotsQuiet) why.push("full — місць немає, але вночі не надсилаємо: піде о 07:00");
+      if (spotsQuiet) why.push("full — місць немає, але з 22:00 до 07:00 не надсилаємо: піде о 07:00");
       else planned.push({ key: `full:${id}`, tag: tag("full"), msgs: build("full", tr), url: goTo(id, GO.full) });
     } else why.push(`full — треба 0 вільних · зараз ${left} з ${spots}`);
 
@@ -864,7 +873,7 @@ export default async function handler(req, res) {
 
   if (debug) {
     res.status(200).json({
-      version: "c9",
+      version: "c10",
       berlin: nowText,
       window: "від моменту й пізніше",
       trips: report,
@@ -882,7 +891,7 @@ export default async function handler(req, res) {
   await deliver(trainPlanned);
 
   res.status(200).json({
-    version: "c9", berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped,
+    version: "c10", berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped,
     journal: journalOk === null ? "нічого не надсилалось" : journalOk ? "записано" : "не пишеться — виконай supabase-v140.sql",
     trains: trainReport,
   });
