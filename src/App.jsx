@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v140 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v141 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -25,7 +25,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v140";
+const APP_VERSION = "v141";
 // За скільки хвилин до збору приходить нагадування. Те саме число —
 // MEET_BEFORE у api/push-cron.js: міняти обидва разом.
 const MEET_REMIND_MIN = 120;
@@ -746,7 +746,16 @@ const T = {
   upHint: { uk: "Фото стискаються автоматично. Відео — до", en: "Photos are compressed automatically. Video — up to", de: "Fotos werden automatisch verkleinert. Video — bis", ru: "Фото сжимаются автоматически. Видео — до" },
   upAdded: { uk: "Додано", en: "Added", de: "Hinzugefügt", ru: "Добавлено" },
   upFailed: { uk: "Не вдалося", en: "Failed", de: "Fehlgeschlagen", ru: "Не удалось" },
-  upTooBig: { uk: "Відео завелике. Обріжте його або завантажте коротший фрагмент.", en: "Video is too large. Trim it or upload a shorter clip.", de: "Video ist zu groß. Kürzen Sie es oder laden Sie einen kürzeren Clip hoch.", ru: "Видео слишком большое. Обрежьте его или загрузите более короткий фрагмент." },
+  upTooBig: { uk: "Відео {mb} МБ — більше за {max} МБ. Обріжте його на телефоні (Фото → Редагувати) і завантажте коротший фрагмент.", en: "The video is {mb} MB — over {max} MB. Trim it on your phone (Photos → Edit) and upload a shorter clip.", de: "Das Video hat {mb} MB — mehr als {max} MB. Kürzen Sie es am Handy (Fotos → Bearbeiten) und laden Sie einen kürzeren Clip hoch.", ru: "Видео {mb} МБ — больше {max} МБ. Обрежьте его на телефоне (Фото → Править) и загрузите более короткий фрагмент." },
+  // Відмови сховища людською мовою (v141).
+  upErrBig: { uk: "Сховище не прийняло відео {mb} МБ: завеликий файл.", en: "Storage rejected the {mb} MB video: the file is too large.", de: "Der Speicher hat das {mb}-MB-Video abgelehnt: Datei zu groß.", ru: "Хранилище не приняло видео {mb} МБ: слишком большой файл." },
+  upErrType: { uk: "Сховище не приймає відео цього типу ({type}).", en: "Storage does not accept this video type ({type}).", de: "Der Speicher akzeptiert diesen Videotyp nicht ({type}).", ru: "Хранилище не принимает видео этого типа ({type})." },
+  upErrDenied: { uk: "Сховище не дозволило завантаження.", en: "Storage did not allow the upload.", de: "Der Speicher hat den Upload nicht erlaubt.", ru: "Хранилище не разрешило загрузку." },
+  upErrServer: { uk: "Сховище відповіло помилкою", en: "Storage replied with an error", de: "Der Speicher meldete einen Fehler", ru: "Хранилище ответило ошибкой" },
+  upErrNet: { uk: "Зв'язок обірвався під час завантаження. Спробуйте ще раз — краще через Wi-Fi.", en: "The connection dropped during the upload. Please try again — Wi-Fi works best.", de: "Die Verbindung brach beim Hochladen ab. Bitte erneut versuchen — am besten im WLAN.", ru: "Связь оборвалась во время загрузки. Попробуйте ещё раз — лучше через Wi-Fi." },
+  upErrFixSql: { uk: "Виконай supabase-v141.sql у Supabase (SQL Editor).", en: "Run supabase-v141.sql in Supabase (SQL Editor).", de: "Führe supabase-v141.sql in Supabase aus (SQL Editor).", ru: "Выполни supabase-v141.sql в Supabase (SQL Editor)." },
+  upErrTellOrg: { uk: "Повідомте організатора.", en: "Please tell the organiser.", de: "Bitte dem Organisator Bescheid geben.", ru: "Сообщите организатору." },
+  upKeepOpen: { uk: "Не закривайте застосунок, доки йде завантаження.", en: "Keep the app open until the upload finishes.", de: "App bitte geöffnet lassen, bis der Upload fertig ist.", ru: "Не закрывайте приложение, пока идёт загрузка." },
   usAddImage: { uk: "Додати зображення", en: "Add image", de: "Bild hinzufügen", ru: "Добавить изображение" },
   usDelete: { uk: "Видалити", en: "Delete", de: "Löschen", ru: "Удалить" },
   upDeleteAsk: { uk: "Видалити цей файл? Повернути його не вийде.", en: "Delete this file? It cannot be restored.", de: "Diese Datei löschen? Sie lässt sich nicht wiederherstellen.", ru: "Удалить этот файл? Вернуть его не получится." },
@@ -897,6 +906,8 @@ const T = {
   stClosed: { uk: "Набір закрито", en: "Registration closed", de: "Anmeldung geschlossen", ru: "Набор закрыт" },
   stOngoing: { uk: "Триває", en: "Ongoing", de: "Läuft", ru: "Идёт" },
   stDone: { uk: "Завершено", en: "Done", de: "Abgeschlossen", ru: "Завершено" },
+  // Стан, що рахується сам за годинником (v141): «Автоматично: Триває».
+  stAuto: { uk: "Автоматично", en: "Automatic", de: "Automatisch", ru: "Автоматически" },
   stCancelled: { uk: "Скасовано", en: "Cancelled", de: "Abgesagt", ru: "Отменено" },
   stUpcoming: { uk: "Майбутня", en: "Upcoming", de: "Kommend", ru: "Предстоящая" },
   // Дві форми: українською причина стоїть після «через» (знахідний
@@ -1177,7 +1188,8 @@ const C = {
 // ── Trip statuses ──────────────────────────────────────────────────────
 // Each status defines its badge label, badge colors, and which list it
 // belongs to ("past" → Минулі, otherwise → Найближчі). "upcoming" shows no
-// badge. Statuses are switched manually by the organizer.
+// badge. Statuses follow the clock (autoStatus); only «Перенесено» and
+// «Скасовано» are set by hand (v141).
 const STATUS = {
   upcoming:  { tkey: "stUpcoming",  group: "upcoming", badge: false },
   recruiting:{ tkey: "stRecruiting",group: "upcoming", badge: true,  bg: "rgba(0,0,0,0.28)", fg: "#ffffff" },
@@ -1202,11 +1214,15 @@ const STATUS_ORDER = ["upcoming", "recruiting", "closed", "ongoing", "postponed"
 // Стан поїздки за годинником.
 //
 // Ручні стани — «Скасовано» і «Перенесено» — завжди сильніші: їх ставить
-// організатор, і час їх не скасовує. Решта визначається сама:
-//   після дня поїздки .................. Завершено
-//   у день поїздки ..................... Поїздка триває
-//   після дедлайну запису .............. Набір закрито
-//   інакше ............................. Набір у групу
+// організатор, і час їх не скасовує. Решта визначається сама (v141):
+//   після дня поїздки ........................ Завершено
+//   у день поїздки з 21:00 ................... Завершено
+//   у день поїздки з 08:00 ................... Триває
+//   у день поїздки до 08:00 .................. Набір закрито
+//   після дедлайну запису .................... Набір закрито
+//   інакше ................................... Набір у групу
+// Так само й в організатора: список станів у нього показує саме цей
+// стан (StatusSelect), а не те, що колись вибрали вручну.
 //
 // Час беремо берлінський: сервер і телефони учасників можуть бути в
 // інших поясах, а поїздка одна й та сама.
@@ -1219,17 +1235,23 @@ function berlinNow() {
   f.formatToParts(new Date()).forEach((x) => { p[x.type] = x.value; });
   return { date: `${p.year}-${p.month}-${p.day}`, min: Number(p.hour) * 60 + Number(p.minute) };
 }
+const TRIP_ONGOING_FROM = 8 * 60;   // «Триває» — у день поїздки з 08:00
+const TRIP_DONE_FROM = 21 * 60;     // «Завершено» — з 21:00
 function autoStatus(trip) {
   const manual = trip && trip.status;
   if (manual === "cancelled" || manual === "postponed") return manual;
   const date = String((trip && trip.date) || "").trim();
-  if (!date) return manual || "upcoming";
+  if (!date) return (manual && STATUS[manual]) ? manual : "upcoming";
   const now = berlinNow();
   if (now.date > date) return "done";
-  // У день поїздки: до 21:00 вона триває, від 21:00 — завершена. Та сама
-  // година, що й у сповіщенні «Поїздка завершена», щоб напис на картці
-  // й повідомлення в телефоні не розходились.
-  if (now.date === date) return now.min >= 21 * 60 ? "done" : "ongoing";
+  // У день поїздки: до 08:00 набір уже закрито, з 08:00 поїздка триває,
+  // з 21:00 — завершена (v141; раніше «Триває» стояло з самої півночі).
+  // 21:00 — та сама година, що й у сповіщенні «Поїздка завершена», щоб
+  // напис на картці й повідомлення в телефоні не розходились.
+  if (now.date === date) {
+    if (now.min >= TRIP_DONE_FROM) return "done";
+    return now.min >= TRIP_ONGOING_FROM ? "ongoing" : "closed";
+  }
   const dm = String((trip && trip.deadline) || "").match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
   if (dm) {
     const past = now.date > dm[1] || (now.date === dm[1] && now.min >= Number(dm[2]) * 60 + Number(dm[3]));
@@ -1238,6 +1260,27 @@ function autoStatus(trip) {
   return "recruiting";
 }
 const statusLabel = (status) => t(STATUS[status]?.tkey || "stUpcoming");
+
+// Стан поїздки в руках організатора (v141). Звичайні стани рахуються самі
+// за годинником (autoStatus), тож у списку — «Автоматично: <стан зараз>»,
+// і цей рядок сам змінюється о 08:00 і 21:00. Вручну лишаються тільки
+// «Перенесено» і «Скасовано»: їх годинник знати не може.
+// Раніше тут був повний перелік станів, і список показував збережене
+// колись вручну значення, а не справжній стан: організатор бачив «Набір
+// закрито», хоч поїздка вже тривала, і перемикав руками. До того ж ручне
+// «Завершено» вимикало годинник сповіщень для поїздки — «Поїздка
+// завершена» о 21:00 тоді не приходило.
+function StatusSelect({ trip, onSetStatus, style }) {
+  const manual = trip.status === "cancelled" || trip.status === "postponed" ? trip.status : "auto";
+  const auto = autoStatus({ ...trip, status: "upcoming" });
+  return (
+    <select value={manual} onChange={(e) => onSetStatus(e.target.value === "auto" ? "upcoming" : e.target.value)} style={style}>
+      <option value="auto">{`${t("stAuto")}: ${statusLabel(auto)}`}</option>
+      <option value="postponed">{statusLabel("postponed")}</option>
+      <option value="cancelled">{statusLabel("cancelled")}</option>
+    </select>
+  );
+}
 
 // For "postponed", the badge text is dynamic based on the new date.
 const postponedLabel = (trip) => {
@@ -2463,23 +2506,85 @@ async function sbAddUpload(row) {
 const UPLOAD_PHOTO_SHORT = 1800;
 const UPLOAD_PHOTO_LONG = 3200;
 const UPLOAD_PHOTO_QUALITY = 0.86;
-const UPLOAD_VIDEO_MAX_MB = 45;
+// Безкоштовний тариф Supabase приймає файл до 50 МБ — беремо 49 із запасом
+// (v141; було 45). Сховище «photos» налаштовує supabase-v141.sql.
+const UPLOAD_VIDEO_MAX_MB = 49;
 
-async function sbUploadMedia(file) {
-  if (!sbConfigured()) throw new Error("База даних не підключена");
-  const isVid = String(file.type || "").startsWith("video/");
-  if (isVid && file.size > UPLOAD_VIDEO_MAX_MB * 1024 * 1024) {
-    throw new Error(t("upTooBig"));
+// Відео впізнаємо й за розширенням: iPhone іноді віддає файл із порожнім
+// типом (з «Файлів», з iCloud). Тоді раніше відео йшло як фото, і
+// застосунок падав на «Файл не схожий на зображення».
+const VIDEO_TYPES = {
+  mov: "video/quicktime", qt: "video/quicktime", mp4: "video/mp4", m4v: "video/x-m4v",
+  webm: "video/webm", "3gp": "video/3gpp", "3gpp": "video/3gpp",
+};
+function videoTypeOf(file) {
+  const type = String((file && file.type) || "").toLowerCase();
+  if (type.startsWith("video/")) return type;
+  const ext = String((file && file.name) || "").split(".").pop().toLowerCase();
+  return VIDEO_TYPES[ext] || "";
+}
+// Розширення для імені у сховищі: правило сховища (supabase-v141.sql)
+// пропускає лише знайомі розширення фото й відео.
+function videoExtOf(file, type) {
+  const ext = String((file && file.name) || "").split(".").pop().toLowerCase();
+  if (VIDEO_TYPES[ext]) return ext;
+  return ({ "video/quicktime": "mov", "video/mp4": "mp4", "video/x-m4v": "m4v", "video/webm": "webm", "video/3gpp": "3gp" })[type] || "mp4";
+}
+
+// Надсилання у сховище через XMLHttpRequest, а не fetch: лише він каже,
+// скільки вже пішло. Відео на 40 МБ мобільним інтернетом вантажиться
+// хвилину-дві, і без відсотків здається, що все зависло.
+function storagePost(name, body, type, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", `${SUPABASE_URL}/storage/v1/object/photos/${name}`);
+    x.setRequestHeader("apikey", SUPABASE_ANON_KEY);
+    x.setRequestHeader("Authorization", `Bearer ${SUPABASE_ANON_KEY}`);
+    x.setRequestHeader("Content-Type", type);
+    if (onProgress && x.upload) {
+      x.upload.onprogress = (e) => { if (e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total); };
+    }
+    x.onload = () => resolve({ status: x.status, text: String(x.responseText || "") });
+    x.onerror = () => reject(Object.assign(new Error(t("upErrNet")), { network: true }));
+    x.ontimeout = () => reject(Object.assign(new Error(t("upErrNet")), { network: true }));
+    x.send(body);
+  });
+}
+
+// Відмова сховища — людською мовою. Раніше показувався сирий текст
+// сервера англійською (і лише перші 160 знаків), з якого не було
+// зрозуміло, що робити. admin — організаторові ще й що виправити.
+const mbOf = (bytes) => String(Math.round((Number(bytes) || 0) / 104857.6) / 10).replace(/\.0$/, "");
+function uploadErrorText(status, text, file, type, admin) {
+  const raw = String(text || "");
+  let j = null;
+  try { j = JSON.parse(raw); } catch { /* не JSON */ }
+  const msg = String((j && (j.message || j.error)) || raw).replace(/\s+/g, " ").trim().slice(0, 120);
+  const fix = admin ? ` ${t("upErrFixSql")}` : ` ${t("upErrTellOrg")}`;
+  if (status === 413 || /maximum allowed size|payload too large|entity too large|too large/i.test(raw)) {
+    return t("upErrBig").replace("{mb}", mbOf(file && file.size)) + fix;
   }
-  const ext = isVid ? (String(file.name).split(".").pop() || "mp4").toLowerCase() : "jpg";
+  if (status === 415 || /mime/i.test(raw)) return t("upErrType").replace("{type}", type || "?") + fix;
+  if (status === 401 || status === 403 || /row-level security|row level security|unauthorized|not allowed|permission/i.test(raw)) {
+    return t("upErrDenied") + fix;
+  }
+  return `${t("upErrServer")} ${status}${msg ? `: ${msg}` : ""}`;
+}
+
+// onProgress(частка 0…1) — лише для відео: фото маленькі й ідуть миттєво.
+async function sbUploadMedia(file, onProgress, admin) {
+  if (!sbConfigured()) throw new Error("База даних не підключена");
+  const vtype = videoTypeOf(file);
+  const isVid = vtype !== "";
+  if (isVid && file.size > UPLOAD_VIDEO_MAX_MB * 1024 * 1024) {
+    throw new Error(t("upTooBig").replace("{mb}", mbOf(file.size)).replace("{max}", String(UPLOAD_VIDEO_MAX_MB)));
+  }
+  const ext = isVid ? videoExtOf(file, vtype) : "jpg";
   const name = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const body = isVid ? file : await downscaleImage(file, { short: UPLOAD_PHOTO_SHORT, long: UPLOAD_PHOTO_LONG, quality: UPLOAD_PHOTO_QUALITY });
-  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/photos/${name}`, {
-    method: "POST",
-    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": isVid ? file.type : "image/jpeg" },
-    body,
-  });
-  if (!r.ok) throw new Error((await r.text()).slice(0, 160));
+  const type = isVid ? vtype : "image/jpeg";
+  const r = await storagePost(name, body, type, isVid ? onProgress : null);
+  if (r.status < 200 || r.status >= 300) throw new Error(uploadErrorText(r.status, r.text, file, type, admin));
   return { url: `${SUPABASE_URL}/storage/v1/object/public/photos/${name}`, kind: isVid ? "video" : "image" };
 }
 
@@ -2657,19 +2762,28 @@ const realDriveId = (v) => (v && !String(v).includes(":") ? String(v) : "");
 // ── Завантаження файлів ─────────────────────────────────────────────
 // Кнопка однакова для всіх: і організатор, і учасник додають свої фото
 // сюди ж. Різниця лише в тому, що видаляти може тільки організатор.
-function UploadButton({ folderId, onDone }) {
+function UploadButton({ folderId, onDone, admin }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [bad, setBad] = useState(false);
+  // Що зараз вантажиться: «2/5» і для відео ще відсотки (v141).
+  const [prog, setProg] = useState("");
   const inp = useRef(null);
 
   const handle = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-    setBusy(true); setMsg("");
-    let ok = 0; const bad = [];
-    for (const f of files) {
+    setBusy(true); setMsg(""); setBad(false);
+    let ok = 0; const fails = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const step = files.length > 1 ? `${i + 1}/${files.length}` : "";
+      setProg(step);
       try {
-        const up = await sbUploadMedia(f);
+        const up = await sbUploadMedia(f, (p) => {
+          const pct = `${Math.min(99, Math.round(p * 100))}%`;
+          setProg(step ? `${step} · ${pct}` : pct);
+        }, admin);
         const rowId = `u${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
         await sbAddUpload({
           id: rowId,
@@ -2679,11 +2793,17 @@ function UploadButton({ folderId, onDone }) {
         });
         queueDriveCopy(rowId);
         ok++;
-      } catch (err) { bad.push(String(err.message || err)); }
+      } catch (err) {
+        // Назва файлу — щоб було видно, ЯКЕ саме з кількох не пішло.
+        fails.push(`${String(f.name || "").slice(0, 40)}${f.name ? " — " : ""}${String((err && err.message) || err)}`);
+      }
     }
-    setBusy(false);
+    setBusy(false); setProg("");
     if (inp.current) inp.current.value = "";
-    setMsg(bad.length === 0 ? `${t("upAdded")}: ${ok}` : `${t("upAdded")}: ${ok}. ${t("upFailed")}: ${bad[0]}`);
+    setBad(fails.length > 0);
+    setMsg(fails.length === 0
+      ? `${t("upAdded")}: ${ok}`
+      : `${t("upAdded")}: ${ok}. ${t("upFailed")}: ${fails[0]}${fails.length > 1 ? ` (+${fails.length - 1})` : ""}`);
     if (ok > 0 && onDone) onDone();
   };
 
@@ -2693,9 +2813,10 @@ function UploadButton({ folderId, onDone }) {
       <button onClick={() => inp.current && inp.current.click()} disabled={busy}
         style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", background: busy ? C.greenSoft : C.green, color: busy ? C.greenDark : "#fff", border: "none", borderRadius: 12, padding: "12px", fontSize: 13.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
         {busy ? <Loader2 size={16} /> : <Camera size={16} />}
-        {busy ? t("upBusy") : t("upAdd")}
+        {busy ? `${t("upBusy")}${prog ? ` ${prog}` : ""}` : t("upAdd")}
       </button>
-      {msg !== "" && <p style={{ margin: "7px 0 0", fontSize: 11.5, color: C.muted, lineHeight: 1.45 }}>{msg}</p>}
+      {busy && <p style={{ margin: "7px 0 0", fontSize: 11.5, color: C.muted, lineHeight: 1.45 }}>{t("upKeepOpen")}</p>}
+      {msg !== "" && <p style={{ margin: "7px 0 0", fontSize: 11.5, color: bad ? C.rasp : C.muted, lineHeight: 1.45 }}>{msg}</p>}
       <p style={{ margin: "6px 0 0", fontSize: 11, color: C.faint, lineHeight: 1.45 }}>
         {t("upHint")} {UPLOAD_VIDEO_MAX_MB} MB.
       </p>
@@ -2783,14 +2904,23 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
 
   return (
     <>
-      {albumId && !limit && <UploadButton folderId={albumId} onDone={loadUps} />}
+      {albumId && !limit && <UploadButton folderId={albumId} onDone={loadUps} admin={isAdmin} />}
       {all.length === 0 && <p style={{ fontSize: 12.5, color: C.muted, margin: "0 0 10px" }}>{t("gEmpty")}</p>}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 10 }}>
         {shown.map((f, i) => (
           <button key={f.id} onClick={() => setOpen(i)}
             style={{ position: "relative", aspectRatio: "1", border: "none", padding: 0, borderRadius: 10, overflow: "hidden", cursor: "pointer", background: C.greenSoft }}>
-            <img src={f.upUrl || driveThumb(f.id, 400)} alt="" loading="lazy"
-              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            {/* Відео, додане в застосунку, не має окремого ескізу: картинкою
+                його не показати (раніше тут була порожня клітинка). Перший
+                кадр малює сам програвач — «#t=0.1» змушує iPhone його
+                підвантажити. */}
+            {f.upUrl && isVideo(f) ? (
+              <video src={`${f.upUrl}#t=0.1`} muted playsInline preload="metadata" tabIndex={-1}
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", pointerEvents: "none" }} />
+            ) : (
+              <img src={f.upUrl || driveThumb(f.id, 400)} alt="" loading="lazy"
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            )}
             {isVideo(f) && (
               <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.25)", color: "#fff" }}>
                 <Play size={22} />
@@ -3610,11 +3740,7 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
             )}
           </div>
           <div style={{ padding: "8px 14px 10px" }}>
-            <select value={trip.status} onChange={(e) => onSetStatus(e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 9, padding: "9px 8px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", background: C.yellowSoft, color: C.yellowInk, cursor: "pointer" }}>
-              {STATUS_ORDER.map((s) => (
-                <option key={s} value={s}>{statusLabel(s)}</option>
-              ))}
-            </select>
+            <StatusSelect trip={trip} onSetStatus={onSetStatus} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 9, padding: "9px 8px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", background: C.yellowSoft, color: C.yellowInk, cursor: "pointer" }} />
           </div>
           {trip.status === "postponed" && (
             <div style={{ padding: "0 14px 12px" }}>
@@ -5770,11 +5896,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onSetStat
             <TrainCheckPanel trip={trip} trains={trains} />
             <div style={{ height: 16 }} />
             <label style={{ fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 6, display: "block" }}>{t("tripStatus")}</label>
-            <select value={trip.status} onChange={(e) => onSetStatus(e.target.value)} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 11, padding: "12px", fontSize: 14, fontWeight: 700, fontFamily: "inherit", background: C.yellowSoft, color: C.yellowInk, cursor: "pointer", marginBottom: 6 }}>
-              {STATUS_ORDER.map((s) => (
-                <option key={s} value={s}>{statusLabel(s)}</option>
-              ))}
-            </select>
+            <StatusSelect trip={trip} onSetStatus={onSetStatus} style={{ width: "100%", boxSizing: "border-box", border: `1px solid ${C.line}`, borderRadius: 11, padding: "12px", fontSize: 14, fontWeight: 700, fontFamily: "inherit", background: C.yellowSoft, color: C.yellowInk, cursor: "pointer", marginBottom: 6 }} />
             {trip.status === "postponed" && (
               <div style={{ marginBottom: 8 }}>
                 <label style={{ fontSize: 12, fontWeight: 700, color: C.ink, marginBottom: 6, display: "block" }}>Нова дата (необов'язково)</label>
@@ -5797,7 +5919,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onSetStat
               <SituationPush trip={trip} kind={trip.status} pin={adminPin} />
             )}
             <p style={{ fontSize: 11.5, color: C.muted, margin: "0 0 4px", lineHeight: 1.45 }}>
-              «Завершено» і «Скасовано» переносять поїздку в розділ «Минулі». Решта лишаються в «Найближчі».
+              Стан змінюється сам: до дедлайну — «Набір у групу», після — «Набір закрито», у день поїздки з 08:00 — «Триває», з 21:00 — «Завершено» (і поїздка переходить у «Минулі»). Вручну — лише «Перенесено» чи «Скасовано».
             </p>
             {/* Копія — тут, а не в шапці поруч із «Редагувати»: утрьох
                 кнопки в шапці не вміщаються на вузькому телефоні. */}
@@ -7277,6 +7399,17 @@ function enablePinchZoom() {
 
 export default function App() {
   useEffect(() => { enablePinchZoom(); }, []);
+  // Стан поїздки рахується за годинником (autoStatus). Щоб «Триває» о 08:00
+  // і «Завершено» о 21:00 з'являлися без перезапуску, раз на хвилину й при
+  // поверненні в застосунок екран просто перемальовується (v141).
+  const [, setClockTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setClockTick((n) => (n + 1) % 1e6);
+    const iv = setInterval(bump, 60 * 1000);
+    const onVis = () => { if (document.visibilityState === "visible") bump(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
   const [trips, setTrips] = useState(() => (sbConfigured() ? [] : TRIPS));
   const [loadingTrips, setLoadingTrips] = useState(() => sbConfigured());
   const [loadError, setLoadError] = useState(false);
