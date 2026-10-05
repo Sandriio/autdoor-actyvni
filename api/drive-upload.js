@@ -1,4 +1,4 @@
-// ═══ Tropa Club · api/drive-upload.js · ВЕРСІЯ u1 ═══
+// ═══ Tropa Club · api/drive-upload.js · ВЕРСІЯ u2 ═══
 // ═══════════════════════════════════════════════════════════════════
 // Відео з застосунку — прямо в альбом поїздки на Google Диску
 //
@@ -14,12 +14,18 @@
 //     організатора) відкрити на Диску завантаження в теку альбому. Міст
 //     повертає одноразовий квиток, сервер віддає його застосунку разом з
 //     адресою мосту.
-//  2. Застосунок шле відео шматками по 8 МБ прямо мосту — з квитком, без
-//     секретного слова. Квиток дозволяє лише дописати байти в один файл.
+//  2. u2 (міст b5): разом із квитком сервер віддає застосунку адресу
+//     завантаження на самому Диску («direct»). Телефон шле відео шматками
+//     по 8 МБ ПРЯМО туди — зі швидкістю свого інтернету. Міст відкриває
+//     це завантаження з адресою застосунку (Origin), бо інакше браузер
+//     до Диска не пустить. Не вийшло напряму — шматки по 4 МБ ідуть
+//     мосту з квитком, як у u1 (повільно: Apps Script ~0,14 МБ/с).
 //  3. Застосунок: POST { action: "finish", ticket }. Сервер питає в мосту
-//     номер готового файлу й записує його в таблицю завантажень — з
-//     відбитком ключа пристрою, щоб автор міг видалити своє відео.
-//  • GET — перевірка: чи налаштовано й чи міст уже вміє це (потрібен b4).
+//     номер готового файлу (міст b5 сам питає про нього Диск) й записує
+//     його в таблицю завантажень — з відбитком ключа пристрою, щоб автор
+//     міг видалити своє відео.
+//  • GET — перевірка: чи налаштовано, яка версія мосту й чи відео йде
+//    напряму (потрібен b5) чи лише через міст (b4).
 //
 // ЗАХИСТ
 //  • Секретне слово мосту живе лише тут, на сервері, у змінних Vercel.
@@ -35,6 +41,17 @@
 export const config = { maxDuration: 30 };
 
 export const MAX_UPLOAD = 1024 * 1024 * 1024;   // 1 ГБ — так само в мості
+
+// Адреса застосунку, з якої телефон шле відео напряму на Диск. Береться з
+// заголовка Origin самого запиту (його ставить браузер, підробити з
+// браузера не можна); лише https або localhost для перевірок.
+export function originOf(req) {
+  const o = String((req.headers && (req.headers.origin || req.headers.Origin)) || "").trim();
+  if (/^https:\/\/[a-z0-9.-]+(:\d{1,5})?$/i.test(o)) return o;
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?$/i.test(o)) return o;
+  return "";
+}
+const bridgeVersion = (v) => (/^b(\d+)$/.test(String(v)) ? Number(String(v).slice(1)) : 0);
 
 const env = () => ({
   url: process.env.SUPABASE_URL,
@@ -62,7 +79,7 @@ const clean = (v, n) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f
 export default async function handler(req, res) {
   const E = env();
   if (req.method === "GET") {
-    const report = { "версія": "u1", "налаштовано": Boolean(E.url && E.key && E.bridge && E.secret) };
+    const report = { "версія": "u2", "налаштовано": Boolean(E.url && E.key && E.bridge && E.secret) };
     // Адресу мосту тепер бачать телефони (шматки відео йдуть прямо туди),
     // тож решту дій мосту береже лише секретне слово. Показуємо лише його
     // довжину: коротке — варто замінити (і в Vercel, і в Script properties).
@@ -71,8 +88,10 @@ export default async function handler(req, res) {
       try {
         const j = await bridgeCall(E, { action: "ping" });
         report["міст"] = j.ok ? `працює · ${j.version}` : `помилка: ${j.error}`;
-        report["відео прямо на Диск"] = j.ok && /^b(\d+)$/.test(String(j.version)) && Number(String(j.version).slice(1)) >= 4
-          ? "так" : "ні — онови міст до b4";
+        const v = j.ok ? bridgeVersion(j.version) : 0;
+        report["відео прямо на Диск"] = v >= 4 ? "так" : "ні — онови міст до b5";
+        report["швидке відео (з телефона напряму)"] = v >= 5 ? "так" : v === 4
+          ? "ні — зараз через міст, повільно: онови міст до b5" : "ні — онови міст до b5";
       } catch (e) {
         report["міст"] = `не відповідає: ${String((e && e.message) || e).slice(0, 120)}`;
       }
@@ -99,9 +118,14 @@ export default async function handler(req, res) {
       if (size <= 0 || size > MAX_UPLOAD) { res.status(400).json({ error: "відео до 1 ГБ", code: "size" }); return; }
       if (!/^[0-9a-f]{64}$/.test(owner)) { res.status(400).json({ error: "немає ключа пристрою" }); return; }
       const uploadId = `u${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
-      const j = await bridgeCall(E, { action: "upstart", uploadId, folderId, name, type, size, owner });
+      const origin = originOf(req);
+      const j = await bridgeCall(E, { action: "upstart", uploadId, folderId, name, type, size, owner, origin });
       if (!j.ok || !j.ticket) { res.status(502).json({ error: j.error || "міст не відкрив завантаження", code: j.code || "bridge" }); return; }
-      res.status(200).json({ ok: true, ticket: j.ticket, chunk: j.chunk, bridge: E.bridge, uploadId });
+      // Адреса завантаження на Диску — лише якщо міст відкрив його з адресою
+      // застосунку (b5) і це справді адреса Диска.
+      const direct = origin && /^https:\/\/([a-z0-9-]+\.)*googleapis\.com\/upload\//.test(String(j.session || ""))
+        ? String(j.session) : "";
+      res.status(200).json({ ok: true, ticket: j.ticket, chunk: j.chunk, bridge: E.bridge, uploadId, direct });
       return;
     }
 
@@ -109,7 +133,13 @@ export default async function handler(req, res) {
       const ticket = clean(body.ticket, 80).replace(/[^a-f0-9]/g, "");
       if (ticket.length < 32) { res.status(400).json({ error: "немає квитка" }); return; }
       const j = await bridgeCall(E, { action: "upinfo", ticket });
-      if (!j.ok) { res.status(404).json({ error: j.error || "завантаження не знайдено", code: j.code || "ticket" }); return; }
+      if (!j.ok) {
+        // 404 — квитка вже немає (застарів) і чекати нема чого; решта —
+        // тимчасовий збій, застосунок спитає ще раз пізніше.
+        const gone = j.code === "ticket" || j.code === "expired";
+        res.status(gone ? 404 : 502).json({ error: j.error || "завантаження не знайдено", code: j.code || "ticket" });
+        return;
+      }
       if (!j.done || !j.fileId) { res.status(409).json({ error: "відео ще не завантажено до кінця", code: "notdone" }); return; }
       const row = {
         id: j.uploadId, folder_id: j.folderId, url: `drive:${j.fileId}`,
