@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v141 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v142 ═══
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -25,7 +25,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v141";
+const APP_VERSION = "v142";
 // За скільки хвилин до збору приходить нагадування. Те саме число —
 // MEET_BEFORE у api/push-cron.js: міняти обидва разом.
 const MEET_REMIND_MIN = 120;
@@ -743,10 +743,18 @@ const T = {
   mcLight: { uk: "Яскравість", en: "Brightness", de: "Helligkeit", ru: "Яркость" },
   upAdd: { uk: "Додати фото або відео", en: "Add photo or video", de: "Foto oder Video hinzufügen", ru: "Добавить фото или видео" },
   upBusy: { uk: "Завантажуємо…", en: "Uploading…", de: "Wird hochgeladen…", ru: "Загружаем…" },
-  upHint: { uk: "Фото стискаються автоматично. Відео — до", en: "Photos are compressed automatically. Video — up to", de: "Fotos werden automatisch verkleinert. Video — bis", ru: "Фото сжимаются автоматически. Видео — до" },
+  upHint: { uk: "Фото стискаються автоматично. Відео — до {max}, іде одразу в альбом на Google Диску.", en: "Photos are compressed automatically. Videos up to {max} go straight to the album on Google Drive.", de: "Fotos werden automatisch verkleinert. Videos bis {max} landen direkt im Album auf Google Drive.", ru: "Фото сжимаются автоматически. Видео — до {max}, сразу попадает в альбом на Google Диске." },
   upAdded: { uk: "Додано", en: "Added", de: "Hinzugefügt", ru: "Добавлено" },
   upFailed: { uk: "Не вдалося", en: "Failed", de: "Fehlgeschlagen", ru: "Не удалось" },
-  upTooBig: { uk: "Відео {mb} МБ — більше за {max} МБ. Обріжте його на телефоні (Фото → Редагувати) і завантажте коротший фрагмент.", en: "The video is {mb} MB — over {max} MB. Trim it on your phone (Photos → Edit) and upload a shorter clip.", de: "Das Video hat {mb} MB — mehr als {max} MB. Kürzen Sie es am Handy (Fotos → Bearbeiten) und laden Sie einen kürzeren Clip hoch.", ru: "Видео {mb} МБ — больше {max} МБ. Обрежьте его на телефоне (Фото → Править) и загрузите более короткий фрагмент." },
+  upTooBig: { uk: "Відео {size} — більше за {max}. Обріжте його на телефоні (Фото → Редагувати) і завантажте коротший фрагмент.", en: "The video is {size} — over {max}. Trim it on your phone (Photos → Edit) and upload a shorter clip.", de: "Das Video hat {size} — mehr als {max}. Kürzen Sie es am Handy (Fotos → Bearbeiten) und laden Sie einen kürzeren Clip hoch.", ru: "Видео {size} — больше {max}. Обрежьте его на телефоне (Фото → Править) и загрузите более короткий фрагмент." },
+  // Відео прямо на Google Диск (v142).
+  upErrRead: { uk: "Не вдалося прочитати файл на телефоні.", en: "Could not read the file on this phone.", de: "Die Datei konnte auf dem Handy nicht gelesen werden.", ru: "Не удалось прочитать файл на телефоне." },
+  upErrRestart: { uk: "Зв'язок пропадав надто довго — почніть завантаження знову.", en: "The upload was interrupted for too long — please start it again.", de: "Der Upload war zu lange unterbrochen — bitte neu starten.", ru: "Загрузка прервалась слишком надолго — начните её заново." },
+  upErrFinish: { uk: "Відео вже на Google Диску й видно в альбомі, але ще не позначене вашим. Застосунок допише це сам, коли знову відкриєте альбом.", en: "The video is on Google Drive and visible in the album, but not yet marked as yours. The app will finish this next time you open the album.", de: "Das Video ist auf Google Drive und im Album sichtbar, aber noch nicht als Ihres markiert. Die App holt das beim nächsten Öffnen des Albums nach.", ru: "Видео уже на Google Диске и видно в альбоме, но ещё не отмечено вашим. Приложение допишет это само, когда снова откроете альбом." },
+  upErrQuota: { uk: "На сьогодні вичерпано добовий запас завантажень відео. Спробуйте завтра або повідомте організатора.", en: "Today's video upload allowance is used up. Please try tomorrow or tell the organiser.", de: "Das Tageskontingent für Video-Uploads ist aufgebraucht. Bitte morgen erneut versuchen oder dem Organisator Bescheid geben.", ru: "Суточный запас загрузок видео исчерпан. Попробуйте завтра или сообщите организатору." },
+  upErrBridgeOld: { uk: "Міст до Google Диска ще не вміє приймати відео.", en: "The Google Drive bridge can't accept videos yet.", de: "Die Google-Drive-Brücke nimmt noch keine Videos an.", ru: "Мост к Google Диску ещё не умеет принимать видео." },
+  upErrFixBridge: { uk: "Онови міст до b4: Apps Script → «Ввести в дію» → «Керувати введеннями в дію» → олівець → «Нова версія».", en: "Update the bridge to b4: Apps Script → Deploy → Manage deployments → pencil → New version.", de: "Brücke auf b4 aktualisieren: Apps Script → Bereitstellen → Bereitstellungen verwalten → Stift → Neue Version.", ru: "Обнови мост до b4: Apps Script → Развернуть → Управление развертываниями → карандаш → Новая версия." },
+  upErrFolder: { uk: "Альбому не знайдено на Google Диску.", en: "The album was not found on Google Drive.", de: "Das Album wurde auf Google Drive nicht gefunden.", ru: "Альбом не найден на Google Диске." },
   // Відмови сховища людською мовою (v141).
   upErrBig: { uk: "Сховище не прийняло відео {mb} МБ: завеликий файл.", en: "Storage rejected the {mb} MB video: the file is too large.", de: "Der Speicher hat das {mb}-MB-Video abgelehnt: Datei zu groß.", ru: "Хранилище не приняло видео {mb} МБ: слишком большой файл." },
   upErrType: { uk: "Сховище не приймає відео цього типу ({type}).", en: "Storage does not accept this video type ({type}).", de: "Der Speicher akzeptiert diesen Videotyp nicht ({type}).", ru: "Хранилище не принимает видео этого типа ({type})." },
@@ -2506,9 +2514,25 @@ async function sbAddUpload(row) {
 const UPLOAD_PHOTO_SHORT = 1800;
 const UPLOAD_PHOTO_LONG = 3200;
 const UPLOAD_PHOTO_QUALITY = 0.86;
-// Безкоштовний тариф Supabase приймає файл до 50 МБ — беремо 49 із запасом
-// (v141; було 45). Сховище «photos» налаштовує supabase-v141.sql.
-const UPLOAD_VIDEO_MAX_MB = 49;
+// Відео — до 1 ГБ (v142). Воно йде не в Supabase (там безкоштовно лише
+// 50 МБ на файл), а прямо в альбом поїздки на Google Диску організатора:
+// api/drive-upload.js відкриває завантаження через «міст» (Apps Script
+// b4), а телефон шле відео мосту шматками по 8 МБ. Те саме число — у
+// мості (MAX_UPLOAD) і в api/drive-upload.js.
+const UPLOAD_VIDEO_MAX_BYTES = 1024 * 1024 * 1024;
+// Запасний шлях, поки міст ще старий: відео до 49 МБ — у Supabase, як у v141.
+const UPLOAD_VIDEO_SUPABASE_MAX = 49 * 1024 * 1024;
+
+// Розмір людською мовою: «350 МБ», «1,2 ГБ» (en/de — MB, GB).
+function sizeText(bytes) {
+  const b = Number(bytes) || 0;
+  const cyr = CURRENT_LANG === "uk" || CURRENT_LANG === "ru";
+  const sep = CURRENT_LANG === "en" ? "." : ",";
+  if (b >= 1024 * 1024 * 1024) {
+    return `${String(Math.round(b / 107374182.4) / 10).replace(/\.0$/, "").replace(".", sep)} ${cyr ? "ГБ" : "GB"}`;
+  }
+  return `${Math.max(1, Math.round(b / 1048576))} ${cyr ? "МБ" : "MB"}`;
+}
 
 // Відео впізнаємо й за розширенням: iPhone іноді віддає файл із порожнім
 // типом (з «Файлів», з iCloud). Тоді раніше відео йшло як фото, і
@@ -2571,21 +2595,152 @@ function uploadErrorText(status, text, file, type, admin) {
   return `${t("upErrServer")} ${status}${msg ? `: ${msg}` : ""}`;
 }
 
-// onProgress(частка 0…1) — лише для відео: фото маленькі й ідуть миттєво.
-async function sbUploadMedia(file, onProgress, admin) {
+// Фото — у сховище Supabase (стиснене до ~1,5 МБ), відео — прямо на
+// Google Диск (v142). onProgress(частка 0…1) — лише для відео.
+// folderId — альбом (тека Диска), куди кладеться відео.
+// Відповідь { recorded: true } — запис у галерею вже зробив сервер.
+async function sbUploadMedia(file, onProgress, admin, folderId) {
   if (!sbConfigured()) throw new Error("База даних не підключена");
   const vtype = videoTypeOf(file);
-  const isVid = vtype !== "";
-  if (isVid && file.size > UPLOAD_VIDEO_MAX_MB * 1024 * 1024) {
-    throw new Error(t("upTooBig").replace("{mb}", mbOf(file.size)).replace("{max}", String(UPLOAD_VIDEO_MAX_MB)));
+  if (vtype) {
+    if (file.size > UPLOAD_VIDEO_MAX_BYTES) {
+      throw new Error(t("upTooBig").replace("{size}", sizeText(file.size)).replace("{max}", sizeText(UPLOAD_VIDEO_MAX_BYTES)));
+    }
+    try {
+      return await driveUploadVideo(file, vtype, folderId, onProgress, admin);
+    } catch (e) {
+      // Міст ще b3 (організатор не оновив) — коротке відео, як у v141,
+      // іде у сховище Supabase. Довше — пояснення, що оновити.
+      if (!(e && e.oldBridge) || file.size > UPLOAD_VIDEO_SUPABASE_MAX) throw e;
+      const name = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${videoExtOf(file, vtype)}`;
+      const r = await storagePost(name, file, vtype, onProgress);
+      if (r.status < 200 || r.status >= 300) throw new Error(uploadErrorText(r.status, r.text, file, vtype, admin));
+      return { url: `${SUPABASE_URL}/storage/v1/object/public/photos/${name}`, kind: "video" };
+    }
   }
-  const ext = isVid ? videoExtOf(file, vtype) : "jpg";
-  const name = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const body = isVid ? file : await downscaleImage(file, { short: UPLOAD_PHOTO_SHORT, long: UPLOAD_PHOTO_LONG, quality: UPLOAD_PHOTO_QUALITY });
-  const type = isVid ? vtype : "image/jpeg";
-  const r = await storagePost(name, body, type, isVid ? onProgress : null);
-  if (r.status < 200 || r.status >= 300) throw new Error(uploadErrorText(r.status, r.text, file, type, admin));
-  return { url: `${SUPABASE_URL}/storage/v1/object/public/photos/${name}`, kind: isVid ? "video" : "image" };
+  const name = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const body = await downscaleImage(file, { short: UPLOAD_PHOTO_SHORT, long: UPLOAD_PHOTO_LONG, quality: UPLOAD_PHOTO_QUALITY });
+  const r = await storagePost(name, body, "image/jpeg", null);
+  if (r.status < 200 || r.status >= 300) throw new Error(uploadErrorText(r.status, r.text, file, "image/jpeg", admin));
+  return { url: `${SUPABASE_URL}/storage/v1/object/public/photos/${name}`, kind: "image" };
+}
+
+// ── Відео прямо на Google Диск (v142) ───────────────────────────────
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+// Шматок файлу → текст base64: мосту (Apps Script) двійкові дані можна
+// передати лише так.
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => { const s = String(fr.result || ""); resolve(s.slice(s.indexOf(",") + 1)); };
+    fr.onerror = () => reject(new Error(t("upErrRead")));
+    fr.readAsDataURL(blob);
+  });
+}
+async function apiJson(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  let j = null;
+  try { j = await r.json(); } catch { j = null; }
+  return { status: r.status, j: j || {} };
+}
+// Запит до мосту — БЕЗ заголовка Content-Type: тоді браузер шле його як
+// звичайний текст і не робить попереднього запиту OPTIONS, якого Apps
+// Script не вміє. З тієї ж причини тут немає відсотків усередині шматка:
+// стеження за відправкою теж вмикало б той попередній запит.
+async function bridgePost(url, body) {
+  const r = await fetch(url, { method: "POST", body: JSON.stringify(body) });
+  const txt = await r.text();
+  try { return JSON.parse(txt); } catch { return { error: `міст відповів ${r.status}`, net: true }; }
+}
+// Відмова сервера чи мосту — людською мовою.
+const isOldBridge = (j) => /потрібен b4|старої версії/.test(String((j && j.error) || ""));
+function driveErrorText(j, admin) {
+  const err = String((j && j.error) || "");
+  const tell = ` ${t("upErrTellOrg")}`;
+  if (isOldBridge(j)) return t("upErrBridgeOld") + (admin ? ` ${t("upErrFixBridge")}` : tell);
+  if (j && j.code === "quota") return t("upErrQuota");
+  if (j && j.code === "folder") return t("upErrFolder") + tell;
+  if (j && j.code === "size") return t("upTooBig").replace("{size}", "?").replace("{max}", sizeText(UPLOAD_VIDEO_MAX_BYTES));
+  return `${t("upErrServer")}${err ? `: ${err.slice(0, 120)}` : ""}`;
+}
+async function driveUploadVideo(file, vtype, folderId, onProgress, admin) {
+  const owner = await sha256hex(ownerToken());
+  const st = await apiJson("/api/drive-upload", {
+    action: "start", folderId, name: file.name || `video.${videoExtOf(file, vtype)}`, type: vtype, size: file.size, owner,
+  });
+  if (st.status !== 200 || !st.j.ticket || !st.j.bridge) {
+    throw Object.assign(new Error(driveErrorText(st.j, admin)), { oldBridge: isOldBridge(st.j) });
+  }
+  const { ticket, bridge } = st.j;
+  const chunk = Number(st.j.chunk) || 8 * 1024 * 1024;
+  let offset = 0, fails = 0;
+  if (onProgress) onProgress(0);
+  for (;;) {
+    let r;
+    try {
+      const data = await blobToBase64(file.slice(offset, Math.min(file.size, offset + chunk)));
+      r = await bridgePost(bridge, { action: "upchunk", ticket, offset, data });
+    } catch (e) { r = { error: String((e && e.message) || e), net: true }; }
+    if (r && r.ok && r.done) break;
+    const next = r && r.ok ? Math.max(0, Math.min(file.size, Number(r.next) || 0)) : -1;
+    if (next > offset) {
+      fails = 0;
+      offset = next;
+      if (onProgress) onProgress(offset / file.size);
+      continue;
+    }
+    // Квиток зник чи Диск закрив завантаження — продовжити вже не вийде.
+    if (r && (r.code === "ticket" || r.code === "expired" || r.code === "range")) throw new Error(t("upErrRestart"));
+    if (++fails > 5) throw new Error(r && r.net ? t("upErrNet") : driveErrorText(r, admin));
+    await sleepMs(Math.min(15000, 1500 * fails * fails));
+    // Після обриву питаємо Диск, скільки він уже має, і продовжуємо звідти.
+    try {
+      const s = await bridgePost(bridge, { action: "upstatus", ticket });
+      if (s && s.ok && s.done) break;
+      if (s && s.ok) {
+        const at = Math.max(0, Math.min(file.size, Number(s.next) || 0));
+        // Диск устиг прийняти більше, ніж ми знали, — це поступ, а не збій.
+        if (at > offset) { fails = 0; if (onProgress) onProgress(at / file.size); }
+        offset = at;
+      }
+    } catch { /* спробуємо той самий шматок ще раз */ }
+  }
+  if (onProgress) onProgress(1);
+  // Записати відео в галерею. Воно вже на Диску, тож кілька спроб, а квиток
+  // лишається в телефоні: не вийшло зараз — допишемо при наступному
+  // відкритті альбому (finishPendingUploads).
+  pendingFinish(ticket, true);
+  for (let i = 0; i < 4; i++) {
+    let fin = { status: 0, j: {} };
+    try { fin = await apiJson("/api/drive-upload", { action: "finish", ticket }); } catch { /* ще спроба */ }
+    if (fin.status === 200 && fin.j.ok) { pendingFinish(ticket, false); return { kind: "video", recorded: true, fileId: fin.j.fileId }; }
+    await sleepMs(1500 * (i + 1));
+  }
+  throw new Error(t("upErrFinish"));
+}
+
+// Квитки відео, яке вже на Диску, але ще не записане в галерею (v142).
+const PENDING_KEY = "tropa_up_finish";
+function pendingFinish(ticket, add) {
+  try {
+    const now = Date.now();
+    const list = JSON.parse(localStorage.getItem(PENDING_KEY) || "[]").filter((x) => x && x.t && now - (x.at || 0) < 11 * 3600 * 1000);
+    const rest = list.filter((x) => x.t !== ticket);
+    if (add) rest.push({ t: ticket, at: now });
+    localStorage.setItem(PENDING_KEY, JSON.stringify(rest));
+    return rest;
+  } catch { return []; }
+}
+async function finishPendingUploads() {
+  let done = 0;
+  for (const x of pendingFinish("", false)) {
+    try {
+      const fin = await apiJson("/api/drive-upload", { action: "finish", ticket: x.t });
+      // Готово, або квиток уже недійсний — тоді й пам'ятати нема чого.
+      if ((fin.status === 200 && fin.j.ok) || fin.status === 404) { pendingFinish(x.t, false); if (fin.status === 200) done++; }
+    } catch { /* наступного разу */ }
+  }
+  return done;
 }
 
 // Рік дістається з назви теки: усі альбоми названі як «29.06.25: Forgensee».
@@ -2763,6 +2918,12 @@ const realDriveId = (v) => (v && !String(v).includes(":") ? String(v) : "");
 // Кнопка однакова для всіх: і організатор, і учасник додають свої фото
 // сюди ж. Різниця лише в тому, що видаляти може тільки організатор.
 function UploadButton({ folderId, onDone, admin }) {
+  // Відео, що лишилось недописаним у галерею минулого разу (v142).
+  useEffect(() => {
+    let dead = false;
+    finishPendingUploads().then((n) => { if (!dead && n > 0 && onDone) onDone(); }).catch(() => {});
+    return () => { dead = true; };
+  }, []);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [bad, setBad] = useState(false);
@@ -2783,15 +2944,18 @@ function UploadButton({ folderId, onDone, admin }) {
         const up = await sbUploadMedia(f, (p) => {
           const pct = `${Math.min(99, Math.round(p * 100))}%`;
           setProg(step ? `${step} · ${pct}` : pct);
-        }, admin);
-        const rowId = `u${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
-        await sbAddUpload({
-          id: rowId,
-          folder_id: folderId || "root",
-          url: up.url, kind: up.kind, name: String(f.name || "").slice(0, 120),
-          owner_hash: await sha256hex(ownerToken()),
-        });
-        queueDriveCopy(rowId);
+        }, admin, folderId);
+        // Відео (v142) сервер уже записав у галерею сам — воно одразу на Диску.
+        if (!up.recorded) {
+          const rowId = `u${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+          await sbAddUpload({
+            id: rowId,
+            folder_id: folderId || "root",
+            url: up.url, kind: up.kind, name: String(f.name || "").slice(0, 120),
+            owner_hash: await sha256hex(ownerToken()),
+          });
+          queueDriveCopy(rowId);
+        }
         ok++;
       } catch (err) {
         // Назва файлу — щоб було видно, ЯКЕ саме з кількох не пішло.
@@ -2818,7 +2982,7 @@ function UploadButton({ folderId, onDone, admin }) {
       {busy && <p style={{ margin: "7px 0 0", fontSize: 11.5, color: C.muted, lineHeight: 1.45 }}>{t("upKeepOpen")}</p>}
       {msg !== "" && <p style={{ margin: "7px 0 0", fontSize: 11.5, color: bad ? C.rasp : C.muted, lineHeight: 1.45 }}>{msg}</p>}
       <p style={{ margin: "6px 0 0", fontSize: 11, color: C.faint, lineHeight: 1.45 }}>
-        {t("upHint")} {UPLOAD_VIDEO_MAX_MB} MB.
+        {t("upHint").replace("{max}", sizeText(UPLOAD_VIDEO_MAX_BYTES))}
       </p>
     </div>
   );
@@ -2855,12 +3019,24 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
   // і показуються в тій самій сітці — для людини різниці бути не повинно.
   const loadUps = useCallback(() => {
     if (!albumId) { setUps([]); return; }
+    // Відео з v142 лежить лише на Диску (url «drive:<номер>»): у галереї
+    // воно — файл Диска (ескіз і програвач Диска), але з кошиком для автора.
+    // rowId — номер запису, за ним видаляють.
     sbUploads().then((rows) => setUps(
-      (rows || []).filter((r) => r.folder_id === albumId).map((r) => ({
-        id: r.id, name: r.name || "", upUrl: r.url, owner: r.owner_hash || "",
-        mimeType: r.kind === "video" ? "video/mp4" : "image/jpeg",
-        driveId: realDriveId(r.drive_id),
-      }))
+      // Рядок «drive:» без номера на Диску міг дописати хто завгодно (поле
+      // drive_id ставить лише сервер) — такий пропускаємо.
+      (rows || []).filter((r) => r.folder_id === albumId)
+        .filter((r) => !String(r.url || "").startsWith("drive:") || realDriveId(r.drive_id))
+        .map((r) => {
+        const onDrive = String(r.url || "").startsWith("drive:");
+        const did = realDriveId(r.drive_id);
+        return {
+          id: onDrive ? did : r.id, rowId: r.id,
+          name: r.name || "", upUrl: onDrive ? "" : r.url, owner: r.owner_hash || "",
+          mimeType: r.kind === "video" ? "video/mp4" : "image/jpeg",
+          driveId: did,
+        };
+      })
     )).catch(() => setUps([]));
   }, [albumId]);
   useEffect(() => { loadUps(); }, [loadUps]);
@@ -2918,7 +3094,10 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
               <video src={`${f.upUrl}#t=0.1`} muted playsInline preload="metadata" tabIndex={-1}
                 style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", pointerEvents: "none" }} />
             ) : (
+              // Свіжому відео Диск малює ескіз не одразу — доти лишається
+              // тло клітинки зі значком «грати», а не зламана картинка.
               <img src={f.upUrl || driveThumb(f.id, 400)} alt="" loading="lazy"
+                onError={(e) => { e.currentTarget.style.visibility = "hidden"; }}
                 style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
             )}
             {isVideo(f) && (
@@ -2989,14 +3168,14 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
           {/* Видалити можна лише те, що додали в застосунку: архів на Диску
               застосунок тільки читає. Учасник бачить кошик на своїх файлах,
               організатор — на всіх. */}
-          {cur.upUrl && (isAdmin || (myHash && cur.owner === myHash)) && (
+          {cur.rowId && (isAdmin || (myHash && cur.owner === myHash)) && (
             <button disabled={deleting}
               onClick={async (e) => {
                 e.stopPropagation();
                 if (!window.confirm(t("upDeleteAsk"))) return;
                 setDeleting(true); setDelNote("");
                 try {
-                  await deleteUpload(cur.id, isAdmin ? adminPin : "");
+                  await deleteUpload(cur.rowId, isAdmin ? adminPin : "");
                   setOpen(null);
                   loadUps();
                 } catch (err) {
@@ -7422,6 +7601,12 @@ export default function App() {
   // linkBookingPush). Трохи згодом, щоб не гальмувати сам запуск.
   useEffect(() => {
     const timer = setTimeout(() => { linkAllBookingsPush().catch(() => {}); }, 2500);
+    return () => clearTimeout(timer);
+  }, []);
+  // Відео, яке вже на Диску, але минулого разу не записалось у галерею
+  // (v142), — дописуємо при запуску, не чекаючи, поки відкриють альбом.
+  useEffect(() => {
+    const timer = setTimeout(() => { finishPendingUploads().catch(() => {}); }, 3000);
     return () => clearTimeout(timer);
   }, []);
   const refreshCounts = useCallback(() => {
