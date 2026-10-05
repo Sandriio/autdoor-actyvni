@@ -1,4 +1,4 @@
-// ═══ Tropa Club · api/fill-trip.js · ВЕРСІЯ f1 ═══
+// ═══ Tropa Club · api/fill-trip.js · ВЕРСІЯ f2 ═══
 // ═══════════════════════════════════════════════════════════════════
 // Заповнити поїздку з тексту оголошення (автоматизація №4)
 //
@@ -26,13 +26,17 @@
 // ЗМІННІ СЕРЕДОВИЩА (Vercel → Settings → Environment Variables)
 //  • ANTHROPIC_API_KEY — ключ із platform.claude.com → Settings → API keys.
 //    Живе ЛИШЕ тут. У код, у GitHub і в чати його не вставляємо.
+//    f2: якщо змінну названо інакше (CLAUDE_API_KEY, з опискою тощо), ключ
+//    однаково знайдеться — за назвою або за початком значення «sk-ant-».
+//    GET показує, з якої змінної взято ключ (лише назву, не значення), а
+//    коли ключа немає — схожі назви змінних і з якого розгортання відповідь.
 //  • CLAUDE_MODEL — необов'язково; інша модель, якщо колись знадобиться.
 //  • SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — ті самі, що вже є.
 // ═══════════════════════════════════════════════════════════════════
 
 export const config = { maxDuration: 60 };
 
-export const VERSION = "f1";
+export const VERSION = "f2";
 const API = "https://api.anthropic.com/v1";
 const DEFAULT_MODEL = "claude-sonnet-5-5";
 // Запасна модель: якщо основна не прийме параметрів запиту (400) — ще раз
@@ -229,6 +233,33 @@ function costOf(model, usage) {
   return Math.round(usd * 10000) / 10000;
 }
 
+// ── Ключ Claude зі змінних середовища (f2) ──────────────────────────
+// Основна назва — ANTHROPIC_API_KEY. На випадок описки — кілька схожих
+// назв, а далі будь-яка змінна, значення якої схоже на ключ Claude
+// («sk-ant-…»). Повертає { key, from }, де from — НАЗВА змінної.
+const KEY_NAMES = ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "ANTHROPIC_KEY", "CLAUDE_KEY", "ANTROPIC_API_KEY", "ANTHROPHIC_API_KEY", "ANTHROPIC_APIKEY"];
+const cleanKey = (v) => String(v == null ? "" : v).trim().replace(/^["'`]+|["'`]+$/g, "").trim();
+export function findKey(env = process.env) {
+  const names = Object.keys(env);
+  for (const want of KEY_NAMES) {
+    const name = names.find((n) => n.trim().toUpperCase() === want);
+    if (name && cleanKey(env[name])) return { key: cleanKey(env[name]), from: name };
+  }
+  const byValue = names.find((n) => /^sk-ant-/.test(cleanKey(env[n])));
+  if (byValue) return { key: cleanKey(env[byValue]), from: byValue };
+  return { key: "", from: "" };
+}
+// Для перевірки, коли ключа немає: схожі назви й порожні змінні — лише
+// назви, значень звідси не видно ніколи.
+export function keyHints(env = process.env) {
+  const names = Object.keys(env);
+  return {
+    similar: names.filter((n) => /ANTH?R?OP|CLAUDE/i.test(n) && n !== "CLAUDE_MODEL").slice(0, 10),
+    empty: names.filter((n) => KEY_NAMES.includes(n.trim().toUpperCase()) && !cleanKey(env[n])),
+  };
+}
+const deployInfo = (env = process.env) => [env.VERCEL_ENV, String(env.VERCEL_GIT_COMMIT_SHA || "").slice(0, 7), String(env.VERCEL_GIT_COMMIT_MESSAGE || "").replace(/\s+/g, " ").slice(0, 60)].filter(Boolean).join(" · ");
+
 // true — PIN правильний, false — ні, null — базу не вдалося спитати.
 async function pinOk(E, pin) {
   if (!pin) return false;
@@ -248,15 +279,27 @@ async function pinOk(E, pin) {
 }
 
 export default async function handler(req, res) {
+  const K = findKey();
   const E = {
     url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY,
-    claude: String(process.env.ANTHROPIC_API_KEY || "").trim(),
+    claude: K.key,
     model: String(process.env.CLAUDE_MODEL || "").trim() || DEFAULT_MODEL,
   };
 
   // Перевірка без витрат: GET /v1/models/<модель> токенів не витрачає.
   if (req.method === "GET") {
-    const report = { "версія": VERSION, "модель": E.model, "ключ Claude": E.claude ? "є" : "немає — додай ANTHROPIC_API_KEY у Vercel" };
+    const report = { "версія": VERSION, "модель": E.model };
+    report["ключ Claude"] = !K.key ? "немає"
+      : K.from === "ANTHROPIC_API_KEY" ? "є"
+      : `є — у змінній «${K.from}» (працює; можна залишити так)`;
+    if (!K.key) {
+      const h = keyHints();
+      if (h.empty.length) report["змінна є, але порожня"] = h.empty.join(", ");
+      report["схожі назви змінних"] = h.similar.length ? h.similar.join(", ") : "жодної";
+      report["що перевірити"] = "Vercel → саме цей проєкт → Settings → Environment Variables: назва ANTHROPIC_API_KEY, у Environments є Production. Після Save: Deployments → верхнє з позначкою Production → ⋯ → Redeploy і дочекатися Ready.";
+    }
+    report["розгортання"] = deployInfo() || "невідомо";
+    if (process.env.VERCEL_PROJECT_PRODUCTION_URL) report["основна адреса проєкту"] = process.env.VERCEL_PROJECT_PRODUCTION_URL;
     if (E.claude) {
       try {
         const r = await fetch(`${API}/models/${encodeURIComponent(E.model)}`, {
