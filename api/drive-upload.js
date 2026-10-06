@@ -1,6 +1,10 @@
-// ═══ Tropa Club · api/drive-upload.js · ВЕРСІЯ u2 ═══
+// ═══ Tropa Club · api/drive-upload.js · ВЕРСІЯ u3 ═══
 // ═══════════════════════════════════════════════════════════════════
-// Відео з застосунку — прямо в альбом поїздки на Google Диску
+// Відео й фото з застосунку — прямо в альбом поїздки на Google Диску
+//
+// u3 (v145): так само йдуть і ФОТО — в оригінальній якості, без
+// стискання (раніше фото стискалось до ~1,5 МБ і лягало в Supabase).
+// Міст (b4, b5) фото й так приймав; змінилася лише перевірка тут.
 //
 // НАВІЩО
 // Сховище Supabase на безкоштовному тарифі приймає файл до 50 МБ — це
@@ -41,6 +45,11 @@
 export const config = { maxDuration: 30 };
 
 export const MAX_UPLOAD = 1024 * 1024 * 1024;   // 1 ГБ — так само в мості
+// Фото — до 200 МБ (знімок RAW із дзеркалки — 25–80 МБ); більше — точно не фото.
+export const MAX_PHOTO = 200 * 1024 * 1024;
+// Які фото приймаємо: звичайні растрові формати телефонів і камер.
+// Векторні (SVG) і решту — ні: це не знімки з поїздки.
+export const PHOTO_TYPES = /^image\/(jpeg|jpg|pjpeg|png|heic|heif|heic-sequence|heif-sequence|webp|gif|tiff|avif|x-adobe-dng|dng|x-dng)$/;
 
 // Адреса застосунку, з якої телефон шле відео напряму на Диск. Береться з
 // заголовка Origin самого запиту (його ставить браузер, підробити з
@@ -79,7 +88,7 @@ const clean = (v, n) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f
 export default async function handler(req, res) {
   const E = env();
   if (req.method === "GET") {
-    const report = { "версія": "u2", "налаштовано": Boolean(E.url && E.key && E.bridge && E.secret) };
+    const report = { "версія": "u3", "налаштовано": Boolean(E.url && E.key && E.bridge && E.secret) };
     // Адресу мосту тепер бачать телефони (шматки відео йдуть прямо туди),
     // тож решту дій мосту береже лише секретне слово. Показуємо лише його
     // довжину: коротке — варто замінити (і в Vercel, і в Script properties).
@@ -92,6 +101,8 @@ export default async function handler(req, res) {
         report["відео прямо на Диск"] = v >= 4 ? "так" : "ні — онови міст до b5";
         report["швидке відео (з телефона напряму)"] = v >= 5 ? "так" : v === 4
           ? "ні — зараз через міст, повільно: онови міст до b5" : "ні — онови міст до b5";
+        report["фото в оригіналі на Диск (v145)"] = v >= 5 ? "так" : v === 4 ? "так, але повільно — онови міст до b6" : "ні — фото стискаються й ідуть у Supabase";
+        report["окремий добовий запас для фото"] = v >= 6 ? "так (400 фото й 3 ГБ на добу; відео — свої 200 і 5 ГБ)" : "ні — фото й відео ділять один запас (200 на добу): онови міст до b6";
       } catch (e) {
         report["міст"] = `не відповідає: ${String((e && e.message) || e).slice(0, 120)}`;
       }
@@ -112,10 +123,11 @@ export default async function handler(req, res) {
       const type = clean(body.type, 80).toLowerCase();
       const size = Math.floor(Number(body.size) || 0);
       const owner = clean(body.owner, 64).toLowerCase();
-      const name = clean(body.name, 120) || "video.mp4";
+      const photo = PHOTO_TYPES.test(type);
+      const name = clean(body.name, 120) || (photo ? "photo.jpg" : "video.mp4");
       if (!/^[A-Za-z0-9_-]{10,}$/.test(folderId)) { res.status(400).json({ error: "не та тека альбому" }); return; }
-      if (!/^video\/[a-z0-9.+-]+$/.test(type)) { res.status(400).json({ error: "це не відео", code: "type" }); return; }
-      if (size <= 0 || size > MAX_UPLOAD) { res.status(400).json({ error: "відео до 1 ГБ", code: "size" }); return; }
+      if (!photo && !/^video\/[a-z0-9.+-]+$/.test(type)) { res.status(400).json({ error: "це не відео й не фото", code: "type" }); return; }
+      if (size <= 0 || size > (photo ? MAX_PHOTO : MAX_UPLOAD)) { res.status(400).json({ error: photo ? "фото до 200 МБ" : "відео до 1 ГБ", code: "size" }); return; }
       if (!/^[0-9a-f]{64}$/.test(owner)) { res.status(400).json({ error: "немає ключа пристрою" }); return; }
       const uploadId = `u${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
       const origin = originOf(req);
@@ -140,7 +152,7 @@ export default async function handler(req, res) {
         res.status(gone ? 404 : 502).json({ error: j.error || "завантаження не знайдено", code: j.code || "ticket" });
         return;
       }
-      if (!j.done || !j.fileId) { res.status(409).json({ error: "відео ще не завантажено до кінця", code: "notdone" }); return; }
+      if (!j.done || !j.fileId) { res.status(409).json({ error: "файл ще не завантажено до кінця", code: "notdone" }); return; }
       const row = {
         id: j.uploadId, folder_id: j.folderId, url: `drive:${j.fileId}`,
         kind: String(j.type || "").startsWith("image/") ? "image" : "video",
