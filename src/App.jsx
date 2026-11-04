@@ -1,11 +1,12 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v145 ═══
-import React, { useState, useEffect, useCallback, useRef } from "react";
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v146 ═══
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
   Sun, CloudRain, Wind, Droplets, Navigation, Calendar, ArrowLeft, ArrowUp,
   Footprints, TrendingUp, TrendingDown, Users, Info, Snowflake, Phone, Send, Signal, MessageCircle,
   Waves, Building2, Camera, Settings, Pencil, Trash2, TreePine, Landmark, Bike, ClipboardCheck, Loader2, Play, Lock, Info as InfoIcon,
-  GripVertical, Copy, Sparkles, Undo2, Download, Megaphone, RotateCcw, ClipboardPaste, Route, FileUp
+  GripVertical, Copy, Sparkles, Undo2, Download, Megaphone, RotateCcw, ClipboardPaste, Route, FileUp,
+  Archive, ArchiveRestore, ImagePlus, RefreshCw, LogOut
 } from "lucide-react";
 // Розрахунки маршруту з GPX/KML/Google Maps (v144) — окремим файлом.
 import * as RT from "./route-tools.js";
@@ -27,7 +28,45 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v145";
+const APP_VERSION = "v146";
+
+// ── Анімації (v146) ──────────────────────────────────────────────────
+// Сторінка поїздки виїжджає знизу, головний екран і вкладки з'являються
+// плавно, картки поїздок — одна за одною, вікна (PIN, перегляд фото,
+// плакати) — з легким «підстрибом». Усе коротке (0,2–0,4 с), щоб не
+// заважати. Хто в налаштуваннях телефона вимкнув анімацію («Зменшити
+// рух») — бачить усе без руху.
+// «backwards», а не «both»: після анімації на елементі не лишається
+// transform, інакше вікна з position:fixed усередині (перегляд фото,
+// плакати) рахувались би від нього й виїжджали за екран.
+const TC_CSS = `
+@keyframes tcPageIn { from { opacity: 0; transform: translateY(26px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes tcFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tcRise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes tcPop { from { opacity: 0; transform: translateY(12px) scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes tcCardIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+.tc-page-in { animation: tcPageIn .38s cubic-bezier(.2,.8,.2,1) backwards; }
+.tc-home-in { animation: tcFadeIn .3s ease-out backwards; }
+.tc-tab-in { animation: tcRise .32s cubic-bezier(.2,.8,.2,1) backwards; }
+.tc-reveal { animation: tcRise .26s ease-out backwards; }
+.tc-overlay { animation: tcFadeIn .2s ease-out backwards; }
+.tc-sheet { animation: tcPop .3s cubic-bezier(.2,.9,.3,1.15) backwards; }
+.tc-card { animation: tcCardIn .42s cubic-bezier(.2,.8,.2,1) backwards; }
+.tc-press { transition: transform .15s ease; -webkit-tap-highlight-color: transparent; }
+.tc-press:active { transform: scale(.975); }
+@media (prefers-reduced-motion: reduce) {
+  .tc-page-in, .tc-home-in, .tc-tab-in, .tc-reveal, .tc-overlay, .tc-sheet, .tc-card { animation: none !important; }
+  .tc-press, .tc-press:active { transition: none !important; transform: none !important; }
+}
+`;
+if (typeof document !== "undefined" && !document.getElementById("tc-anim")) {
+  try {
+    const el = document.createElement("style");
+    el.id = "tc-anim";
+    el.textContent = TC_CSS;
+    document.head.appendChild(el);
+  } catch { /* без анімацій — нічого страшного */ }
+}
 // За скільки хвилин до збору приходить нагадування. Те саме число —
 // MEET_BEFORE у api/push-cron.js: міняти обидва разом.
 const MEET_REMIND_MIN = 120;
@@ -78,7 +117,8 @@ async function pushRegister() {
 // застосунок. Порівнюємо числа, а не рядки: інакше «v10» вийшло б
 // меншим за «v4».
 // v5 — натискання на сповіщення веде в потрібне місце (див. goDeliver).
-const SW_EXPECTED = 5;
+// v6 — значки сповіщення вшиті в скрипт: без них Android малював дзвіночок.
+const SW_EXPECTED = 6;
 const swNum = (v) => { const m = String(v || "").match(/^v(\d+)/); return m ? Number(m[1]) : 0; };
 // Яку версію фонового скрипта виконує саме цей телефон. Скрипт відповідає
 // на запитання через MessageChannel. Три можливі відповіді:
@@ -102,6 +142,65 @@ async function swVersion() {
     });
   } catch { return undefined; }
 }
+// ── Вхід через Telegram (v146) ────────────────────────────────────────
+// Застосунок — лише для учасників Telegram-групи. Сервер (api/tg.js)
+// видає телефону підписаний квиток, коли людина натисне «Start» у боті й
+// Telegram підтвердить, що вона в групі; далі раз на добу звіряє, чи ще
+// там. Немає бота у Vercel — перевірки немає, усе як до v146.
+const TG_KEY = "tropa_tg";             // { token, okAt, name, admin }
+const TG_GATE_KEY = "tropa_tg_gate";   // "1" — сервер казав, що перевірка ввімкнена
+const TG_LINK_KEY = "tropa_tg_link";   // яку push-підписку вже прив'язали і коли
+const TG_GRACE_DAYS = 14;              // без зв'язку пускаємо з квитком стільки днів
+const TG_PEND_KEY = "tropa_tg_pending"; // код, з яким людина пішла в Telegram (на випадок, якщо телефон закриє застосунок)
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* приватний режим */ } };
+const tgLoad = () => { try { const v = JSON.parse(lsGet(TG_KEY) || "null"); return v && typeof v.token === "string" ? v : null; } catch { return null; } };
+const tgSave = (v) => lsSet(TG_KEY, v ? JSON.stringify(v) : null);
+async function tgApi(body, ms = 10000) {
+  let timer = null;
+  try {
+    const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    if (ctl) timer = setTimeout(() => ctl.abort(), ms);
+    const r = await fetch("/api/tg", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctl ? ctl.signal : undefined });
+    let j = null;
+    try { j = await r.json(); } catch { j = null; }
+    return { status: r.status, j: j || {} };
+  } catch { return { status: 0, j: {} }; }
+  finally { if (timer) clearTimeout(timer); }
+}
+// Код входу з кнопки бота «Відкрити Tropa Club» (?tg=…). Забираємо з
+// адресного рядка одразу: оновлення сторінки не має повторювати вхід.
+const TG_START = (() => {
+  if (typeof window === "undefined") return "";
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const v = String(p.get("tg") || "");
+    if (!p.has("tg")) return "";
+    p.delete("tg");
+    const q = p.toString();
+    window.history.replaceState(window.history.state, "", window.location.pathname + (q ? `?${q}` : "") + window.location.hash);
+    return /^[A-Za-z0-9_-]{16,64}$/.test(v) ? v : "";
+  } catch { return ""; }
+})();
+// Push-підписка цього телефона — до людини з квитком. Тоді, якщо людина
+// вийде з групи, сервер вимкне сповіщення і на цьому телефоні. Раз на добу.
+async function tgLinkEndpoint(endpoint) {
+  const c = tgLoad();
+  if (!c || c.admin || !endpoint) return;
+  const mark = `${endpoint.slice(-24)}|${new Date().toISOString().slice(0, 10)}`;
+  if (lsGet(TG_LINK_KEY) === mark) return;
+  const r = await tgApi({ action: "link", token: c.token, endpoint });
+  if (r.status === 200 && r.j.ok) lsSet(TG_LINK_KEY, mark);
+}
+async function tgLinkCurrent() {
+  try {
+    if (!pushSupported()) return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && (await reg.pushManager.getSubscription());
+    if (sub) await tgLinkEndpoint(sub.endpoint);
+  } catch { /* без підписки — нема що прив'язувати */ }
+}
+
 async function pushSubscribe(lang) {
   const reg = await navigator.serviceWorker.ready;
   const perm = await Notification.requestPermission();
@@ -119,6 +218,8 @@ async function pushSubscribe(lang) {
   });
   // Записи, зроблені ще до вмикання сповіщень, — теж на цей телефон.
   linkAllBookingsPush().catch(() => {});
+  // І саму підписку — до людини, що увійшла через Telegram (v146).
+  tgLinkEndpoint(j.endpoint).catch(() => {});
   return sub;
 }
 async function pushUnsubscribe() {
@@ -312,7 +413,8 @@ async function sbTripsFor(pin) {
     catch { /* падаємо на звичайне читання нижче */ }
   }
   const all = await sbLoadTrips();
-  const leaked = all.filter(isDraft);
+  // Архівна чернетка (v146) не показується глядачеві навіть заглушкою.
+  const leaked = all.filter((x) => isDraft(x) && !isArchived(x));
   const trips = all.filter((x) => !isDraft(x));
   const fromDb = leaked.length ? [] : await sbTripTeasers().catch(() => []);
   const teasers = [
@@ -937,6 +1039,31 @@ const T = {
   rsPersonal: { uk: "особисті обставини організатора", en: "the organiser's personal circumstances", de: "persönlicher Umstände der Organisation", ru: "личных обстоятельств организатора" },
   rsForce: { uk: "форс-мажор", en: "force majeure", de: "höherer Gewalt", ru: "форс-мажора" },
   rsWeather: { uk: "погодні умови", en: "the weather", de: "des Wetters", ru: "погодных условий" },
+  tgTitle: { uk: "Вхід для учасників групи", en: "Members only", de: "Nur für Mitglieder", ru: "Вход для участников группы" },
+  tgLead: { uk: "Застосунок — для учасників нашої Telegram-групи {g}. Увійди один раз — далі застосунок відкриватиметься сам.", en: "The app is for members of our Telegram group {g}. Sign in once — after that the app opens by itself.", de: "Die App ist für Mitglieder unserer Telegram-Gruppe {g}. Einmal anmelden — danach öffnet sie sich von selbst.", ru: "Приложение — для участников нашей Telegram-группы {g}. Войди один раз — дальше приложение будет открываться само." },
+  tgBtn: { uk: "Увійти через Telegram", en: "Sign in with Telegram", de: "Mit Telegram anmelden", ru: "Войти через Telegram" },
+  tgPreparing: { uk: "Готую вхід…", en: "Preparing…", de: "Wird vorbereitet…", ru: "Готовлю вход…" },
+  tgHint: { uk: "Відкриється Telegram — натисни там «Start» (або «Почати») і повертайся сюди.", en: "Telegram will open — tap “Start” there and come back here.", de: "Telegram öffnet sich — dort „Start“ tippen und hierher zurückkehren.", ru: "Откроется Telegram — нажми там «Start» (или «Начать») и возвращайся сюда." },
+  tgWait: { uk: "Чекаю підтвердження з Telegram…", en: "Waiting for Telegram…", de: "Warte auf Telegram…", ru: "Жду подтверждения из Telegram…" },
+  tgWaitHint: { uk: "Натисни «Start» у боті {b} і повернись сюди — вхід відкриється сам.", en: "Tap “Start” in the bot {b} and come back — you'll be signed in automatically.", de: "Im Bot {b} „Start“ tippen und zurückkehren — die Anmeldung erfolgt automatisch.", ru: "Нажми «Start» в боте {b} и вернись сюда — вход откроется сам." },
+  tgOpenAgain: { uk: "Відкрити Telegram ще раз", en: "Open Telegram again", de: "Telegram erneut öffnen", ru: "Открыть Telegram ещё раз" },
+  tgCancel: { uk: "Скасувати", en: "Cancel", de: "Abbrechen", ru: "Отмена" },
+  tgNo: { uk: "Telegram каже, що тебе немає в групі {g}. Приєднайся до групи, а тоді увійди ще раз.", en: "Telegram says you're not in the group {g}. Join the group, then sign in again.", de: "Laut Telegram bist du nicht in der Gruppe {g}. Tritt bei und melde dich dann erneut an.", ru: "Telegram говорит, что тебя нет в группе {g}. Вступи в группу, а затем войди ещё раз." },
+  tgJoin: { uk: "Ще не в групі? Приєднатися до {g}", en: "Not in the group yet? Join {g}", de: "Noch nicht in der Gruppe? {g} beitreten", ru: "Ещё не в группе? Вступить в {g}" },
+  tgRetry: { uk: "Я вже в групі — увійти ще раз", en: "I've joined — sign in again", de: "Bin beigetreten — erneut anmelden", ru: "Я уже в группе — войти ещё раз" },
+  tgLeftTitle: { uk: "Тебе більше немає в групі {g}", en: "You're no longer in the group {g}", de: "Du bist nicht mehr in der Gruppe {g}", ru: "Тебя больше нет в группе {g}" },
+  tgLeftText: { uk: "Тому застосунок закритий. Повернешся в групу — увійди знову.", en: "That's why the app is closed. Rejoin the group and sign in again.", de: "Deshalb ist die App geschlossen. Tritt wieder bei und melde dich erneut an.", ru: "Поэтому приложение закрыто. Вернёшься в группу — войди снова." },
+  tgErr: { uk: "Не вдалося підготувати вхід. Перевір інтернет і спробуй ще раз.", en: "Couldn't prepare the sign-in. Check your connection and try again.", de: "Anmeldung konnte nicht vorbereitet werden. Verbindung prüfen und erneut versuchen.", ru: "Не удалось подготовить вход. Проверь интернет и попробуй ещё раз." },
+  tgOffline: { uk: "Немає зв'язку з сервером, тож вхід не перевірити. Перевір інтернет.", en: "No connection to the server, so sign-in can't be checked. Check your internet.", de: "Keine Verbindung zum Server. Bitte Internet prüfen.", ru: "Нет связи с сервером, поэтому вход не проверить. Проверь интернет." },
+  tgTryAgain: { uk: "Спробувати ще раз", en: "Try again", de: "Erneut versuchen", ru: "Попробовать ещё раз" },
+  tgOrg: { uk: "Я організатор", en: "I'm the organiser", de: "Ich organisiere", ru: "Я организатор" },
+  tgPinBad: { uk: "PIN не підійшов.", en: "Wrong PIN.", de: "Falsche PIN.", ru: "PIN не подошёл." },
+  archiveTrip: { uk: "В архів", en: "Archive", de: "Archivieren", ru: "В архив" },
+  unarchiveTrip: { uk: "Повернути з архіву", en: "Restore from archive", de: "Aus dem Archiv holen", ru: "Вернуть из архива" },
+  restoreShort: { uk: "Повернути", en: "Restore", de: "Zurückholen", ru: "Вернуть" },
+  republishTrip: { uk: "Опублікувати знову", en: "Publish again", de: "Erneut veröffentlichen", ru: "Опубликовать снова" },
+  archiveList: { uk: "Архів поїздок", en: "Trip archive", de: "Archiv", ru: "Архив поездок" },
+  rsFew: { uk: "недостатню кількість учасників", en: "too few participants", de: "zu geringer Teilnehmerzahl", ru: "недостаточного количества участников" },
   stPostponedTo: { uk: "Перенесено на", en: "Postponed to", de: "Verschoben auf", ru: "Перенесено на" },
   stPostponed: { uk: "Перенесено", en: "Postponed", de: "Verschoben", ru: "Перенесено" },
   fotoAdded: { uk: "Фото додається", en: "Photo coming", de: "Foto folgt", ru: "Фото добавляется" },
@@ -994,6 +1121,12 @@ const tc = (val) => {
   return fixTitleCase(out, val.uk || "", CURRENT_LANG);
 };
 
+// Колія без слова перед номером (v146): «кол. 2», «Гл. 27», «Gleis 5a»,
+// «платформа 3» → «2», «27», «5a», «3». Слово «колія» застосунок додає сам
+// потрібною мовою (t("jpTrack")) — інакше англомовні бачили «pl. кол. 2».
+const TRACK_WORD = /^\s*(колія|колiя|кол|гл|путь|пут|платформа|платф|перон|gleis|gl|bahnsteig|bstg|steig|platform|pl|track)\.?\s*/i;
+const trackOnly = (v) => String(tc(v) || "").replace(TRACK_WORD, "").trim();
+
 // ── Автопереклад вмісту (DeepL через /api/translate на Vercel) ────────
 // Викликається при збереженні поїздки: всі текстові поля перекладаються
 // на EN і RU та зберігаються як {uk,en,ru}. Якщо ключ DeepL не задано або
@@ -1011,6 +1144,11 @@ const TRANSLATABLE = (trip) => {
   push(() => trip.durationHrs, (v) => (trip.durationHrs = v));
   push(() => trip.meetingPoint, (v) => (trip.meetingPoint = v));
   push(() => trip.returnTime, (v) => (trip.returnTime = v));
+  // v146: станцію й колію назад теж перекладаємо — але лише якщо їх
+  // вписано українською. Назва латиницею («Füssen», «München Hbf») і номер
+  // колії лишаються як є (див. translateTripContent).
+  push(() => trip.returnFrom, (v) => (trip.returnFrom = v));
+  push(() => trip.returnPlatform, (v) => (trip.returnPlatform = v));
   (trip.route || []).forEach((st) => { push(() => st.name, (v) => (st.name = v)); push(() => st.note, (v) => (st.note = v)); push(() => st.info, (v) => (st.info = v)); });
   (trip.bonus || []).forEach((b) => { push(() => b.name, (v) => (b.name = v)); push(() => b.note, (v) => (b.note = v)); });
   (trip.cafes || []).forEach((c) => { push(() => c.note, (v) => (c.note = v)); push(() => c.tag, (v) => (c.tag = v)); });
@@ -1239,6 +1377,8 @@ const SHOW_SPOTS_IN = ["upcoming", "recruiting"];
 // Перевіряємо саме === true: у старих поїздках поля немає взагалі, і вони
 // мають лишатися видимими, як і були.
 const isDraft = (trip) => Boolean(trip) && trip.draft === true;
+// В архіві (v146): прибрана організатором зі списків поїздка.
+const isArchived = (trip) => Boolean(trip) && trip.archived === true;
 const STATUS_ORDER = ["upcoming", "recruiting", "closed", "ongoing", "postponed", "done", "cancelled"];
 
 // Стан поїздки за годинником.
@@ -1583,6 +1723,79 @@ function formatDuration(min) {
   return `${h} ${t("legHour")} ${m} ${t("legMin")}`;
 }
 
+// ── Переклад «на льоту» (v146) ──────────────────────────────────────
+// Буває, що поле поїздки лишилось українським і англійською чи російською:
+// поїздку збережено до того, як поле стало перекладатись, або сервіс
+// перекладу того дня не відповів. Тоді перекладаємо прямо на екрані —
+// один раз на текст і мову, з пам'яттю до закриття застосунку. Лише якщо
+// показується саме український оригінал і в ньому є кирилиця.
+const CYR_RE = /[А-Яа-яЁёЄєІіЇїҐґ]/;
+const AUTO_TR = new Map();   // «мова|текст» → { done, p }
+function autoTr(uk, lang) {
+  const key = `${lang}|${uk}`;
+  let e = AUTO_TR.get(key);
+  if (!e) {
+    e = { done: null, p: null };
+    e.p = translateBatch([uk], lang.toUpperCase())
+      .then((r) => { const x = r && r[0]; e.done = (x && String(x).trim()) || uk; })
+      .catch(() => { e.done = uk; });
+    AUTO_TR.set(key, e);
+  }
+  return e;
+}
+function useAutoTr(v, shownOverride) {
+  const lang = CURRENT_LANG;
+  const shown = shownOverride != null ? shownOverride : tc(v);
+  const uk = shownOverride != null ? shownOverride : String(ukOf(v) || "");
+  const need = lang !== "uk" && uk.trim() !== "" && String(shown).trim() === uk.trim() && CYR_RE.test(uk);
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (!need) return undefined;
+    const e = autoTr(uk.trim(), lang);
+    if (e.done != null) return undefined;
+    let alive = true;
+    e.p.then(() => { if (alive) bump((n) => n + 1); });
+    return () => { alive = false; };
+  }, [need, uk, lang]);
+  if (!need) return shown;
+  const e = AUTO_TR.get(`${lang}|${uk.trim()}`);
+  return (e && e.done) || shown;
+}
+
+// Відправлення назад на сторінці поїздки (v146 — окремим блоком, щоб
+// усе в ньому було мовою застосунку): станція, час і колія з окремих
+// полів, слово «колія» — зі словника, а не з тексту організатора.
+function ReturnBlock({ trip }) {
+  const fromRaw = tc(trip.returnFrom).trim();
+  const timeRaw = tc(trip.returnTime).trim();
+  const platRaw = trackOnly(trip.returnPlatform);
+  const from = useAutoTr(trip.returnFrom);
+  const time = useAutoTr(trip.returnTime);
+  const plat = useAutoTr(null, platRaw);
+  if (fromRaw === "" && timeRaw === "") return null;
+  return (
+    <div data-ret="box" style={{ marginTop: 10, border: `1px solid ${C.greenLine}`, borderRadius: 13, padding: 13, background: "#fff" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ width: 32, height: 32, borderRadius: 10, background: C.greenSoft, color: C.greenDark, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transform: "scaleX(-1)" }}>
+          <Train size={16} />
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: 12, color: C.muted, fontWeight: 700 }}>{t("retTitle")}</span>
+          <span data-ret="line" style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: C.ink, marginTop: 2, lineHeight: 1.4 }}>
+            {[String(from).trim(), String(time).trim()].filter((x) => x !== "").join(", ")}
+            {platRaw !== "" && (
+              <span style={{ color: C.ink, fontWeight: 700 }}>
+                , {t("jpTrack")} {String(plat).trim()}
+              </span>
+            )}
+          </span>
+        </span>
+      </div>
+      <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.5, margin: "9px 0 0" }}>{t("retNote")}</p>
+    </div>
+  );
+}
+
 // Один рядок ланцюжка: точка на лінії, час, станція, платформа.
 function LegStop({ time, name, platform, last }) {
   return (
@@ -1596,8 +1809,8 @@ function LegStop({ time, name, platform, last }) {
       </div>
       <div style={{ flex: 1, minWidth: 0, paddingBottom: last ? 0 : 12 }}>
         <div style={{ fontSize: 13.5, fontWeight: 700, color: C.ink, lineHeight: 1.3 }}>{name || "—"}</div>
-        {platform && platform.trim() !== "" && (
-          <div style={{ fontSize: 11.5, color: C.rasp, fontWeight: 700, marginTop: 2 }}>{t("jpTrack")} {platform}</div>
+        {trackOnly(platform) !== "" && (
+          <div style={{ fontSize: 11.5, color: C.rasp, fontWeight: 700, marginTop: 2 }}>{t("jpTrack")} {trackOnly(platform)}</div>
         )}
       </div>
     </div>
@@ -1892,7 +2105,7 @@ function TrainLegs({ legs: rawLegs, statuses, transfers, admin }) {
       </button>
 
       {open && (
-        <div style={{ padding: "4px 14px 14px", borderTop: `1px solid ${C.line}` }}>
+        <div className="tc-reveal" style={{ padding: "4px 14px 14px", borderTop: `1px solid ${C.line}` }}>
           {legs.map((leg, i) => {
             const prev = i > 0 ? legs[i - 1] : null;
             // Час пересадки: вписаний організатором має перевагу, інакше
@@ -3562,7 +3775,7 @@ function DriveGallery({ folderUrl, limit, albumId, isAdmin, adminPin }) {
       )}
 
       {cur && (
-        <div onClick={() => setOpen(null)}
+        <div className="tc-overlay" onClick={() => setOpen(null)}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom))" }}>
           {isVideo(cur) ? (
             // Свій програвач замість рамки Google Диска.
@@ -3820,7 +4033,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin, openAlbum }) {
   // ── відкритий альбом ──
   if (view && view.type === "album") {
     return (
-      <>
+      <div key={`album-${view.id}`} className="tc-tab-in">
         {back(() => setView({ type: "group", id: view.groupId, title: view.groupTitle }), t("arcBack"))}
         {view.name && <p style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, margin: "0 0 10px" }}>{view.name}</p>}
         {welcome === view.id && (
@@ -3833,7 +4046,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin, openAlbum }) {
         )}
         {syncLine}
         <DriveGallery folderUrl={`https://drive.google.com/drive/folders/${view.id}`} albumId={view.id} isAdmin={isAdmin} adminPin={adminPin} />
-      </>
+      </div>
     );
   }
 
@@ -3841,7 +4054,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin, openAlbum }) {
   if (view && view.type === "group") {
     const inGroup = sortByDate(folders.filter((f) => groupOf(f) === view.id));
     return (
-      <>
+      <div key={`group-${view.id}`} className="tc-tab-in">
         {back(() => { setView(null); setEditing(null); }, t("mcAllFolders"))}
         <p style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, margin: "0 0 10px" }}>{view.title}</p>
         {syncLine}
@@ -3891,7 +4104,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin, openAlbum }) {
           })}
           {inGroup.length === 0 && <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>{t("gEmpty")}</p>}
         </div>
-      </>
+      </div>
     );
   }
 
@@ -3931,7 +4144,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin, openAlbum }) {
   };
 
   return (
-    <>
+    <div key="root" className="tc-tab-in">
       {syncLine}
       {note !== "" && <p style={{ fontSize: 11.5, color: C.rasp, margin: "0 0 9px" }}>{note}</p>}
       <div style={{ display: "grid", gap: 9, marginBottom: 12 }}>
@@ -3987,7 +4200,7 @@ function DriveArchive({ folderUrl, isAdmin, adminPin, openAlbum }) {
         )
       )}
       {(loose || []).length > 0 && <DriveGallery folderUrl={folderUrl} albumId="root" isAdmin={isAdmin} adminPin={adminPin} />}
-    </>
+    </div>
   );
 }
 
@@ -4066,7 +4279,7 @@ function UsefulSheetViewer({ sheet, title, onClose, onPrev, onNext }) {
   );
 
   return (
-    <div onClick={onClose}
+    <div className="tc-overlay" onClick={onClose}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.93)", zIndex: 60, display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, overflow: "auto", WebkitOverflowScrolling: "touch", padding: "calc(58px + env(safe-area-inset-top)) 10px calc(16px + env(safe-area-inset-bottom))" }}>
         <img src={sheet} alt={title} onClick={(e) => e.stopPropagation()}
@@ -4259,12 +4472,429 @@ function UsefulTab({ isAdmin, adminPin, appLang }) {
 }
 
 // ── Trip card (list view) ──────────────────────────────────────────────
-function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onEdit, onCopy, counts }) {
+// ── Екран входу через Telegram (v146) ─────────────────────────────────
+// Бачать ті, у кого ще немає квитка, і ті, хто вийшов із групи. Кнопка —
+// звичайне посилання на бота: так телефон відкриває саме застосунок
+// Telegram, а не сторінку в браузері. Поки людина в Telegram, застосунок
+// раз на 2,5 с питає сервер, чи вхід підтверджено, і відкривається сам.
+const fillG = (s, g, b) => String(s || "").replace("{g}", g || "@tropa_club").replace("{b}", b ? `@${b}` : "Tropa Club");
+function TgGate({ why, onIn, lang, setLang }) {
+  // Людина вже пішла в Telegram із цим кодом, а телефон тим часом закрив
+  // застосунок (iPhone так робить) — продовжуємо чекати той самий код.
+  const pend0 = useMemo(() => {
+    try { const v = JSON.parse(lsGet(TG_PEND_KEY) || "null"); return v && v.nonce && Date.now() - Number(v.at || 0) < 25 * 60000 ? v : null; } catch { return null; }
+  }, []);
+  const [prep, setPrep] = useState(pend0);      // { nonce, link, bot, group, join, at } — для кнопки
+  const [phase, setPhase] = useState(pend0 ? "wait" : "idle");   // idle | wait | no | error
+  const [preparing, setPreparing] = useState(false);
+  const [err, setErr] = useState("");
+  const [orgOpen, setOrgOpen] = useState(false);
+  const [pin, setPin] = useState("");
+  const [pinBusy, setPinBusy] = useState(false);
+  const [pinErr, setPinErr] = useState("");
+  const alive = useRef(true);
+  const prepRef = useRef(prep);
+  prepRef.current = prep;
+  // onIn від App — нова функція на кожне малювання; тримаємо в ref, щоб
+  // begin і очікування не перезапускались від кожного малювання App.
+  const onInRef = useRef(onIn);
+  onInRef.current = onIn;
+  // Код, з яким людина ВЖЕ пішла в Telegram. Чекаємо саме його: новий код,
+  // що прийшов пізніше, його не підмінить.
+  const waitRef = useRef(pend0 ? { nonce: pend0.nonce, at: Number(pend0.at) || Date.now() } : null);
+  const seq = useRef(0);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const begin = useCallback(async () => {
+    const my = ++seq.current;
+    setErr(""); setPreparing(true);
+    const r = await tgApi({ action: "begin" });
+    if (!alive.current || my !== seq.current) return null;
+    setPreparing(false);
+    if (r.status === 200 && r.j.gate === false) { onInRef.current(null); return null; }
+    if (r.status !== 200 || !r.j.link) {
+      setErr(r.j.error || t("tgErr"));
+      setPhase((ph) => (ph === "wait" ? ph : "error"));
+      return null;
+    }
+    const p = { nonce: r.j.nonce, link: r.j.link, bot: r.j.bot, group: r.j.group, join: r.j.join, at: Date.now() };
+    setPrep(p);
+    return p;
+  }, []);
+  useEffect(() => { if (!pend0) begin(); }, [begin, pend0]);
+  const stopWaiting = () => { waitRef.current = null; lsSet(TG_PEND_KEY, null); };
+  // Чекаємо підтвердження того коду, з яким людина пішла в Telegram.
+  useEffect(() => {
+    if (phase !== "wait") return undefined;
+    let stop = false;
+    const tick = async () => {
+      const w = waitRef.current;
+      if (stop || !w) return;
+      if (Date.now() - w.at > 30 * 60000) { stopWaiting(); setPhase("idle"); begin(); return; }
+      const r = await tgApi({ action: "poll", nonce: w.nonce }, 8000);
+      if (stop || !alive.current || waitRef.current !== w) return;
+      if (r.status === 200 && r.j.state === "ok" && r.j.token) {
+        tgSave({ token: r.j.token, name: r.j.name || "", okAt: Date.now() });
+        lsSet(TG_GATE_KEY, "1"); stopWaiting();
+        onInRef.current(null);
+        return;
+      }
+      if (r.status === 200 && r.j.gate === false) { stopWaiting(); onInRef.current(null); return; }
+      if (r.status === 200 && r.j.state === "no") { stopWaiting(); setPhase("no"); return; }
+      if (r.status === 200 && r.j.state === "error") { stopWaiting(); setErr(t("tgErr")); setPhase("error"); return; }
+      if (r.status === 200 && r.j.state === "expired") { stopWaiting(); setPhase("idle"); begin(); }
+    };
+    const iv = setInterval(tick, 2500);
+    const onVis = () => { if (document.visibilityState === "visible") tick(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+    tick();
+    return () => { stop = true; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis); };
+  }, [phase, begin]);
+  const startWaiting = (p) => {
+    waitRef.current = { nonce: p.nonce, at: p.at || Date.now() };
+    lsSet(TG_PEND_KEY, JSON.stringify({ ...p, at: p.at || Date.now() }));
+    setPhase("wait");
+  };
+  const go = (e) => {
+    const p = prepRef.current;
+    // Код ще готується — посилання поки не чинне.
+    if (!p || preparing) { e.preventDefault(); return; }
+    // Код старіший за 25 хв — беремо новий і відкриваємо вже його.
+    if (Date.now() - p.at > 25 * 60000) {
+      e.preventDefault();
+      begin().then((q) => { if (q) { startWaiting(q); window.open(q.link, "_blank", "noopener"); } });
+      return;
+    }
+    startWaiting(p);
+  };
+  const tryPin = async () => {
+    if (!pin.trim() || pinBusy) return;
+    setPinBusy(true); setPinErr("");
+    const r = await tgApi({ action: "pin", pin: pin.trim() });
+    setPinBusy(false);
+    if (r.status === 200 && r.j.gate === false) { onInRef.current(null); return; }
+    if (r.status === 200 && r.j.token) { tgSave({ token: r.j.token, admin: true, okAt: Date.now() }); lsSet(TG_GATE_KEY, "1"); stopWaiting(); onInRef.current(pin.trim()); return; }
+    setPinErr(r.status === 403 ? t("tgPinBad") : t("tgOffline"));
+  };
+  const g = (prep && prep.group) || "@tropa_club";
+  const join = (prep && prep.join) || (g.startsWith("@") ? `https://t.me/${g.slice(1)}` : "");
+  const TGBLUE = "#2AABEE";
+  const bigBtn = { width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, borderRadius: 14, padding: "15px", fontSize: 15.5, fontWeight: 800, fontFamily: "inherit", textDecoration: "none", cursor: "pointer", border: "none" };
+  return (
+    <div data-tg="gate" className="tc-home-in" style={{ minHeight: "100vh", background: C.page, fontFamily: "'Inter', system-ui, sans-serif", color: C.ink }}>
+      <div style={{ maxWidth: 440, margin: "0 auto", padding: "calc(34px + env(safe-area-inset-top)) 18px calc(30px + env(safe-area-inset-bottom))" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", marginBottom: 22 }}>
+          <img src={LOGO} alt={t("appName")} style={{ width: 84, height: 84, borderRadius: 20, objectFit: "cover", border: "1.5px solid rgba(253,228,70,0.45)", boxShadow: "0 4px 14px rgba(0,0,0,0.2)" }} />
+          <h1 style={{ margin: "14px 0 2px", fontSize: 24, fontWeight: 800, color: "#fff", letterSpacing: -0.4 }}>{t("appName")}</h1>
+          <p style={{ margin: 0, fontSize: 13.5, color: "rgba(255,255,255,0.75)" }}>{t("appSubtitle")}</p>
+        </div>
+        <div className="tc-sheet" style={{ background: C.card, borderRadius: 20, padding: "20px 18px", boxShadow: "0 6px 24px rgba(0,0,0,0.18)" }}>
+          {why === "left" ? (
+            <>
+              <h2 style={{ margin: "0 0 6px", fontSize: 18, fontWeight: 800, color: C.rasp, lineHeight: 1.3 }}>{fillG(t("tgLeftTitle"), g)}</h2>
+              <p style={{ margin: "0 0 16px", fontSize: 14, color: C.inkSoft, lineHeight: 1.55 }}>{t("tgLeftText")}</p>
+            </>
+          ) : (
+            <>
+              <h2 style={{ margin: "0 0 6px", fontSize: 18, fontWeight: 800, color: C.ink, lineHeight: 1.3 }}>{t("tgTitle")}</h2>
+              <p style={{ margin: "0 0 16px", fontSize: 14, color: C.inkSoft, lineHeight: 1.55 }}>{fillG(t("tgLead"), g)}</p>
+            </>
+          )}
+          {why === "offline" && phase === "idle" && (
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: C.rasp, fontWeight: 600, lineHeight: 1.5 }}>{t("tgOffline")}</p>
+          )}
+
+          {phase === "wait" ? (
+            <div data-tg="wait" className="tc-reveal">
+              <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 13, padding: "13px 14px", marginBottom: 10 }}>
+                <Loader2 size={20} color={TGBLUE} style={{ flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 14.5, fontWeight: 800, color: C.ink }}>{t("tgWait")}</div>
+                  <div style={{ fontSize: 12.5, color: C.muted, marginTop: 2, lineHeight: 1.45 }}>{fillG(t("tgWaitHint"), g, prep && prep.bot)}</div>
+                </div>
+              </div>
+              {prep && waitRef.current && prep.nonce === waitRef.current.nonce && (
+                <a href={prep.link} target="_blank" rel="noopener noreferrer"
+                  style={{ ...bigBtn, background: "#fff", color: TGBLUE, border: `1.5px solid ${TGBLUE}`, fontSize: 14, padding: "12px" }}>
+                  <Send size={16} /> {t("tgOpenAgain")}
+                </a>
+              )}
+              <button onClick={() => { stopWaiting(); setPhase("idle"); begin(); }} style={{ ...bigBtn, background: "none", color: C.muted, fontSize: 13, fontWeight: 600, padding: "10px", marginTop: 4 }}>{t("tgCancel")}</button>
+            </div>
+          ) : phase === "no" ? (
+            <div data-tg="no" className="tc-reveal">
+              <p style={{ margin: "0 0 12px", fontSize: 14, color: C.rasp, fontWeight: 700, lineHeight: 1.5 }}>{fillG(t("tgNo"), g)}</p>
+              {join && (
+                <a href={join} target="_blank" rel="noopener noreferrer" style={{ ...bigBtn, background: TGBLUE, color: "#fff", marginBottom: 9 }}>
+                  <Users size={18} /> {fillG(t("tgJoin"), g).replace(/^[^?]*\?\s*/, "")}
+                </a>
+              )}
+              <button onClick={() => { stopWaiting(); setPhase("idle"); begin(); }} style={{ ...bigBtn, background: "#fff", color: C.greenDark, border: `1.5px solid ${C.green}`, fontSize: 14, padding: "12px" }}>{t("tgRetry")}</button>
+            </div>
+          ) : (
+            <>
+              {phase === "error" && <p data-tg="error" style={{ margin: "0 0 12px", fontSize: 13, color: C.rasp, fontWeight: 600, lineHeight: 1.5 }}>{err || t("tgErr")}</p>}
+              {phase === "error" ? (
+                <button onClick={() => { stopWaiting(); setPhase("idle"); begin(); }} style={{ ...bigBtn, background: TGBLUE, color: "#fff" }}>{t("tgTryAgain")}</button>
+              ) : (
+                <a data-tg="login" href={prep && !preparing ? prep.link : "#"} target="_blank" rel="noopener noreferrer" onClick={go} aria-disabled={!prep || preparing}
+                  style={{ ...bigBtn, background: prep && !preparing ? TGBLUE : "#9fd5f1", color: "#fff", boxShadow: prep && !preparing ? "0 4px 14px rgba(42,171,238,0.35)" : "none" }}>
+                  {prep && !preparing ? <Send size={18} /> : <Loader2 size={18} />} {prep && !preparing ? t("tgBtn") : t("tgPreparing")}
+                </a>
+              )}
+              <p style={{ margin: "10px 2px 0", fontSize: 12.5, color: C.muted, lineHeight: 1.5, textAlign: "center" }}>{t("tgHint")}</p>
+              {join && why !== "left" && (
+                <a href={join} target="_blank" rel="noopener noreferrer" style={{ display: "block", textAlign: "center", marginTop: 14, fontSize: 13, fontWeight: 700, color: C.greenDark }}>{fillG(t("tgJoin"), g)}</a>
+              )}
+            </>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 6, marginTop: 20, justifyContent: "center" }}>
+          {LANGS.map((l) => (
+            <button key={l.code} onClick={() => setLang(l.code)} style={{
+              padding: "7px 16px", borderRadius: 20, cursor: "pointer", letterSpacing: 0.5, fontSize: 13, fontFamily: "inherit",
+              border: lang === l.code ? `1.5px solid ${C.yellow}` : "1.5px solid rgba(255,255,255,0.25)",
+              background: lang === l.code ? "rgba(253,228,70,0.18)" : "rgba(255,255,255,0.06)",
+              color: lang === l.code ? "#fff" : "rgba(255,255,255,0.7)", fontWeight: lang === l.code ? 700 : 500,
+            }}>{l.display}</button>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 22, textAlign: "center" }}>
+          {!orgOpen ? (
+            <button data-tg="org" onClick={() => setOrgOpen(true)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.45)", fontSize: 12, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5, fontFamily: "inherit" }}>
+              <Settings size={14} /> {t("tgOrg")}
+            </button>
+          ) : (
+            <div className="tc-reveal" style={{ display: "flex", gap: 8, maxWidth: 300, margin: "0 auto" }}>
+              <input data-tg="pin" type="password" autoFocus value={pin} onChange={(e) => { setPin(e.target.value); setPinErr(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter") tryPin(); }} placeholder="PIN"
+                autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                style={{ flex: 1, minWidth: 0, border: "1px solid rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.1)", color: "#fff", borderRadius: 10, padding: "10px 12px", fontSize: 15, fontFamily: "inherit", textAlign: "center" }} />
+              <button onClick={tryPin} disabled={pinBusy} style={{ border: "none", background: C.yellow, color: C.greenDark, borderRadius: 10, padding: "10px 14px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{pinBusy ? "…" : t("enter")}</button>
+            </div>
+          )}
+          {pinErr && <p style={{ margin: "8px 0 0", fontSize: 12.5, color: "#ffd2dc" }}>{pinErr}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Стан входу для всього застосунку: check — перевіряємо (заставка),
+// in — пускаємо, open — перевірки немає (бота не налаштовано), locked —
+// екран входу. Квиток, перевірений менш ніж добу тому, пускає одразу, а
+// перевірка йде у фоні.
+function useTgGate() {
+  const [state, setState] = useState(() => {
+    const c = tgLoad();
+    if (!TG_START && c && c.okAt && Date.now() - c.okAt < 24 * 3600000) return "in";
+    return "check";
+  });
+  const [why, setWhy] = useState("");
+  const last = useRef(0);
+  const startUsed = useRef(false);
+  const run = useCallback(async () => {
+    last.current = Date.now();
+    if (TG_START && !startUsed.current) {
+      startUsed.current = true;
+      for (let k = 0; k < 4; k++) {
+        const r = await tgApi({ action: "poll", nonce: TG_START }, 8000);
+        if (r.status === 200 && r.j.state === "ok" && r.j.token) {
+          tgSave({ token: r.j.token, name: r.j.name || "", okAt: Date.now() });
+          lsSet(TG_GATE_KEY, "1");
+          setWhy(""); setState("in"); tgLinkCurrent();
+          return;
+        }
+        if (r.status !== 200 || r.j.gate === false || r.j.state !== "wait") break;
+        await new Promise((ok) => setTimeout(ok, 1500));
+      }
+    }
+    const c = tgLoad();
+    const r = await tgApi(c ? { action: "check", token: c.token } : { action: "status" });
+    if (r.status === 404 || (r.status === 200 && r.j.gate === false)) { lsSet(TG_GATE_KEY, "0"); setState("open"); return; }
+    if (r.status !== 200) {
+      // Сервер не відповів: свій квиток пускає ще 14 днів; без квитка —
+      // зачинено, лише якщо відомо, що перевірка ввімкнена.
+      if (c && c.okAt && Date.now() - c.okAt < TG_GRACE_DAYS * 86400000) { setState("in"); return; }
+      if (lsGet(TG_GATE_KEY) === "1") { setWhy("offline"); setState("locked"); return; }
+      setState("open");
+      return;
+    }
+    lsSet(TG_GATE_KEY, "1");
+    if (c && r.j.ok) {
+      tgSave({ ...c, okAt: Date.now(), name: r.j.name || c.name || "" });
+      setWhy(""); setState("in"); tgLinkCurrent();
+      return;
+    }
+    if (c && (r.j.reason === "left" || r.j.reason === "bad")) tgSave(null);
+    setWhy(c && r.j.reason === "left" ? "left" : "");
+    setState("locked");
+  }, []);
+  useEffect(() => { run(); }, [run]);
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === "visible" && Date.now() - last.current > 6 * 3600000) run(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [run]);
+  const unlock = useCallback(() => { setWhy(""); setState("in"); tgLinkCurrent(); }, []);
+  return { state, why, unlock };
+}
+
+// ── Доступ через Telegram — панель організатора (v146) ────────────────
+function TgAccessPanel({ pin }) {
+  const [open, setOpen] = useState(false);
+  const [info, setInfo] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const load = async () => {
+    setBusy(true); setMsg("");
+    const r = await tgApi({ action: "admin", pin });
+    setBusy(false);
+    if (r.status === 404) { setInfo({ missing: true }); return; }
+    setInfo(r.status === 200 ? r.j : { error: r.j.error || `сервер відповів ${r.status}` });
+  };
+  useEffect(() => { if (open && !info && !busy) load(); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cleanup = async () => {
+    if (!info || !info.pushUnlinked) return;
+    if (!window.confirm(`Вимкнути сповіщення на телефонах без входу через Telegram (${info.pushUnlinked})?
+
+Так сповіщення перестануть отримувати й ті, хто вийшов із групи. Учасник, що ще в групі, просто увійде в застосунок і знову ввімкне сповіщення.`)) return;
+    setBusy(true);
+    const r = await tgApi({ action: "cleanup", pin }, 25000);
+    setBusy(false);
+    if (r.status === 200) { setInfo(r.j); setMsg(`Сповіщення вимкнено на телефонах: ${r.j.removed || 0}.`); }
+    else setMsg(`Не вийшло: ${r.j.error || r.status}`);
+  };
+  const signOut = () => {
+    if (!window.confirm("Вийти з Telegram на цьому телефоні? Застосунок покаже екран входу — так, як його бачать учасники.")) return;
+    tgSave(null); lsSet(TG_LINK_KEY, null);
+    window.location.reload();
+  };
+  const on = info && info.gate;
+  const row = (k, v) => <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5, padding: "4px 0", borderBottom: `1px solid ${C.line}` }}><span style={{ color: C.muted }}>{k}</span><b style={{ color: C.ink, textAlign: "right" }}>{v}</b></div>;
+  return (
+    <div data-tg="panel" style={{ marginBottom: 14 }}>
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.10)", border: "1.5px solid rgba(255,255,255,0.28)", borderRadius: 12, padding: "11px 13px", cursor: "pointer", fontFamily: "inherit", color: "#fff" }}>
+        <Lock size={15} />
+        <span style={{ flex: 1, textAlign: "left", fontSize: 12.5, fontWeight: 700 }}>Доступ через Telegram</span>
+        {info && !info.missing && !info.error && (
+          <span style={{ fontSize: 10.5, fontWeight: 800, padding: "3px 8px", borderRadius: 20, background: on ? C.yellow : "rgba(255,255,255,0.18)", color: on ? C.greenDark : "#fff" }}>{on ? "увімкнено" : "вимкнено"}</span>
+        )}
+        <span style={{ display: "flex", transform: open ? "rotate(90deg)" : "none", transition: "transform .2s" }}><ChevronRight size={16} /></span>
+      </button>
+      {open && (
+        <div className="tc-reveal" style={{ background: C.card, borderRadius: 14, padding: "12px 14px", marginTop: 8 }}>
+          {busy && !info && <p style={{ margin: 0, fontSize: 12.5, color: C.muted }}>Завантажую…</p>}
+          {info && info.missing && <p style={{ margin: 0, fontSize: 12.5, color: C.rasp, lineHeight: 1.5 }}>На сервері ще немає api/tg.js — завантаж файл із v146 у папку api.</p>}
+          {info && info.error && <p style={{ margin: 0, fontSize: 12.5, color: C.rasp, lineHeight: 1.5 }}>Не вдалося: {info.error}</p>}
+          {info && !info.missing && !info.error && !info.configured && (
+            <div style={{ fontSize: 12.5, color: C.inkSoft, lineHeight: 1.55 }}>
+              <b style={{ color: C.ink }}>Перевірки поки немає</b> — застосунок відкритий для всіх, як і раніше. Щоб увімкнути: створи бота в @BotFather, додай його адміністратором у групу {info.group} і впиши його токен у Vercel як <b>TELEGRAM_BOT_TOKEN</b> (потім Redeploy). Кроки — у довідці проєкту.
+            </div>
+          )}
+          {info && !info.missing && !info.error && info.configured && (
+            <>
+              {row("Бот", info.bot ? `@${info.bot}` : "не відповідає")}
+              {row("Група", info.group)}
+              {row("Перевірка входу", info.gate ? "увімкнена" : info.off ? "вимкнена (TELEGRAM_GATE=off)" : "ще не діє")}
+              {info.notReady && (
+                <p style={{ margin: "8px 0 4px", fontSize: 12, color: C.yellowInk, background: C.yellowSoft, border: `1px solid ${C.yellow}`, borderRadius: 9, padding: "8px 10px", lineHeight: 1.5, fontWeight: 600 }}>
+                  Ще не діє: {info.notReady}. Поки застосунок відкритий для всіх — нікого не зачинить через помилку в налаштуваннях.
+                </p>
+              )}
+              {row("Увійшли через Telegram", info.members != null ? info.members : "—")}
+              {row("Вийшли з групи (без доступу)", info.left != null ? info.left : "—")}
+              {info.recent && info.recent.length > 0 && row("Останні", info.recent.join(", "))}
+              {info.pushTotal != null && row("Телефонів зі сповіщеннями", info.pushTotal)}
+              {info.pushTotal != null && row("— з входом через Telegram", info.pushLinked)}
+              {info.pushTotal != null && row("— організатора", info.pushAdmin)}
+              {info.pushTotal != null && row("— без входу", info.pushUnlinked)}
+              {info.dbError && <p style={{ margin: "8px 0 0", fontSize: 12, color: C.rasp }}>{info.dbError}</p>}
+              {info.gate && info.pushUnlinked > 0 && (
+                <>
+                  <p style={{ margin: "10px 0 8px", fontSize: 12, color: C.inkSoft, lineHeight: 1.5 }}>
+                    «Без входу» — телефони, з яких ще не входили через Telegram: серед них і ті, хто вийшов із групи ще до v146. Коли учасники встигнуть увійти (скажімо, за тиждень після оголошення в групі), вимкни сповіщення решті.
+                  </p>
+                  <button data-tg="cleanup" onClick={cleanup} disabled={busy}
+                    style={{ width: "100%", border: `1.5px solid ${C.rasp}`, background: "#fff", color: C.rasp, borderRadius: 10, padding: "10px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                    Вимкнути сповіщення на {info.pushUnlinked} телефонах без входу
+                  </button>
+                </>
+              )}
+            </>
+          )}
+          {msg && <p style={{ margin: "8px 0 0", fontSize: 12.5, color: C.greenDark, fontWeight: 700 }}>{msg}</p>}
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button onClick={load} disabled={busy} style={{ flex: 1, border: `1px solid ${C.line}`, background: "#fff", color: C.greenDark, borderRadius: 10, padding: "9px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : "Оновити"}</button>
+            {tgLoad() && <button onClick={signOut} style={{ flex: 1, border: `1px solid ${C.line}`, background: "#fff", color: C.muted, borderRadius: 10, padding: "9px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><LogOut size={13} /> Вийти на цьому телефоні</button>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ARCHIVE_ASK = "Прибрати поїздку в архів?\n\nВона зникне зі списків у всіх учасників і не розсилатиме сповіщень. Знайдеш її внизу головного екрана — «Архів поїздок». Звідти її можна повернути або опублікувати знову з новою датою.";
+
+// ── Архів поїздок (v146, лише організатор) ──────────────────────────
+// Згорнутий список унизу вкладки «Поїздки». У кожної поїздки дві дії:
+// «Опублікувати знову» — копія з новою датою (записи, сповіщення й стан —
+// з нуля; архівна лишається в архіві), і «Повернути» — та сама поїздка
+// знову в списках, з усіма своїми записами.
+function ArchiveList({ trips, onOpen, onRepublish, onRestore }) {
+  const [open, setOpen] = useState(false);
+  const count = (trips || []).length;
+  // Архів спорожнів — згортаємо, щоб наступного разу він з'явився згорнутим.
+  useEffect(() => { if (count === 0) setOpen(false); }, [count]);
+  if (count === 0) return null;
+  return (
+    <div data-arc="list" style={{ marginTop: 26 }}>
+      <button data-arc="toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.18)", borderRadius: 13, padding: "11px 13px", cursor: "pointer", fontFamily: "inherit", color: "rgba(255,255,255,0.85)" }}>
+        <Archive size={16} color="rgba(255,255,255,0.7)" />
+        <span style={{ flex: 1, textAlign: "left", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>{t("archiveList")} · {trips.length}</span>
+        <span style={{ display: "flex", transform: open ? "rotate(90deg)" : "none", transition: "transform .2s" }}><ChevronRight size={17} /></span>
+      </button>
+      {open && (
+        <div className="tc-reveal" style={{ marginTop: 10 }}>
+          <p style={{ fontSize: 11.5, color: "rgba(255,255,255,0.6)", lineHeight: 1.5, margin: "0 4px 10px" }}>
+            Учасники цих поїздок не бачать, сповіщень вони не розсилають. «Опублікувати знову» — копія з новою датою; «Повернути» — та сама поїздка з її записами.
+          </p>
+          {trips.map((tr) => (
+            <div key={tr.id} data-arc="row" style={{ background: C.card, borderRadius: 14, padding: "11px 12px", marginBottom: 9 }}>
+              <button onClick={() => onOpen(tr.id)} style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit" }}>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color: C.ink, lineHeight: 1.25 }}>{tc(tr.title) || "Без назви"}</div>
+                <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>
+                  {dateWithWeekday(tr) || "без дати"}{tr.archivedAt ? ` · в архіві з ${shortDate(tr.archivedAt)}` : ""}
+                </div>
+              </button>
+              <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
+                <button data-arc="republish" onClick={() => onRepublish(tr)}
+                  style={{ flex: 1.3, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, background: C.yellow, color: C.greenDark, border: "none", borderRadius: 9, padding: "9px 6px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  <Copy size={13} style={{ flexShrink: 0 }} /> {t("republishTrip")}
+                </button>
+                <button data-arc="restore" onClick={() => onRestore(tr.id)}
+                  style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, background: "#fff", color: C.greenDark, border: `1.5px solid ${C.green}`, borderRadius: 9, padding: "8px 6px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  <ArchiveRestore size={13} style={{ flexShrink: 0 }} /> {t("restoreShort")}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onEdit, onCopy, onArchive, counts, animIndex }) {
   // Глядачеві — лише колір і напис. Без назви, дати й будь-яких деталей,
   // і картка нікуди не веде: відкрити чернетку глядач не може.
   if (isDraft(trip) && !isAdmin) {
     return (
-      <div style={{
+      <div className="tc-card" style={{
         width: "100%", borderRadius: 20, overflow: "hidden", marginBottom: 16,
         boxShadow: "0 2px 14px rgba(60,79,44,0.08)", background: trip.heroGradient || C.green,
       }}>
@@ -4287,11 +4917,12 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
   }
   const left = Math.max(0, (Number(trip.spots) || 0) - takenOf(trip, counts));
   return (
-    <div style={{
+    <div className="tc-card" style={{
       width: "100%", borderRadius: 20, overflow: "hidden", background: C.card,
       boxShadow: "0 2px 14px rgba(60,79,44,0.08)", marginBottom: 16,
+      animationDelay: `${Math.min(Number(animIndex) || 0, 8) * 45}ms`,
     }}>
-      <div onClick={onClick} style={{ cursor: "pointer" }}>
+      <div className="tc-press" onClick={onClick} style={{ cursor: "pointer" }}>
         {isAdmin && isDraft(trip) && (
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
@@ -4365,6 +4996,14 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
             <button onClick={onEdit} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, background: C.greenSoft, color: C.greenDark, border: "none", borderRadius: 9, padding: "9px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}><Pencil size={13} style={{ flexShrink: 0 }} /> {t("edit")}</button>
             {onCopy && (
               <button onClick={onCopy} aria-label={t("copyTripLong")} title={t("copyTripLong")} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, background: C.greenSoft, color: C.greenDark, border: "none", borderRadius: 9, padding: "9px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}><Copy size={13} style={{ flexShrink: 0 }} /> {t("copyTrip")}</button>
+            )}
+            {/* В архів (v146) — лише значок: утрьох із підписами кнопки в
+                рядок не вміщаються. Підпис — у підказці й для читача екрана. */}
+            {onArchive && (
+              <button data-arc="card" onClick={() => { if (window.confirm(ARCHIVE_ASK)) onArchive(); }} aria-label={t("archiveTrip")} title={t("archiveTrip")}
+                style={{ flexShrink: 0, width: 40, height: 36, display: "flex", alignItems: "center", justifyContent: "center", background: C.greenSoft, color: C.greenDark, border: "none", borderRadius: 9, cursor: "pointer" }}>
+                <Archive size={15} />
+              </button>
             )}
           </div>
           <div style={{ padding: "8px 14px 10px" }}>
@@ -5458,12 +6097,16 @@ function announceMsgs(trip) {
   return out;
 }
 
-// Коли «набір відкрито» приходить саме: за 6 днів до поїздки о 18:00.
-// Потрібно лише для підказки біля кнопки — чи ще прийде автоматичне.
+// Коли «набір відкрито» приходить саме (v146, годинник c11): у понеділок
+// перед поїздкою о 18:00, хоч би на який день вона припадала. Поїздка в
+// понеділок — попередній понеділок. Потрібно лише для підказки біля
+// кнопки — чи ще прийде автоматичне.
 function autoOpenMoment(trip) {
   const m = String((trip && trip.date) || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return null;
-  return new Date(+m[1], +m[2] - 1, +m[3] - 6, 18, 0, 0);
+  const dow = new Date(+m[1], +m[2] - 1, +m[3], 12).getDay(); // 0 — неділя
+  const back = dow === 1 ? 7 : (dow + 6) % 7;
+  return new Date(+m[1], +m[2] - 1, +m[3] - back, 18, 0, 0);
 }
 
 function timeChangeMsgs(trip) {
@@ -5515,7 +6158,7 @@ function SituationPush({ trip, kind, pin }) {
         {REASONS.map((r) => (
           <button key={r.code} onClick={() => { setReason(r.code); setDone(""); }}
             style={{ textAlign: "left", border: `1px solid ${reason === r.code ? C.rasp : C.line}`, background: reason === r.code ? C.rasp : "#fff", color: reason === r.code ? "#fff" : C.ink, borderRadius: 9, padding: "10px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-            {{ personal: "Особисті обставини організатора", force: "Форс-мажор", weather: "Погода" }[r.code]}
+            {{ personal: "Особисті обставини організатора", force: "Форс-мажор", weather: "Погода", few: "Недостатня кількість учасників" }[r.code]}
           </button>
         ))}
       </div>
@@ -5545,6 +6188,8 @@ const REASONS = [
   { code: "personal", tkey: "rsPersonal" },
   { code: "force", tkey: "rsForce" },
   { code: "weather", tkey: "rsWeather" },
+  // v146: «через недостатню кількість учасників» — коли набір не зібрався.
+  { code: "few", tkey: "rsFew" },
 ];
 // Дата й назва потрібні кожною мовою окремо, бо «Субота» німець не читає.
 function situationMsgs(kind, trip, reasonCode, newDate) {
@@ -5834,8 +6479,9 @@ function PushDiagnostics({ pin, trip }) {
           проміжна правка підняла б тривогу всій групі. Момент, коли
           зміна остаточна, знаєте тільки ви. */}
       {/* Оголошення про поїздку. Автоматичне «набір відкрито» приходить
-          лише за 6 днів до дати й лише того дня — опублікуєш пізніше, і
-          група про поїздку не дізнається. Ця кнопка закриває цей пробіл. */}
+          лише в понеділок перед поїздкою о 18:00 і лише того дня —
+          опублікуєш пізніше, і група про поїздку не дізнається. Ця кнопка
+          закриває цей пробіл. */}
       {trip && (() => {
         const draft = isDraft(trip);
         const at = autoOpenMoment(trip);
@@ -5848,8 +6494,8 @@ function PushDiagnostics({ pin, trip }) {
               {draft
                 ? "Поїздка ще в розробці. Спершу опублікуй і збережи її: сповіщення містить назву, тож надіслане зараз розкрило б чернетку."
                 : ahead
-                  ? `Автоматично «набір відкрито» прийде ${day} о 18:00. Якщо надішлеш зараз — воно вже не повториться.`
-                  : "Час автоматичного оголошення минув — воно приходить лише за 6 днів до поїздки. Якщо група його не отримала, надішли вручну."}
+                  ? `Автоматично «набір відкрито» прийде в понеділок ${day} о 18:00. Якщо надішлеш зараз — воно вже не повториться.`
+                  : "Час автоматичного оголошення минув — воно приходить лише в понеділок перед поїздкою о 18:00. Якщо група його не отримала, надішли вручну."}
             </p>
             <button onClick={announce} disabled={busy || draft}
               style={{ width: "100%", border: `1.5px solid ${draft ? C.line : C.green}`, background: draft ? C.pageSoft : busy ? C.greenSoft : C.green,
@@ -6321,7 +6967,7 @@ function TelegramAnnounce({ trip, pin, taken }) {
   );
 }
 
-function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onSetStatus, onSetPostponedDate, onReorderJourneys, counts, onBooked, adminPin, focusSec }) {
+function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onArchive, onRepublish, onSetStatus, onSetPostponedDate, onReorderJourneys, counts, onBooked, adminPin, focusSec }) {
   // Стан поїздів від Deutsche Bahn — напередодні й у день поїздки (v136).
   const trains = useTrainStatus(trip);
   // Перехід зі сповіщення: прокрутити до потрібного розділу. Кілька спроб
@@ -6406,7 +7052,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onSetStat
   );
 
   return (
-    <div style={{ paddingBottom: 30 }}>
+    <div className="tc-page-in" style={{ paddingBottom: 30 }}>
       {/* На айфоні верх екрана зайнятий вирізом і рядком стану. Без
           відступу env(safe-area-inset-top) кнопка «Усі поїздки» лізла
           під годинник — саме це видно на скріншоті. На Android відступ
@@ -6430,6 +7076,26 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onSetStat
       </div>
 
       <div style={{ padding: "18px 16px 0", marginTop: -14, background: C.page, borderRadius: "20px 20px 0 0", position: "relative" }}>
+        {isAdmin && isArchived(trip) && (
+          <div data-arc="banner" style={{ background: C.yellowSoft, border: `1.5px solid ${C.yellow}`, borderRadius: 14, padding: "11px 13px", marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, fontWeight: 800, color: C.ink }}>
+              <Archive size={16} color={C.yellowInk} /> Поїздка в архіві
+            </div>
+            <p style={{ margin: "4px 0 9px", fontSize: 12, color: C.inkSoft, lineHeight: 1.5 }}>Учасники її не бачать, сповіщень вона не розсилає.</p>
+            <div style={{ display: "flex", gap: 8 }}>
+              {onRepublish && (
+                <button onClick={onRepublish} style={{ flex: 1.3, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, background: C.yellow, color: C.greenDark, border: "none", borderRadius: 9, padding: "9px 6px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                  <Copy size={13} /> {t("republishTrip")}
+                </button>
+              )}
+              {onArchive && (
+                <button onClick={() => onArchive(false)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, background: "#fff", color: C.greenDark, border: `1.5px solid ${C.green}`, borderRadius: 9, padding: "8px 6px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  <ArchiveRestore size={13} /> Повернути
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         <PlacePhoto trip={trip} />
         {(() => {
           const sv = trip.statsVisible || {};
@@ -6561,32 +7227,7 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onSetStat
                   {/* Зворотній поїзд навмисно спрощений: одна година без
                       станцій і пересадок. Час назад щоразу різний, тож
                       докладний ланцюжок лише вводив би в оману. */}
-                  {(String(trip.returnTime || "").trim() !== "" || String(trip.returnFrom || "").trim() !== "") && (
-                    <div style={{ marginTop: 10, border: `1px solid ${C.greenLine}`, borderRadius: 13, padding: 13, background: "#fff" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ width: 32, height: 32, borderRadius: 10, background: C.greenSoft, color: C.greenDark, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transform: "scaleX(-1)" }}>
-                          <Train size={16} />
-                        </span>
-                        <span style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ display: "block", fontSize: 12, color: C.muted, fontWeight: 700 }}>{t("retTitle")}</span>
-                          {/* Збираємо рядок із окремих полів, а не з вільного
-                              тексту. Слово «колія» береться зі словника
-                              застосунку — те саме, що в розкладі поїздів.
-                              Машинний переклад тут не потрібен узагалі. */}
-                          <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: C.ink, marginTop: 2, lineHeight: 1.4 }}>
-                            {[String(trip.returnFrom || "").trim(), tc(trip.returnTime).trim()]
-                              .filter((x) => x !== "").join(", ")}
-                            {String(trip.returnPlatform || "").trim() !== "" && (
-                              <span style={{ color: C.ink, fontWeight: 700 }}>
-                                , {t("jpTrack")} {String(trip.returnPlatform).trim()}
-                              </span>
-                            )}
-                          </span>
-                        </span>
-                      </div>
-                      <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.5, margin: "9px 0 0" }}>{t("retNote")}</p>
-                    </div>
-                  )}
+                  <ReturnBlock trip={trip} />
                   <div style={{ marginTop: 8, padding: 11, background: C.yellowSoft, borderRadius: 11, fontSize: 12.5, color: C.yellowInk, display: "flex", gap: 7, alignItems: "flex-start" }}>
                     <Train size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                     <span>{t("dTicket")} <b>Deutschland Ticket</b> <b>63 €</b> {t("dTicketTail")}</span>
@@ -6897,6 +7538,21 @@ function TripDetail({ trip, onBack, isAdmin, onEdit, onCopy, onDelete, onSetStat
                 </p>
               </>
             )}
+            {/* Архів (v146) — м'якша дія, ніж «Видалити»: поїздка зникає зі
+                списків, але лишається з усіма записами й описом. */}
+            {onArchive && (
+              <>
+                <button data-arc="detail" onClick={() => { if (isArchived(trip)) onArchive(false); else if (window.confirm(ARCHIVE_ASK)) onArchive(true); }}
+                  style={{ width: "100%", marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: "#fff", color: C.greenDark, border: `1.5px solid ${C.green}`, borderRadius: 11, padding: "12px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  {isArchived(trip) ? <><ArchiveRestore size={15} /> {t("unarchiveTrip")}</> : <><Archive size={15} /> {t("archiveTrip")}</>}
+                </button>
+                {!isArchived(trip) && (
+                  <p style={{ fontSize: 11.5, color: C.muted, margin: "6px 0 0", lineHeight: 1.45 }}>
+                    Поїздка зникне зі списків у всіх і не розсилатиме сповіщень. Звідти її можна повернути чи опублікувати знову.
+                  </p>
+                )}
+              </>
+            )}
             <button
               onClick={() => { if (window.confirm("Видалити цю поїздку? Цю дію не можна скасувати.")) onDelete(); }}
               style={{ width: "100%", marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "#fff", color: C.rasp, border: `1.5px solid ${C.rasp}`, borderRadius: 11, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
@@ -7019,7 +7675,7 @@ const shortDate = (iso) => {
   const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m ? `${m[3]}.${m[2]}.${m[1].slice(2)}` : "";
 };
-function makeTripCopy(src) {
+function makeTripCopy(src, opts) {
   const blank = BLANK_TRIP();
   // toEditable — той самий крок, що й перед звичайним редагуванням:
   // багатомовні поля стають українськими рядками, ручні правки
@@ -7031,6 +7687,8 @@ function makeTripCopy(src) {
   c.status = "upcoming"; c.postponedTo = "";
   c.draft = true;
   c.spotsTaken = 0;
+  // Копія з архіву (v146) сама в архіві не лежить.
+  delete c.archived; delete c.archivedAt;
   // Погода з минулого разу була б неправдою про новий день. Ручну погоду
   // теж вимикаємо: її значення стосувались того дня.
   c.weatherManual = false;
@@ -7039,7 +7697,7 @@ function makeTripCopy(src) {
   Object.keys(c).forEach((k) => { if (/^(drive|album)/i.test(k)) delete c[k]; });
   // Службова позначка редактора: звідки копія і як переносити дедлайн.
   // У базу не потрапляє — TripForm прибирає її перед збереженням.
-  c.__copy = { title: ukOf(src.title), date: String(src.date || ""), dl: deadlineOffset(src), dlTouched: false };
+  c.__copy = { title: ukOf(src.title), date: String(src.date || ""), dl: deadlineOffset(src), dlTouched: false, fromArchive: Boolean(opts && opts.fromArchive) };
   return c;
 }
 
@@ -7309,89 +7967,221 @@ function scheduleSummary(r, how) {
       + ` (поїздів: ${L.length}${via.length ? `, пересадка: ${via.join(", ")}` : ""})`);
   });
   if (r.returnFrom || r.returnTime) out.push(`назад: ${[r.returnFrom, r.returnTime].filter(Boolean).join(", ")}${r.returnPlatform ? `, кол. ${r.returnPlatform}` : ""}`);
-  return `${how === "append" ? "Додано" : "Заповнено"}: ${out.join("; ")}.`;
+  return `${how === "append" ? "Додано" : how === "journey" ? "Відправлення оновлено" : "Заповнено"}: ${out.join("; ")}.`;
 }
 
-function SchedulePaste({ pin, tripDate, filled, onApply, onRestore }) {
+// Скріншот → 1–3 смуги JPEG до 1000 px завширшки (v146). Високий знімок
+// екрана телефона ріжемо з перекриттям: цілий він ужався б до розміру, на
+// якому дрібний текст (колії, номери) вже не прочитати.
+async function shotParts(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, bad) => {
+      const i = new Image();
+      i.onload = () => ok(i);
+      i.onerror = () => bad(new Error("img"));
+      i.src = url;
+    });
+    const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
+    if (!W || !H) throw new Error("img");
+    const scale = Math.min(1, 1000 / W);
+    const w = Math.max(1, Math.round(W * scale)), h = Math.max(1, Math.round(H * scale));
+    const LAP = 80, MAXH = 1450;
+    const n = h <= MAXH ? 1 : Math.min(3, Math.ceil((h - LAP) / (MAXH - LAP)));
+    const tileH = n === 1 ? h : Math.ceil((h + LAP * (n - 1)) / n);
+    const parts = [];
+    for (let k = 0; k < n; k++) {
+      const y = n === 1 ? 0 : Math.min(h - tileH, k * (tileH - LAP));
+      const c = document.createElement("canvas");
+      c.width = w; c.height = Math.min(tileH, h);
+      const g = c.getContext("2d");
+      g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, y / scale, W, c.height / scale, 0, 0, w, c.height);
+      const data = String(c.toDataURL("image/jpeg", 0.82)).split(",")[1] || "";
+      if (data.length > 200) parts.push({ type: "image/jpeg", data });
+    }
+    if (parts.length === 0) throw new Error("img");
+    return { url, parts };
+  } catch (e) {
+    try { URL.revokeObjectURL(url); } catch { /* немає */ }
+    throw e;
+  }
+}
+
+const DBF_TEXT = {
+  all: {
+    button: "Вставити розклад з DB", title: "Розклад з DB",
+    hint: <>Найточніше — <b>скріншот</b>: у DB Navigator відкрий з'єднання (щоб було видно всі поїзди й колії) і додай знімок; не вмістилось — 2–3 знімки. Або встав текст чи посилання з «Поділитися» (<i>Teilen</i> → «Копіювати»), або скопійоване з bahn.de. Можна кілька з'єднань одразу — з різних міст і назад.</>,
+  },
+  journey: {
+    button: "Оновити це відправлення з DB", title: "Оновити відправлення з DB",
+    hint: <>Додай <b>скріншот</b> цього з'єднання з DB Navigator (усі поїзди й колії на екрані) або встав текст чи посилання з «Поділитися». Поїзди саме цього відправлення заміняться, решта поїздки — без змін.</>,
+  },
+  return: {
+    button: "Взяти дорогу назад з DB", title: "Дорога назад з DB",
+    hint: <>Додай <b>скріншот</b> з'єднання назад або встав текст чи посилання з «Поділитися». Сюди піде перше відправлення: станція, час і колія.</>,
+  },
+};
+
+// ── Розклад з DB (v144; з v146 — скріншоти, посилання, по частинах) ────
+// Організатор дає з'єднання з DB Navigator чи bahn.de: скріншот, текст
+// «Поділитися» або посилання. Сервер (api/fill-trip.js f4, mode
+// «schedule») розкладає його на поїзди — сам або з Claude. Три місця:
+//   target "all"     — усі поїзди поїздки (замінити чи додати відправлення);
+//   target "journey" — одне відправлення (кнопка всередині нього);
+//   target "return"  — дорога назад.
+// Нічого не зберігається, доки організатор не натисне «Зберегти поїздку»;
+// «Скасувати заповнення» повертає як було.
+function DbFill({ pin, tripDate, target = "all", filled = 0, onApply, onRestore }) {
+  const T0 = DBF_TEXT[target] || DBF_TEXT.all;
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
+  const [shots, setShots] = useState([]);       // [{ id, url, parts: [{ type, data }] }]
+  const [prep, setPrep] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState(null);      // { ok, text, warn?, notes?, cost? }
-  const [pending, setPending] = useState(null); // розібраний розклад, коли треба обрати: замінити чи додати
+  const [msg, setMsg] = useState(null);         // { ok, soft?, text, warn?, notes?, cost? }
+  const [pending, setPending] = useState(null); // target "all": замінити чи додати
   const [undo, setUndo] = useState(null);
+  const fileRef = useRef(null);
+  const shotsRef = useRef([]);
+  shotsRef.current = shots;
+  useEffect(() => () => { shotsRef.current.forEach((x) => { try { URL.revokeObjectURL(x.url); } catch { /* */ } }); }, []);
+  const nParts = shots.reduce((a, x) => a + x.parts.length, 0);
+  const canRun = !busy && !prep && (text.trim().length >= 15 || nParts > 0);
 
-  const apply = (r, how) => {
-    const snap = onApply(r, how);
-    setUndo(snap);
-    setPending(null);
-    const warn = r.date && tripDate && r.date !== tripDate ? `Розклад на ${ddmm(r.date)}, а поїздка — ${ddmm(tripDate)}. Перевір дату.` : "";
-    setMsg({ ok: true, text: scheduleSummary(r, how), warn, notes: r.notes || "", cost: aiCost(r.costUsd) });
+  const addFiles = async (fileList) => {
+    const files = Array.from(fileList || []).filter((f) => /^image\//i.test(f.type || "") || /\.(png|jpe?g|webp|heic|heif)$/i.test(f.name || ""));
+    if (files.length === 0) return;
+    setPrep(true); setMsg(null);
+    const next = [...shotsRef.current];
+    let bad = false;
+    for (const f of files) {
+      if (next.reduce((a, x) => a + x.parts.length, 0) >= 6) break;
+      try {
+        const sp = await shotParts(f);
+        next.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, ...sp, parts: sp.parts.slice(0, 6 - next.reduce((a, x) => a + x.parts.length, 0)) });
+      } catch { bad = true; }
+    }
+    setShots(next); setPrep(false);
+    if (bad) setMsg({ ok: false, text: "Не вдалося відкрити картинку — спробуй інший скріншот (PNG чи JPEG)." });
   };
+  const removeShot = (id) => setShots((xs) => {
+    const x = xs.find((y) => y.id === id);
+    if (x) { try { URL.revokeObjectURL(x.url); } catch { /* */ } }
+    return xs.filter((y) => y.id !== id);
+  });
+
+  const done = (r, snap, line) => {
+    setUndo(snap); setPending(null);
+    const warn = r.date && tripDate && r.date !== tripDate ? `Розклад на ${ddmm(r.date)}, а поїздка — ${ddmm(tripDate)}. Перевір дату.` : "";
+    setMsg({ ok: true, text: line, warn, notes: r.notes || "", cost: aiCost(r.costUsd) });
+  };
+  const applyAll = (r, how) => done(r, onApply(r, how), scheduleSummary(r, how));
   const run = async () => {
     const s = text.trim();
-    if (s.length < 15 || busy) return;
+    if (!canRun) return;
+    const images = shots.flatMap((x) => x.parts).slice(0, 6);
     setBusy(true); setMsg(null); setPending(null); setUndo(null);
     let r = { status: 0, j: {} };
-    try { r = await apiJson("/api/fill-trip", { pin: pin || "", mode: "schedule", text: s, tripDate: tripDate || "" }); } catch { r = { status: 0, j: {} }; }
+    try { r = await apiJson("/api/fill-trip", { pin: pin || "", mode: "schedule", target, text: s, tripDate: tripDate || "", images }); } catch { r = { status: 0, j: {} }; }
     setBusy(false);
-    if (r.status !== 200 || !r.j.ok) { setMsg({ ok: false, text: aiErrorText(r) }); return; }
-    const res = { journeys: r.j.journeys || [], returnFrom: r.j.returnFrom || "", returnTime: r.j.returnTime || "", returnPlatform: r.j.returnPlatform || "", date: r.j.date || "", notes: r.j.notes || "", costUsd: r.j.costUsd };
-    if (res.journeys.length === 0 && !res.returnTime && !res.returnFrom) {
-      setMsg({ ok: false, text: "У тексті не знайшлося поїздів. Скопіюй з'єднання повністю — з часом, станціями й коліями." });
+    if (r.status === 413) { setMsg({ ok: false, text: "Скріншоти завеликі — додай один-два, а не більше." }); return; }
+    if (r.status !== 200 || !r.j.ok) {
+      const soft = r.j && ["dblink", "transfers"].includes(r.j.code);
+      setMsg({ ok: false, soft, text: soft || (r.j && r.j.code === "short") ? String(r.j.error || "") : aiErrorText(r) });
       return;
     }
-    if (filled > 0 && res.journeys.length > 0) { setPending(res); return; }
-    apply(res, "replace");
+    const res = { journeys: r.j.journeys || [], returnFrom: r.j.returnFrom || "", returnTime: r.j.returnTime || "", returnPlatform: r.j.returnPlatform || "", date: r.j.date || "", notes: r.j.notes || "", costUsd: r.j.costUsd, source: r.j.source || "" };
+    if (target === "return") {
+      const a = (res.journeys[0] && res.journeys[0].legs && res.journeys[0].legs[0]) || {};
+      const ret = res.returnFrom || res.returnTime
+        ? { returnFrom: res.returnFrom, returnTime: res.returnTime, returnPlatform: res.returnPlatform }
+        : { returnFrom: a.from || "", returnTime: a.fromTime || "", returnPlatform: a.platform || "" };
+      if (!ret.returnFrom && !ret.returnTime) { setMsg({ ok: false, text: "Не знайшлося відправлення назад. Додай скріншот з'єднання — з часом, станцією й колією." }); return; }
+      done(res, onApply(ret), `Назад: ${[ret.returnFrom, ret.returnTime].filter(Boolean).join(", ")}${ret.returnPlatform ? `, кол. ${ret.returnPlatform}` : ""}.`);
+      return;
+    }
+    if (res.journeys.length === 0) {
+      setMsg({ ok: false, text: target === "journey" ? "У цьому не знайшлося поїздів. Додай скріншот з'єднання — з часом, станціями й коліями." : "Не знайшлося поїздів. Додай скріншот з'єднання або скопіюй його повністю — з часом, станціями й коліями." });
+      return;
+    }
+    if (target === "journey") {
+      done(res, onApply(res), scheduleSummary({ ...res, returnFrom: "", returnTime: "" }, "journey"));
+      return;
+    }
+    if (filled > 0) { setPending(res); return; }
+    applyAll(res, "replace");
   };
   const restore = () => {
     if (!undo) return;
     onRestore(undo);
     setUndo(null);
-    setMsg({ ok: true, text: "Поїзди повернено такими, як були до вставлення." });
+    setMsg({ ok: true, text: target === "return" ? "Дорогу назад повернено такою, як була." : "Поїзди повернено такими, як були до заповнення." });
   };
 
   const btn = { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 11, padding: "11px", fontSize: 13, fontWeight: 800, fontFamily: "inherit", cursor: "pointer" };
+  const small = target !== "all";
   if (!open) {
     return (
-      <button data-sched="open" onClick={() => setOpen(true)}
-        style={{ ...btn, width: "100%", background: "#fff", border: `1.5px solid ${C.rasp}`, color: C.rasp, marginBottom: 12, fontSize: 12.5 }}>
-        <ClipboardPaste size={15} /> Вставити розклад з DB
+      <button data-dbf={`open-${target}`} onClick={() => setOpen(true)}
+        style={{ ...btn, width: "100%", background: "#fff", border: `1.5px ${small ? "dashed" : "solid"} ${C.rasp}`, color: C.rasp, marginBottom: small ? 10 : 12, fontSize: 12.5, padding: small ? "9px" : "11px" }}>
+        {small ? <RefreshCw size={14} /> : <ClipboardPaste size={15} />} {T0.button}
       </button>
     );
   }
   return (
-    <div data-sched="box" style={{ background: C.raspSoft, border: `1.5px solid ${C.rasp}`, borderRadius: 14, padding: "12px 13px", marginBottom: 12 }}>
+    <div data-dbf={`box-${target}`} className="tc-reveal" style={{ background: C.raspSoft, border: `1.5px solid ${C.rasp}`, borderRadius: 14, padding: "12px 13px", marginBottom: 12 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
         <ClipboardPaste size={15} color={C.rasp} style={{ flexShrink: 0, marginTop: 2 }} />
-        <div style={{ flex: 1, fontSize: 13.5, fontWeight: 800, color: C.ink, lineHeight: 1.35 }}>Розклад з DB одним вставленням</div>
+        <div style={{ flex: 1, fontSize: 13.5, fontWeight: 800, color: C.ink, lineHeight: 1.35 }}>{T0.title}</div>
         <button onClick={() => setOpen(false)} aria-label="Закрити"
           style={{ background: "none", border: "none", color: C.muted, fontSize: 20, lineHeight: 1, cursor: "pointer", padding: "0 2px" }}>×</button>
       </div>
-      <p style={{ fontSize: 12, color: C.inkSoft, margin: "0 0 9px", lineHeight: 1.5 }}>
-        У DB Navigator відкрий потрібне з'єднання → «Поділитися» (<i>Teilen</i>) → «Копіювати». Або виділи й скопіюй з'єднання на bahn.de. Можна вставити кілька з'єднань одразу — з різних міст і назад.
-      </p>
-      <textarea data-sched="text" value={text} onChange={(e) => setText(e.target.value)} disabled={busy}
-        placeholder={"Наприклад:\nSa., 18.10.2026\nMünchen Hbf ab 08:32 Gl. 27\nRB 6 → Murnau an 09:12 Gl. 2\nMurnau ab 09:18 Gl. 3\nRB 60 → Garmisch-Partenkirchen an 09:53"}
-        style={{ ...inp, minHeight: 130, resize: "vertical", lineHeight: 1.45, marginBottom: 9, background: "#fff" }} />
-      <button data-sched="run" onClick={run} disabled={busy || text.trim().length < 15}
-        style={{ ...btn, width: "100%", border: "none", background: busy || text.trim().length < 15 ? "#ecc7d1" : C.rasp, color: "#fff", cursor: busy ? "default" : "pointer" }}>
+      <p style={{ fontSize: 12, color: C.inkSoft, margin: "0 0 9px", lineHeight: 1.5 }}>{T0.hint}</p>
+
+      <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }}
+        onChange={(e) => { const fl = e.target.files; addFiles(fl); e.target.value = ""; }} />
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 9 }}>
+        <button data-dbf="shot" onClick={() => fileRef.current && fileRef.current.click()} disabled={busy || prep || nParts >= 6}
+          style={{ ...btn, background: "#fff", color: C.rasp, border: `1.5px solid ${C.rasp}`, padding: "9px 12px", fontSize: 12.5, opacity: nParts >= 6 ? 0.5 : 1 }}>
+          {prep ? <Loader2 size={15} /> : <ImagePlus size={15} />} {shots.length ? "Ще скріншот" : "Скріншот"}
+        </button>
+        {shots.map((x, i) => (
+          <span key={x.id} data-dbf="thumb" style={{ position: "relative", width: 44, height: 62, borderRadius: 8, overflow: "hidden", border: `1.5px solid ${C.rasp}`, background: "#fff", flexShrink: 0 }}>
+            <img src={x.url} alt={`Скріншот ${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            <button onClick={() => removeShot(x.id)} aria-label="Прибрати скріншот" disabled={busy}
+              style={{ position: "absolute", top: 1, right: 1, width: 18, height: 18, borderRadius: 9, border: "none", background: "rgba(0,0,0,0.6)", color: "#fff", fontSize: 12, lineHeight: "18px", padding: 0, cursor: "pointer" }}>×</button>
+          </span>
+        ))}
+      </div>
+      <textarea data-dbf="text" value={text} onChange={(e) => setText(e.target.value)} disabled={busy}
+        placeholder={target === "all"
+          ? "Або встав текст чи посилання, наприклад:\nVerbindung am Sa. 08.11.2026\n• von München Hbf, Abfahrt 07:52 Uhr Gl. 27 mit RE 70\n• nach Füssen, Ankunft 09:58 Uhr Gl. 2 mit RE 70\nVerbindung ansehen: https://www.bahn.de/buchung/start?vbid=…"
+          : "Або встав текст чи посилання з «Поділитися»"}
+        style={{ ...inp, minHeight: target === "all" ? 110 : 70, resize: "vertical", lineHeight: 1.45, marginBottom: 9, background: "#fff" }} />
+      <button data-dbf="run" onClick={run} disabled={!canRun}
+        style={{ ...btn, width: "100%", border: "none", background: canRun ? C.rasp : "#ecc7d1", color: "#fff", cursor: canRun ? "pointer" : "default" }}>
         {busy ? <Loader2 size={16} /> : <Sparkles size={16} />}
-        {busy ? "Claude читає розклад… (до пів хвилини)" : "Заповнити поїзди"}
+        {busy ? (nParts > 0 ? "Claude читає скріншот… (до пів хвилини)" : "Читаю розклад… (до пів хвилини)") : target === "return" ? "Заповнити дорогу назад" : target === "journey" ? "Оновити відправлення" : "Заповнити поїзди"}
       </button>
       {pending && (
-        <div data-sched="choose" style={{ marginTop: 10, background: "#fff", borderRadius: 11, padding: "10px 12px" }}>
+        <div data-dbf="choose" style={{ marginTop: 10, background: "#fff", borderRadius: 11, padding: "10px 12px" }}>
           <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.5, marginBottom: 8 }}>
             Знайдено: {pending.journeys.length === 1 ? "одне з'єднання" : `з'єднань: ${pending.journeys.length}`}. У поїздці вже є {filled === 1 ? "одне відправлення" : `відправлень: ${filled}`}. Що зробити?
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button data-sched="replace" onClick={() => apply(pending, "replace")} style={{ ...btn, flex: 1, border: "none", background: C.rasp, color: "#fff", fontSize: 12.5 }}>Замінити поїзди</button>
-            <button data-sched="append" onClick={() => apply(pending, "append")} style={{ ...btn, flex: 1, border: `1.5px solid ${C.rasp}`, background: "#fff", color: C.rasp, fontSize: 12.5 }}>Додати як нове відправлення</button>
+            <button data-dbf="replace" onClick={() => applyAll(pending, "replace")} style={{ ...btn, flex: 1, border: "none", background: C.rasp, color: "#fff", fontSize: 12.5 }}>Замінити поїзди</button>
+            <button data-dbf="append" onClick={() => applyAll(pending, "append")} style={{ ...btn, flex: 1, border: `1.5px solid ${C.rasp}`, background: "#fff", color: C.rasp, fontSize: 12.5 }}>Додати як нове відправлення</button>
           </div>
         </div>
       )}
-      {msg && !msg.ok && <p data-sched="error" style={{ margin: "9px 0 0", fontSize: 12.5, color: C.rasp, lineHeight: 1.5, fontWeight: 600 }}>{msg.text}</p>}
+      {msg && !msg.ok && (
+        <p data-dbf={msg.soft ? "hint" : "error"} style={msg.soft
+          ? { margin: "9px 0 0", fontSize: 12.5, color: C.yellowInk, background: C.yellowSoft, border: `1px solid ${C.yellow}`, borderRadius: 10, padding: "9px 11px", lineHeight: 1.5, fontWeight: 600 }
+          : { margin: "9px 0 0", fontSize: 12.5, color: C.rasp, lineHeight: 1.5, fontWeight: 600 }}>{msg.text}</p>
+      )}
       {msg && msg.ok && (
-        <div data-sched="done" style={{ marginTop: 10, background: C.greenSoft, color: C.greenDark, borderRadius: 11, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.5 }}>
+        <div data-dbf="done" style={{ marginTop: 10, background: C.greenSoft, color: C.greenDark, borderRadius: 11, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.5 }}>
           <div style={{ fontWeight: 800 }}>✓ {msg.text}</div>
           {undo && <div style={{ marginTop: 4 }}>Перевір поїзди нижче й натисни «Зберегти поїздку».</div>}
           {msg.warn && <div style={{ marginTop: 6, color: C.rasp, fontWeight: 700 }}>{msg.warn}</div>}
@@ -7400,7 +8190,7 @@ function SchedulePaste({ pin, tripDate, filled, onApply, onRestore }) {
         </div>
       )}
       {undo && (
-        <button data-sched="undo" onClick={restore}
+        <button data-dbf="undo" onClick={restore}
           style={{ ...btn, width: "100%", marginTop: 9, background: "#fff", color: C.rasp, border: `1.5px solid ${C.rasp}`, fontSize: 12.5, fontWeight: 700 }}>
           <Undo2 size={14} /> Скасувати заповнення
         </button>
@@ -7756,6 +8546,28 @@ function TripForm({ initial, onSave, onCancel, others, pin }) {
     return snap;
   };
   const restoreSchedule = (snap) => { set(snap); setOpenJourney(null); setOpenLeg(null); };
+  // Одне відправлення з DB (v146): міняються поїзди лише цього відправлення.
+  // Номер беремо в мить застосування — поки Claude читав, відправлення
+  // могли переставити чи видалити.
+  const applyJourney = (ji) => (r) => {
+    const cur = tRef.current;
+    const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+    const snap = { journeys: clone(cur.journeys), legs: clone(cur.legs) };
+    const list = (cur.journeys && cur.journeys.length > 0) ? cur.journeys : (cur.legs && cur.legs.length > 0 ? [{ legs: cur.legs }] : [{ legs: [blankLeg()] }]);
+    const fresh = ((r.journeys[0] && r.journeys[0].legs) || []).map((l) => ({ ...blankLeg(), ...l }));
+    const k = Math.min(ji, list.length - 1);
+    set({ journeys: list.map((x, i) => (i === k ? { ...x, legs: fresh } : x)) });
+    setOpenLeg(null);
+    return snap;
+  };
+  const restoreJourney = (snap) => { set(snap); setOpenLeg(null); };
+  // Дорога назад з DB (v146).
+  const applyReturn = (ret) => {
+    const cur = tRef.current;
+    const snap = { returnFrom: cur.returnFrom, returnTime: cur.returnTime, returnPlatform: cur.returnPlatform };
+    set({ returnFrom: ret.returnFrom || "", returnTime: ret.returnTime || "", returnPlatform: ret.returnPlatform || "" });
+    return snap;
+  };
   // Точки з маршруту (v144) — так само зі знімком для «Скасувати».
   const applyRoute = (patch) => {
     const cur = tRef.current;
@@ -7778,7 +8590,7 @@ function TripForm({ initial, onSave, onCancel, others, pin }) {
       const add = clone(pick.journeys || []);
       const next = mine.concat(add);
       patch = { journeys: next.length > 0 ? next : [{ legs: [blankLeg()] }] };
-      if (pick.ret) { Object.assign(patch, clone(pick.ret)); texts.push(pick.ret.returnTime); }
+      if (pick.ret) { Object.assign(patch, clone(pick.ret)); texts.push(pick.ret.returnTime, pick.ret.returnFrom, pick.ret.returnPlatform); }
       setOpenJourney(null); setOpenLeg(null);
     } else if (kind === "meeting") {
       patch = { meetingPoint: part.text };
@@ -7869,7 +8681,7 @@ function TripForm({ initial, onSave, onCancel, others, pin }) {
           <ArrowLeft size={16} /> Скасувати
         </button>
         <h1 style={{ margin: "16px 0 0", fontSize: 22, fontWeight: 800 }}>
-          {initial.__copy ? "Копія поїздки" : initial.title ? "Редагувати поїздку" : "Нова поїздка"}
+          {initial.__copy ? (initial.__copy.fromArchive ? "Опублікувати знову" : "Копія поїздки") : initial.title ? "Редагувати поїздку" : "Нова поїздка"}
         </h1>
       </div>
 
@@ -7881,7 +8693,7 @@ function TripForm({ initial, onSave, onCancel, others, pin }) {
           <div style={{ background: C.yellowSoft, border: `1.5px solid ${C.yellow}`, borderRadius: 16, padding: "14px 15px", marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 14, fontWeight: 800, color: C.ink, lineHeight: 1.35, marginBottom: 6 }}>
               <Copy size={16} color={C.yellowInk} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span>Копія поїздки «{t.__copy.title}»{shortDate(t.__copy.date) ? ` від ${shortDate(t.__copy.date)}` : ""}</span>
+              <span>{t.__copy.fromArchive ? "З архіву" : "Копія поїздки"} «{t.__copy.title}»{shortDate(t.__copy.date) ? ` від ${shortDate(t.__copy.date)}` : ""}</span>
             </div>
             <p style={{ margin: "0 0 9px", fontSize: 12.5, lineHeight: 1.5, color: C.inkSoft }}>
               Маршрут, поїзди, місце збору, опис і список речей уже перенесено. Записи, погода й стан поїздки починаються з нуля.
@@ -7889,7 +8701,9 @@ function TripForm({ initial, onSave, onCancel, others, pin }) {
             <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12.5, lineHeight: 1.6, color: C.ink }}>
               <li>Оберіть нову <b>дату</b>{t.__copy.dl ? " — дедлайн підставиться сам" : ""}.</li>
               <li>Звірте <b>час поїздів</b> на bahn.de або в DB Navigator.</li>
-              <li>Збережіть. Поїздка з'явиться як <b>чернетка</b>: учасники побачать її, коли опублікуєте.</li>
+              {t.__copy.fromArchive
+                ? <li>У блоці «Основне» перемкніть «Стан підготовки» на «Поїздка опублікована» й збережіть — учасники одразу її побачать. Архівна поїздка лишиться в архіві.</li>
+                : <li>Збережіть. Поїздка з'явиться як <b>чернетка</b>: учасники побачать її, коли опублікуєте.</li>}
             </ol>
           </div>
         )}
@@ -8190,8 +9004,9 @@ function TripForm({ initial, onSave, onCancel, others, pin }) {
             current={{ filled: journeys.filter((j) => (j.legs || []).some(legFilled)).length }}
             onApply={(src, part, pick) => applyCopy("trains", src, part, pick)} />
           {copyNoteFor("trains")}
-          {/* Розклад з DB одним вставленням (v144). */}
-          <SchedulePaste pin={pin} tripDate={t.date || ""}
+          {/* Розклад з DB (v144; з v146 — скріншоти й посилання). Така сама
+              кнопка є всередині кожного відправлення й у «Відправленні назад». */}
+          <DbFill pin={pin} tripDate={t.date || ""} target="all"
             filled={journeys.filter((j) => (j.legs || []).some(legFilled)).length}
             onApply={applySchedule} onRestore={restoreSchedule} />
           <p style={{ fontSize: 12, color: C.muted, margin: "0 0 12px", lineHeight: 1.5 }}>
@@ -8233,6 +9048,10 @@ function TripForm({ initial, onSave, onCancel, others, pin }) {
                 {jOpen && (
                   <div style={{ padding: "0 13px 13px", borderTop: `1px solid ${C.line}`, background: "#fff" }}>
                     <div style={{ height: 12 }} />
+                    {/* Оновити лише це відправлення з DB (v146). key — щоб
+                        для кожного відправлення панель була своя. */}
+                    <DbFill key={`dbf-${ji}`} pin={pin} tripDate={t.date || ""} target="journey"
+                      onApply={applyJourney(ji)} onRestore={restoreJourney} />
                     {legs.map((leg, i) => {
                       const upd = (patch) => setLegs(legs.map((l, j) => j === i ? { ...l, ...patch } : l));
                       const prev = i > 0 ? legs[i - 1] : null;
@@ -8321,15 +9140,17 @@ function TripForm({ initial, onSave, onCancel, others, pin }) {
           {/* Одне поле часу — свідомо, без станцій і пересадок. */}
           <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 12, background: "#fff" }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: C.rasp, marginBottom: 7 }}>Відправлення назад</div>
+            <DbFill pin={pin} tripDate={t.date || ""} target="return" onApply={applyReturn} onRestore={(snap) => set(snap)} />
             <input style={{ ...inp, marginBottom: 7 }} value={t.returnFrom || ""} onChange={(e) => set({ returnFrom: e.target.value })} placeholder="Станція (Würzburg Hbf)" />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <input style={{ ...inp, marginBottom: 7 }} value={t.returnTime || ""} onChange={(e) => set({ returnTime: e.target.value })} placeholder="Час (17:41)" />
               <input style={{ ...inp, marginBottom: 7 }} value={t.returnPlatform || ""} onChange={(e) => set({ returnPlatform: e.target.value })} placeholder="Колія (2)" />
             </div>
             <p style={{ fontSize: 11.5, color: C.muted, margin: 0, lineHeight: 1.45 }}>
-              Три окремі поля навмисно: слово «колія» підставляє сам застосунок
-              потрібною мовою. Якщо вписати все одним рядком, воно лишиться
-              українським для англомовних. Порожні поля — блок не показується.
+              Три окремі поля навмисно: слово «колія» застосунок підставляє сам
+              потрібною мовою, а станцію й час, вписані українською, перекладає
+              (назви латиницею, як «Füssen», лишаються як є). У полі колії —
+              лише номер. Порожні поля — блок не показується.
             </p>
           </div>
           <Field label="Примітка про квитки"><input style={inp} value={t.priceNote} onChange={(e) => set({ priceNote: e.target.value })} placeholder="Bayern-Ticket ~29 €/особа" /></Field>
@@ -8825,6 +9646,9 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem("lang", lang); } catch {} }, [lang]);
   // Keep the module-level CURRENT_LANG in sync so t() works everywhere.
   CURRENT_LANG = lang;
+  // Вхід через Telegram (v146): хто не учасник групи, бачить лише екран входу.
+  const gate = useTgGate();
+  const gateOpen = gate.state === "in" || gate.state === "open";
   // Сповіщення приходять мовою, збереженою в підписці. Якщо людина
   // перемкнула мову вже після того, як увімкнула сповіщення, підписку
   // треба переписати — інакше пуші й далі йшли б старою мовою.
@@ -8835,6 +9659,7 @@ export default function App() {
       .then((sub) => {
         if (!sub) return;
         const j = sub.toJSON();
+        tgLinkEndpoint(j.endpoint).catch(() => {});
         return sbRpc("push_subscribe", {
           p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_lang: lang,
         });
@@ -8860,13 +9685,15 @@ export default function App() {
     // Залежить від PIN: увійшов організатор — перечитуємо з чернетками,
     // вийшов — перечитуємо без них. Інакше після входу чернеток не було
     // б видно, а після виходу вони лишалися б на екрані.
-    if (!sbConfigured()) return;
+    // Вхід через Telegram (v146): поки людину не пустили, поїздок не тягнемо
+    // зовсім — у телефон тих, хто не в групі, вони навіть не потрапляють.
+    if (!sbConfigured() || !gateOpen) return;
     let cancelled = false;
     sbTripsFor(adminPin)
       .then((r) => { if (!cancelled) { setTrips(r.trips); setTeasers(r.teasers); setLoadingTrips(false); } })
       .catch(() => { if (!cancelled) { setLoadingTrips(false); setLoadError(true); } });
     return () => { cancelled = true; };
-  }, [adminPin]);
+  }, [adminPin, gateOpen]);
   const [selected, setSelected] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [editing, setEditing] = useState(null); // trip object being edited, or "new"
@@ -8937,8 +9764,13 @@ export default function App() {
     if (kb == null) return -1;
     return dir * (ka - kb);
   };
-  const upcomingAll = trips.filter((t) => (STATUS[autoStatus(t)]?.group || "upcoming") === "upcoming").sort(byDate(1));
-  const past = trips.filter((t) => (STATUS[autoStatus(t)]?.group || "upcoming") === "past").sort(byDate(-1));
+  // Архів (v146): поїздки, прибрані організатором в архів, не показуються
+  // в жодному списку — ні учасникам, ні організаторові. Організатор бачить
+  // їх окремо, внизу екрана, у «Архів поїздок».
+  const liveTrips = trips.filter((t) => !isArchived(t));
+  const archivedTrips = trips.filter(isArchived).sort(byDate(-1));
+  const upcomingAll = liveTrips.filter((t) => (STATUS[autoStatus(t)]?.group || "upcoming") === "upcoming").sort(byDate(1));
+  const past = liveTrips.filter((t) => (STATUS[autoStatus(t)]?.group || "upcoming") === "past").sort(byDate(-1));
   // «Найближчі» — те, що вже за два тижні або раніше. Решта майбутніх
   // поїздок іде окремим списком нижче: так одразу видно, куди йдемо цими
   // вихідними, а далекі плани не змішуються з найближчими. Поїздка без
@@ -8986,7 +9818,9 @@ export default function App() {
     }
   }, [go, loadingTrips, editing, isAdmin, trips]);
   const later = upcomingAll.filter((x) => { const n = daysUntil(x.date); return n != null && n > SOON_DAYS; });
-  const trip = trips.find((t) => t.id === selected);
+  // Архівну поїздку відкриває лише організатор; учасник за старим
+  // посиланням чи сповіщенням потрапляє на список поїздок.
+  const trip = trips.find((t) => t.id === selected && (isAdmin || !isArchived(t)));
 
   // Зберігає поїздку в Supabase (якщо підключено).
   // Повертає true/false, щоб місце, звідки зберігали, могло чесно сказати
@@ -8999,7 +9833,21 @@ export default function App() {
   // Копія поїздки: редактор відкривається з готовою чернеткою. Нічого не
   // зберігається, доки не натиснуто «Зберегти поїздку», — «Скасувати»
   // просто закриває редактор. Нагору — бо перший крок, дата, саме там.
-  const openCopy = (src) => { setEditing(makeTripCopy(src)); window.scrollTo(0, 0); };
+  const openCopy = (src, opts) => { setEditing(makeTripCopy(src, opts)); window.scrollTo(0, 0); };
+  // Архів (v146). В архів — поїздка зникає зі списків у всіх і не розсилає
+  // сповіщень (годинник c11 її пропускає). Повернути — вона знову там, де
+  // була. «Опублікувати знову» — це копія з новою датою (openCopy з
+  // fromArchive): записи й сповіщення в нової поїздки свої, з нуля, а
+  // архівна лишається в архіві як була.
+  const setArchived = (id, on) => {
+    const t0 = trips.find((x) => x.id === id);
+    if (!t0) return;
+    const t1 = { ...t0, archived: Boolean(on), archivedAt: on ? new Date().toISOString().slice(0, 10) : "" };
+    if (!on) { delete t1.archived; delete t1.archivedAt; }
+    setTrips((prev) => prev.map((x) => (x.id === id ? t1 : x)));
+    if (on) { setSelected(null); setFocusSec(null); window.scrollTo(0, 0); }
+    persistTrip(t1);
+  };
   const saveTrip = (edited) => {
     // У пам'ять кладемо без службового списку ручних правок — він потрібен
     // лише всередині редактора й не повинен ані показуватись, ані зберігатись.
@@ -9086,6 +9934,14 @@ export default function App() {
     else alert("Не вдалося перекласти жодної поїздки.\n\nПеревірте інтернет-зʼєднання і спробуйте ще раз.");
   };
 
+  // Вхід через Telegram (v146). Організатор, що ввійшов на екрані входу за
+  // PIN, одразу потрапляє й у режим організатора.
+  if (gate.state === "check") return <SplashScreen />;
+  if (gate.state === "locked") {
+    return <TgGate why={gate.why} lang={lang} setLang={setLang}
+      onIn={(pinValue) => { gate.unlock(); if (pinValue) tryPin(pinValue); }} />;
+  }
+
   // Екран завантаження при відкритті (лише первинне, поки тягнемо базу).
   if (loadingTrips) return <SplashScreen />;
 
@@ -9093,7 +9949,9 @@ export default function App() {
   if (editing) {
     return (
       <div style={{ minHeight: "100vh", background: C.page, fontFamily: "'Inter', system-ui, sans-serif", color: C.ink }}>
-        <div style={{ maxWidth: 440, margin: "0 auto", background: C.page, minHeight: "100vh", position: "relative" }}>
+        {/* Лише проявлення, без зсуву: у редакторі є прикріплена донизу
+            панель «Зберегти», а зсув (transform) на мить зірвав би її з місця. */}
+        <div className="tc-home-in" style={{ maxWidth: 440, margin: "0 auto", background: C.page, minHeight: "100vh", position: "relative" }}>
           <TripForm
             initial={editing === "new" ? BLANK_TRIP() : editing}
             others={trips}
@@ -9112,12 +9970,15 @@ export default function App() {
         <div style={{ position: "relative", zIndex: 1 }}>
         {trip && !(isDraft(trip) && !isAdmin) ? (
           <TripDetail
+            key={trip.id}
             trip={trip}
             onBack={() => { setSelected(null); setFocusSec(null); }}
             isAdmin={isAdmin}
             onEdit={() => setEditing(toEditable(trip))}
             onCopy={() => openCopy(trip)}
             onDelete={() => deleteTrip(trip.id)}
+            onArchive={(on) => setArchived(trip.id, on)}
+            onRepublish={() => openCopy(trip, { fromArchive: true })}
             onSetStatus={(s) => setStatus(trip.id, s)}
             onSetPostponedDate={(d) => setPostponedDate(trip.id, d)}
             onReorderJourneys={(js) => setJourneys(trip.id, js)}
@@ -9127,7 +9988,7 @@ export default function App() {
             focusSec={focusSec}
           />
         ) : (
-          <div style={{ padding: "0 16px 30px" }}>
+          <div className="tc-home-in" style={{ padding: "0 16px 30px" }}>
             <div style={{ padding: "calc(26px + env(safe-area-inset-top)) 4px 20px", display: "flex", alignItems: "center", gap: 12 }}>
               <img src={LOGO} alt={t("appName")} style={{ width: 60, height: 60, borderRadius: 14, display: "block", objectFit: "cover", border: "1.5px solid rgba(253,228,70,0.45)", boxShadow: "0 3px 10px rgba(0,0,0,0.18)" }} />
               <div style={{ flex: 1 }}>
@@ -9171,7 +10032,7 @@ export default function App() {
             </div>
 
             {tab === "photos" && (
-              <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16 }}>
+              <div key="tab-photos" className="tc-tab-in" style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16 }}>
                 <h2 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 800, color: C.ink }}>{t("arcTitle")}</h2>
                 <p style={{ margin: "0 0 13px", fontSize: 12.5, color: C.muted, lineHeight: 1.5 }}>{t("arcNote")}</p>
                 <DriveArchive folderUrl={DRIVE_URL} isAdmin={isAdmin} adminPin={adminPin} openAlbum={openAlbum} />
@@ -9182,7 +10043,7 @@ export default function App() {
               </div>
             )}
 
-            {tab === "useful" && <UsefulTab isAdmin={isAdmin} adminPin={adminPin} appLang={lang} />}
+            {tab === "useful" && <div key="tab-useful" className="tc-tab-in"><UsefulTab isAdmin={isAdmin} adminPin={adminPin} appLang={lang} /></div>}
 
             {/* Admin: add button */}
             {tab === "trips" && isAdmin && (
@@ -9194,13 +10055,14 @@ export default function App() {
                 одна про людей, друга про вміст. Тому в них різна форма й
                 між ними помітний проміжок, а не спільна смуга. */}
             {tab === "trips" && isAdmin && <div><RedList pin={adminPin} /></div>}
+            {tab === "trips" && isAdmin && <TgAccessPanel pin={adminPin} />}
             {tab === "trips" && isAdmin && trips.length > 0 && (
               <button onClick={translateAll} disabled={!!tProgress} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "rgba(255,255,255,0.10)", color: "#fff", border: "1.5px dashed rgba(255,255,255,0.45)", padding: "11px", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: tProgress ? "default" : "pointer", marginBottom: 14, opacity: tProgress ? 0.7 : 1 }}>
                 🌐 {tProgress ? `Перекладаю… ${tProgress.done}/${tProgress.total}` : t("translateAllBtn")}
               </button>
             )}
 
-            {tab === "trips" && (<>
+            {tab === "trips" && (<div key="tab-trips" className="tc-tab-in">
             <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "6px 4px 14px" }}>
               <Calendar size={16} color={C.yellow} />
               <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, color: C.yellow }}>{t("upcomingTrips")}</h2>
@@ -9218,11 +10080,11 @@ export default function App() {
                 Завантажити демо-поїздки в базу
               </button>
             )}
-            {!loadingTrips && !loadError && teasers.map((d) => (
-              <TripCard key={d.id} trip={d} isAdmin={false} counts={counts} onClick={() => {}} />
+            {!loadingTrips && !loadError && teasers.map((d, i) => (
+              <TripCard key={d.id} animIndex={i} trip={d} isAdmin={false} counts={counts} onClick={() => {}} />
             ))}
-            {upcoming.map((t) => (
-              <TripCard key={t.id} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} />
+            {upcoming.map((t, i) => (
+              <TripCard key={t.id} animIndex={i + teasers.length} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} onArchive={() => setArchived(t.id, true)} />
             ))}
 
             {later.length > 0 && (
@@ -9231,8 +10093,8 @@ export default function App() {
                 <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, color: C.yellow }}>{t("futureTrips")}</h2>
               </div>
             )}
-            {later.map((t) => (
-              <TripCard key={t.id} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} />
+            {later.map((t, i) => (
+              <TripCard key={t.id} animIndex={upcoming.length + teasers.length + i} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} onArchive={() => setArchived(t.id, true)} />
             ))}
 
             {past.length > 0 && (
@@ -9241,11 +10103,18 @@ export default function App() {
                 <h2 style={{ margin: 0, fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, color: "rgba(255,255,255,0.6)" }}>{t("pastTrips")}</h2>
               </div>
             )}
-            {past.map((t) => (
-              <TripCard key={t.id} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} />
+            {past.map((t, i) => (
+              <TripCard key={t.id} animIndex={upcoming.length + teasers.length + later.length + i} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} onArchive={() => setArchived(t.id, true)} />
             ))}
 
-            </>)}
+            {isAdmin && (
+              <ArchiveList trips={archivedTrips}
+                onOpen={(id) => { setSelected(id); setFocusSec(null); window.scrollTo(0, 0); }}
+                onRepublish={(tr) => openCopy(tr, { fromArchive: true })}
+                onRestore={(id) => setArchived(id, false)} />
+            )}
+
+            </div>)}
 
             <PushToggle />
 
@@ -9268,8 +10137,8 @@ export default function App() {
 
         {/* PIN modal */}
         {pinOpen && (
-          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 24 }} onClick={closePin}>
-            <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, borderRadius: 18, padding: 22, width: "100%", maxWidth: 320, boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
+          <div className="tc-overlay" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 24 }} onClick={closePin}>
+            <div className="tc-sheet" onClick={(e) => e.stopPropagation()} style={{ background: C.card, borderRadius: 18, padding: 22, width: "100%", maxWidth: 320, boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
               <h3 style={{ margin: "0 0 6px", fontSize: 17, fontWeight: 800, color: C.ink }}>{t("pinTitle")}</h3>
               {pinReason === "booking" ? (
                 <p style={{ margin: "0 0 16px", fontSize: 13, lineHeight: 1.45, fontWeight: 600, color: C.yellowInk, background: C.yellowSoft, border: `1.5px solid ${C.yellow}`, borderRadius: 10, padding: "9px 11px" }}>{t("pinForBooking")}</p>
