@@ -1,4 +1,15 @@
-// ═══ Tropa Club · api/fill-trip.js · ВЕРСІЯ f3 ═══
+// ═══ Tropa Club · api/fill-trip.js · ВЕРСІЯ f4 ═══
+// f4 (v146) — «Розклад з DB» уміє більше:
+//   • СКРІНШОТИ з'єднання (DB Navigator, bahn.de): Claude читає з картинки
+//     всі поїзди, пересадки, колії й назви ліній (images: до 6 частин).
+//   • ТЕКСТ «Поділитися» з DB Navigator розбирається без Claude, якщо
+//     з'єднання пряме (один поїзд): безкоштовно й навіть без ключа.
+//   • ПОСИЛАННЯ (…bahn.de/buchung/start?vbid=…): сервер раз пробує відкрити
+//     з'єднання на bahn.de. Відкрилось — поїзди й пересадки звідти. DB
+//     часто не пускає сервери (захист від ботів) — тоді чесно кажемо й
+//     просимо скріншот, а не вигадуємо пересадок.
+//   • target: "all" — усі поїзди (як було), "journey" — одне відправлення,
+//     "return" — дорога назад.
 // ═══════════════════════════════════════════════════════════════════
 // Помічники Claude для організатора — усі в одному файлі
 //
@@ -47,7 +58,7 @@
 
 export const config = { maxDuration: 60 };
 
-export const VERSION = "f3";
+export const VERSION = "f4";
 const API = "https://api.anthropic.com/v1";
 const DEFAULT_MODEL = "claude-sonnet-5-5";
 // Запасна модель: якщо основна не прийме параметрів запиту (400) чи її вже
@@ -324,8 +335,16 @@ export const SCHEMA_SCHEDULE = obj({
   notes: S,
 });
 
-export function systemPromptSchedule(today, tripDate) {
-  return `You read train connections that the organizer of "Tropa Club" (one-day group trips in Bavaria for a Ukrainian-speaking community) copied from Deutsche Bahn — the DB Navigator app (the "Teilen"/share text) or the bahn.de website — and turn them into the trip's train fields (JSON schema).
+export function systemPromptSchedule(today, tripDate, target, hasImages) {
+  const focus = target === "journey"
+    ? `\n\nThe organizer is updating ONE outward connection of the trip: return exactly one journey — the connection shown (if several are shown, the first complete one, and say so in notes). returnFrom, returnTime, returnPlatform stay "".`
+    : target === "return"
+      ? `\n\nThe organizer is filling the way BACK: the connection shown is the return connection. Put its FIRST departure into returnFrom (station), returnTime ("HH:MM") and returnPlatform; journeys = [].`
+      : "";
+  const shots = hasImages
+    ? `\n\nScreenshots are attached — DB Navigator or bahn.de connection details, possibly several parts of one long screen, in order. Read every train in them: times, stations, platforms ("Gl. 4" → "4"), the line ("RE 70", "RB 6", "S 3", "BRB RB55"). Do not count the same train twice where parts overlap. Ignore prices, ads, buttons and the phone status bar.`
+    : "";
+  return `You read train connections that the organizer of "Tropa Club" (one-day group trips in Bavaria for a Ukrainian-speaking community) copied from Deutsche Bahn — the DB Navigator app (the "Teilen"/share text or screenshots) or the bahn.de website — and turn them into the trip's train fields (JSON schema).
 
 Rules:
 1. Use only what the text states. Never invent trains, times, stations or platforms. Unknown parts stay "".
@@ -334,7 +353,8 @@ Rules:
 4. journeys — the connections TO the destination, one per connection (for example one from München and one from Augsburg). If the text lists several alternative connections for the same route (search results), take only the first complete one and mention it in notes.
 5. The connection BACK — from the destination toward the place where an outward connection started, usually later the same day — is not a journey. Put the first departure of that connection into returnFrom (station), returnTime ("HH:MM") and returnPlatform. Several return options — take the first.
 6. date — the travel date as "YYYY-MM-DD" if the text states it, else "". Today is ${today}; a date without a year is the nearest future one.${tripDate ? ` The trip in the app is on ${tripDate}.` : ""}
-7. notes — in Ukrainian, 0–2 short sentences for the organizer about things to double-check: replacement bus (SEV, Ersatzverkehr), a reservation requirement, several alternatives in the text, a missing platform, a date different from the trip date. "" if nothing.`;
+7. notes — in Ukrainian, 0–2 short sentences for the organizer about things to double-check: replacement bus (SEV, Ersatzverkehr), a reservation requirement, several alternatives in the text, a missing platform, a date different from the trip date. "" if nothing.
+8. A block "Connection data from DB" may be given: it is reliable for the stations, times and train numbers of EVERY leg, but has no platforms and often only a number instead of the line. Keep its legs; take platforms and line names from the screenshots or the text when they show the same train.${focus}${shots}`;
 }
 
 export function cleanSchedule(raw) {
@@ -348,6 +368,198 @@ export function cleanSchedule(raw) {
     notes: str(r.notes, 400),
   };
 }
+
+// ═══ DB: текст і посилання «Поділитися» (f4) ═════════════════════════
+// Текст, яким ділиться DB Navigator, має сталий вигляд:
+//   Verbindung am Di. 02.12.2025
+//   • von Magdeburg Hbf, Abfahrt 15:01 Uhr Gl. 6 mit IC 2036
+//   • nach Oldenburg(Oldb)Hbf, Ankunft 18:23 Uhr Gl. 6 mit IC 2036
+//   Verbindung ansehen: https://www.bahn.de/buchung/start?vbid=…
+// Лише ПЕРШИЙ поїзд і ОСТАННІЙ — пересадок у ньому немає. Якщо поїзд один
+// і той самий, з'єднання пряме, і цього досить.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function extractVbid(text) {
+  const m = String(text || "").match(/vbid=([0-9A-Za-z%\-]{20,160})/i);
+  if (!m) return "";
+  let v = m[1];
+  try { v = decodeURIComponent(v); } catch { /* як є */ }
+  v = v.trim();
+  return UUID_RE.test(v) ? v.toLowerCase() : "";
+}
+const SH_PLAT = String.raw`(?:\s*(?:Gleis|Gl\.?|Bahnsteig|Bstg\.?|Steig|Platform|Pl\.?|Track)\s*([0-9A-Za-z][0-9A-Za-z\-]{0,6}))?`;
+const shareRe = (who, what) => new RegExp(
+  String.raw`(?:^|\n)[ \t]*[•·*\-]?[ \t]*(?:${who})\s+([^\n]+?),\s*(?:${what})\s+(\d{1,2}[:.]\d{2})\s*(?:Uhr)?` + SH_PLAT + String.raw`\s+(?:mit|with)\s+([^\n]+?)[ \t]*(?=\n|$)`, "i");
+const SHARE_FROM = shareRe("von|from", "Abfahrt|departure|dep\\.?");
+const SHARE_TO = shareRe("nach|to", "Ankunft|arrival|arr\\.?");
+const SHARE_DATE = /(?:Verbindung\s+am|Connection\s+on|Journey\s+on)\s+(?:[A-Za-zÄÖÜäöü]{1,4}\.?,?\s*)?(\d{1,2})\.(\d{1,2})\.(\d{4})/i;
+// Лише ОДНЕ з'єднання «Поділитися» в тексті. Кілька (з різних міст, назад)
+// — це робота для Claude: інакше решта тихо загубилася б.
+const countRe = (re, s) => (s.match(new RegExp(re.source, "gi")) || []).length;
+export function parseDbShare(text) {
+  // Нерозривні й вузькі пробіли (телефони їх люблять) — звичайними.
+  const s = String(text || "").replace(/\r\n?/g, "\n").replace(/[\u00a0\u2007\u2009\u202f]/g, " ");
+  if (countRe(SHARE_FROM, s) !== 1 || countRe(SHARE_TO, s) !== 1 || (s.match(/vbid=/gi) || []).length > 1) return null;
+  const f = s.match(SHARE_FROM), t = s.match(SHARE_TO);
+  if (!f || !t) return null;
+  const dm = s.match(SHARE_DATE);
+  const date = dm ? isoDate(`${dm[3]}-${dm[2].padStart(2, "0")}-${dm[1].padStart(2, "0")}`) : "";
+  const side = (m) => ({ station: line(m[1], 80), time: hhmm(String(m[2]).replace(".", ":")), platform: platform(m[3] || ""), train: trainName(m[4]) });
+  const from = side(f), to = side(t);
+  if (!from.station || !from.time || !to.station || !to.time) return null;
+  // «Прямо» — коли поїзд той самий у першому й останньому рядку. Порівнюємо
+  // ДО чищення назви: «RE 70 (57411)» і «RE 70 (57513)» — різні поїзди
+  // однієї лінії, тобто пересадка.
+  const raw = (m) => String(m[4] || "").replace(/\s+/g, "").toLowerCase();
+  return { date, from, to, direct: Boolean(from.train) && raw(f) === raw(t) };
+}
+
+// Відповідь bahn.de на посилання (GET /web/api/angebote/verbindung/<vbid>)
+// містить hinfahrtRecon — рядок, у якому записано ВСІ частини з'єднання:
+//   ¶HKI¶T$A=1@O=Augsburg Hbf@L=8000013@…$A=1@O=München Hbf@L=8000261@…$202611030808$202611030854$RB 57099$…§W$…§T$…¶KC¶…
+// § — частини, T — поїзд (W, G@F — пішки), далі дві станції (O= назва),
+// відправлення й прибуття (РРРРММДДггхх), назва поїзда. Колій там немає.
+const reconPlace = (v) => {
+  const f = {};
+  String(v || "").split("@").forEach((pair) => { const i = pair.indexOf("="); if (i > 0) f[pair.slice(0, i)] = pair.slice(i + 1); });
+  const name = line(String(f.O || "").replace(/\s+/g, " "), 80);
+  return name || "";
+};
+const reconTime = (v) => {
+  const m = String(v || "").trim().match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/);
+  if (!m) return null;
+  const date = isoDate(`${m[1]}-${m[2]}-${m[3]}`);
+  const hm = hhmm(`${m[4]}:${m[5]}`);
+  return date && hm ? { date, hm } : null;
+};
+// Категорія поїзда з блоку ¶KCC¶ (base64): «CA#DRB» — регіональний (RB),
+// «CA#DRE» — RE, «CA#DBS» — S-Bahn. Потрібна, коли назва — лише номер.
+const KCC_CAT = { DRB: "RB", DRE: "RE", DBS: "S", ICE: "ICE", IC: "IC", EC: "EC", ECE: "ECE", RJ: "RJ", RJX: "RJX", IRE: "IRE", MEX: "MEX", FLX: "FLX" };
+function reconCats(recon, n) {
+  const i = recon.indexOf("¶KCC¶");
+  if (i < 0) return null;
+  let b = recon.slice(i + 5); const e = b.indexOf("¶"); if (e >= 0) b = b.slice(0, e);
+  b = b.trim();
+  if (!b || !/^[A-Za-z0-9+/]+={0,2}$/.test(b)) return null;
+  let txt = "";
+  try { txt = Buffer.from(b, "base64").toString("latin1"); } catch { return null; }
+  const out = txt.split("\n").filter((l) => l.startsWith("Z#")).map((l) => ((l.match(/#CA#([^#]*)#/) || [])[1] || "").trim());
+  return out.length === n ? out : null;
+}
+export function parseRecon(recon) {
+  const s = String(recon || "");
+  if (!s || s.length > 30000) return null;
+  const i = s.indexOf("¶HKI¶");
+  if (i < 0) return null;
+  let body = s.slice(i + 5); const e = body.indexOf("¶"); if (e >= 0) body = body.slice(0, e);
+  const secs = body.split("§").filter((x) => x.trim() !== "");
+  if (secs.length === 0 || secs.length > 30) return null;
+  const legs = [];
+  let date = "";
+  for (const raw of secs) {
+    const p = raw.split("$");
+    const kind = String(p[0] || "").trim();
+    if (kind === "W" || kind === "G@F") continue;          // пішки — не поїзд
+    if (kind !== "T") return null;                         // невідоме — не вгадуємо
+    const from = reconPlace(p[1]), to = reconPlace(p[2]);
+    const dep = reconTime(p[3]), arr = reconTime(p[4]);
+    const name = String(p[5] || "").replace(/\s+/g, " ").trim();
+    if (!from || !to || !dep || !arr || !name) return null;
+    if (!date) date = dep.date;
+    legs.push({ from, fromTime: dep.hm, platform: "", train: trainName(name), to, toTime: arr.hm, toPlatform: "", transfer: "" });
+  }
+  if (legs.length === 0) return null;
+  const cats = reconCats(s, legs.length);
+  if (cats) legs.forEach((l, k) => { if (/^\d+$/.test(l.train) && KCC_CAT[cats[k]]) l.train = `${KCC_CAT[cats[k]]} ${l.train}`; });
+  return { date, legs };
+}
+
+// Один чесний запит до bahn.de — так само, як його робить сама сторінка
+// посилання. Без підробки браузера й без повторів: не пустили — кажемо.
+export async function fetchDbConnection(vbid, fetchFn = fetch, ms = 6000) {
+  let r;
+  try {
+    r = await fetchFn(`https://www.bahn.de/web/api/angebote/verbindung/${encodeURIComponent(vbid)}`, {
+      headers: { Accept: "application/json", "Accept-Language": "de-DE,de;q=0.9,en;q=0.5", "User-Agent": "TropaClub/1.0 (+https://tropa-club.vercel.app)" },
+      signal: AbortSignal.timeout(ms), redirect: "error",
+    });
+  } catch (e) {
+    return { ok: false, reason: e && (e.name === "TimeoutError" || e.name === "AbortError") ? "timeout" : "unreachable" };
+  }
+  let body = "";
+  try { body = String(await r.text()).slice(0, 600000); } catch { body = ""; }
+  if (!r.ok) {
+    const reason = r.status === 403 || r.status === 452 || /OPS_BLOCKED/.test(body) ? "blocked"
+      : r.status === 404 || r.status === 410 || /NOT_FOUND/.test(body) ? "expired"
+      : r.status === 429 ? "rate" : "error";
+    return { ok: false, reason, status: r.status };
+  }
+  let j = null;
+  try { j = JSON.parse(body); } catch { return { ok: false, reason: "unreadable" }; }
+  const rc = parseRecon(j && j.hinfahrtRecon);
+  if (!rc) return { ok: false, reason: "unreadable" };
+  const d = String((j && j.hinfahrtDatum) || "").match(/^\d{4}-\d{2}-\d{2}/);
+  return { ok: true, date: (d && isoDate(d[0])) || rc.date, legs: rc.legs };
+}
+
+const sameStation = (a, b) => {
+  const n = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9äöüß]+/g, "");
+  return n(a) !== "" && n(a) === n(b);
+};
+// Колії й назви поїздів з тексту «Поділитися» — у перший і останній поїзд
+// з'єднання з посилання (там колій немає).
+export function mergeShare(legs, share) {
+  if (!share || legs.length === 0) return legs;
+  const a = legs[0], z = legs[legs.length - 1];
+  if (sameStation(a.from, share.from.station) && a.fromTime === share.from.time) {
+    if (share.from.platform) a.platform = share.from.platform;
+    if (share.from.train && /^[A-Za-z]/.test(share.from.train) && /^(?:[A-Za-z]+ )?\d+$/.test(a.train)) a.train = share.from.train;
+  }
+  if (sameStation(z.to, share.to.station) && z.toTime === share.to.time) {
+    if (share.to.platform) z.toPlatform = share.to.platform;
+    if (share.to.train && /^[A-Za-z]/.test(share.to.train) && /^(?:[A-Za-z]+ )?\d+$/.test(z.train)) z.train = share.to.train;
+  }
+  return legs;
+}
+
+// Результат у тому самому вигляді, що й від Claude (cleanSchedule). Для
+// дороги назад (target "return") — перше відправлення з'єднання.
+export function scheduleFromLegs(legs, date, target, notes) {
+  const L = cleanLegs(legs);
+  if (target === "return") {
+    const a = L[0] || {};
+    return { date: isoDate(date), journeys: [], returnFrom: a.from || "", returnTime: a.fromTime || "", returnPlatform: a.platform || "", notes: str(notes, 400) };
+  }
+  return { date: isoDate(date), journeys: L.length ? [{ legs: L }] : [], returnFrom: "", returnTime: "", returnPlatform: "", notes: str(notes, 400) };
+}
+
+const DB_FAIL = {
+  blocked: "DB не дає серверам відкривати з'єднання за посиланням (захист від ботів)",
+  expired: "DB не знайшов з'єднання за цим посиланням — можливо, воно застаріло",
+  rate: "DB тимчасово обмежив запити",
+  timeout: "DB не відповів вчасно",
+  unreachable: "DB зараз недоступний",
+  unreadable: "відповідь DB незрозуміла",
+  error: "DB відповів помилкою",
+};
+const SHOT_HINT = "Зроби в DB Navigator скріншот з'єднання (щоб було видно всі поїзди й колії) і додай його кнопкою «Скріншот» — Claude прочитає пересадки й колії.";
+
+// Скріншоти від застосунку: JPEG/PNG/WebP у base64, до 6 частин і ~3,8 МБ.
+const IMG_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+export function cleanImages(raw) {
+  const out = [];
+  let total = 0;
+  for (const im of list(raw, 6)) {
+    if (!im || typeof im !== "object") continue;
+    const type = String(im.type || "").toLowerCase();
+    const data = String(im.data || "").replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
+    if (!IMG_TYPES.includes(type) || data.length < 200 || data.length > 2000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) continue;
+    total += data.length;
+    if (total > 3800000) break;
+    out.push({ type, data });
+  }
+  return out;
+}
+const TARGETS = ["all", "journey", "return"];
 
 // ═══ mode "route" — точки маршруту (v144) ════════════════════════════
 const KINDS_ROUTE = ["hike", "city", "bike"];
@@ -644,7 +856,9 @@ async function askClaude(E, task, started) {
         model,
         max_tokens: task.maxTokens || 4000,
         system: task.system,
-        messages: [{ role: "user", content: task.user }],
+        messages: [{ role: "user", content: task.images && task.images.length
+          ? [...task.images.map((im) => ({ type: "image", source: { type: "base64", media_type: im.type, data: im.data } })), { type: "text", text: task.user }]
+          : task.user }],
         output_config: output,
       }),
       signal: AbortSignal.timeout(left - 1500),
@@ -736,10 +950,10 @@ export default async function handler(req, res) {
 
   // Перевірка без витрат: GET /v1/models/<модель> токенів не витрачає.
   if (req.method === "GET") {
-    const report = { "версія": VERSION, "що вміє": "оголошення для Telegram · розклад з DB · точки маршруту (GPX/KML, Google Maps)", "модель": E.model };
+    const report = { "версія": VERSION, "що вміє": "оголошення для Telegram · розклад з DB (текст, посилання, скріншоти) · точки маршруту (GPX/KML, Google Maps)", "модель": E.model };
     report["ключ Claude"] = !K.key ? "немає"
       : K.from === "ANTHROPIC_API_KEY" ? "є"
-      : `є — у змінній «${K.from}» (працює; можна залишити так)`;
+      : `є — у змінній «${K.from}» (назва з опискою, але сервер її знаходить; чи сам ключ дійсний — див. «ключ працює»)`;
     if (!K.key) {
       const h = keyHints();
       if (h.empty.length) report["змінна є, але порожня"] = h.empty.join(", ");
@@ -754,7 +968,7 @@ export default async function handler(req, res) {
           headers: { "x-api-key": E.claude, "anthropic-version": "2023-06-01" }, signal: AbortSignal.timeout(15000),
         });
         report["ключ працює"] = r.ok ? "так"
-          : r.status === 401 || r.status === 403 ? "ні — ключ неправильний або видалений"
+          : r.status === 401 || r.status === 403 ? "ні — ключ неправильний, видалений або з закінченим терміном: створи новий (Create Key → Copy) і заміни значення у Vercel, потім Redeploy"
           : r.status === 404 ? `ключ так, але моделі ${E.model} немає — прибери CLAUDE_MODEL у Vercel`
           : `Claude відповів ${r.status}`;
       } catch (e) {
@@ -785,7 +999,70 @@ export default async function handler(req, res) {
       return;
     }
 
-    if (!["trip", "announce", "schedule", "route"].includes(mode)) { res.status(400).json({ error: "невідома дія", code: "mode" }); return; }
+    // Розклад з DB (f4): текст, посилання й скріншоти. Частина шляхів —
+    // без Claude (текст «Поділитися» прямого з'єднання, посилання DB).
+    if (mode === "schedule") {
+      const text = cleanText(body.text);
+      const images = cleanImages(body.images);
+      const target = TARGETS.includes(body.target) ? body.target : "all";
+      const tripDate = isoDate(body.tripDate);
+      if (text.length < 15 && images.length === 0) { res.status(400).json({ error: "замало тексту — вставте розклад повністю або додайте скріншот", code: "short" }); return; }
+      if (text.length > MAX_TEXT) { res.status(400).json({ error: `задовгий текст — до ${MAX_TEXT} знаків`, code: "long" }); return; }
+      // Кілька посилань (кілька з'єднань) — не ходимо в DB: дані одного
+      // з'єднання заплутали б розбір решти.
+      const vbid = (text.match(/vbid=/gi) || []).length === 1 ? extractVbid(text) : "";
+      const share = parseDbShare(text);
+      // Без посилання й без скріншотів текст «Поділитися» прямого з'єднання
+      // повний: один поїзд, обидві станції, час і колії.
+      let db = null;
+      if (vbid) db = await fetchDbConnection(vbid, fetch, Math.min(6000, Math.max(1500, BUDGET_MS - (Date.now() - started) - 30000)));
+      const onlyLink = vbid && text.replace(/https?:\/\/\S+/g, "").replace(/(Verbindung ansehen|View connection)\s*:?/gi, "").trim().length < 10;
+      if (images.length === 0) {
+        if (db && db.ok) {
+          const legs = mergeShare(db.legs.map((l) => ({ ...l })), share);
+          const miss = legs.some((l, k) => (!l.platform) || (k === legs.length - 1 && !l.toPlatform));
+          const note = miss ? "Колій пересадок DB у посиланні не дає — допиши їх або додай скріншот." : "";
+          res.status(200).json({ ok: true, source: "db", ...scheduleFromLegs(legs, db.date || (share && share.date), target, note) });
+          return;
+        }
+        if (share && share.direct) {
+          const f = share.from, z = share.to;
+          const num = /^\d+$/.test(f.train) ? `У тексті DB лише номер поїзда (${f.train}) — назву лінії (як «RE 70») можна дописати.` : "";
+          res.status(200).json({ ok: true, source: "share", ...scheduleFromLegs([{ from: f.station, fromTime: f.time, platform: f.platform, train: f.train, to: z.station, toTime: z.time, toPlatform: z.platform }], share.date, target, num) });
+          return;
+        }
+        if (share && !share.direct && target !== "return") {
+          const why = db && !db.ok ? `${DB_FAIL[db.reason] || DB_FAIL.error}, а в` : "У";
+          res.status(422).json({ code: "transfers", error: `${why} тексті «Поділитися» є лише перший і останній поїзд (${share.from.station} ${share.from.time} → ${share.to.station} ${share.to.time}), без пересадок. ${SHOT_HINT}` });
+          return;
+        }
+        if (share && target === "return") {
+          const f = share.from;
+          res.status(200).json({ ok: true, source: "share", ...scheduleFromLegs([{ from: f.station, fromTime: f.time, platform: f.platform, train: f.train, to: share.to.station, toTime: share.to.time, toPlatform: share.to.platform }], share.date, "return", "") });
+          return;
+        }
+        if (onlyLink) {
+          res.status(422).json({ code: "dblink", error: `${db && !db.ok ? DB_FAIL[db.reason] || DB_FAIL.error : DB_FAIL.error}. ${SHOT_HINT}` });
+          return;
+        }
+      }
+      if (!E.claude) { res.status(500).json({ error: "немає ключа Claude: додай ANTHROPIC_API_KEY у Vercel і зроби Redeploy", code: "nokey" }); return; }
+      const dbBlock = db && db.ok
+        ? `\n\nConnection data from DB (from the link):\n${db.legs.map((l, k) => `${k + 1}. ${l.train}: ${l.from} ${l.fromTime} → ${l.to} ${l.toTime}`).join("\n")}${db.date ? `\nDate: ${db.date}` : ""}`
+        : "";
+      const a = await askClaude(E, {
+        schema: SCHEMA_SCHEDULE, system: systemPromptSchedule(berlinToday(), tripDate, target, images.length > 0),
+        effort: images.length > 0 ? "medium" : "low", maxTokens: 4000, images,
+        user: `${text ? `Copied from Deutsche Bahn:\n<<<\n${text}\n>>>` : "Only screenshots are given."}${dbBlock}`,
+      }, started);
+      if (!a.raw) { res.status(a.status).json(a.body); return; }
+      const out = cleanSchedule(a.raw);
+      if (target === "journey" && out.journeys.length > 1) out.journeys = out.journeys.slice(0, 1);
+      res.status(200).json({ ok: true, source: images.length ? "shots" : "claude", ...out, ...a.meta });
+      return;
+    }
+
+    if (!["trip", "announce", "route"].includes(mode)) { res.status(400).json({ error: "невідома дія", code: "mode" }); return; }
     if (!E.claude) { res.status(500).json({ error: "немає ключа Claude: додай ANTHROPIC_API_KEY у Vercel і зроби Redeploy", code: "nokey" }); return; }
 
     if (mode === "announce") {
@@ -803,18 +1080,6 @@ export default async function handler(req, res) {
       return;
     }
 
-    if (mode === "schedule") {
-      const text = cleanText(body.text);
-      if (text.length < 15) { res.status(400).json({ error: "замало тексту — вставте розклад повністю", code: "short" }); return; }
-      if (text.length > MAX_TEXT) { res.status(400).json({ error: `задовгий текст — до ${MAX_TEXT} знаків`, code: "long" }); return; }
-      const a = await askClaude(E, {
-        schema: SCHEMA_SCHEDULE, system: systemPromptSchedule(berlinToday(), isoDate(body.tripDate)), effort: "low", maxTokens: 4000,
-        user: `Copied from Deutsche Bahn:\n<<<\n${text}\n>>>`,
-      }, started);
-      if (!a.raw) { res.status(a.status).json(a.body); return; }
-      res.status(200).json({ ok: true, ...cleanSchedule(a.raw), ...a.meta });
-      return;
-    }
 
     if (mode === "route") {
       const cands = cleanCandidates(body.candidates);

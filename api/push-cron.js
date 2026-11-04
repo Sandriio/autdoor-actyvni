@@ -1,4 +1,11 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c10 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c11 ═══
+// c11 — «Відкрито запис» — лише в ПОНЕДІЛОК о 18:00 перед поїздкою, хоч би
+//       на який день вона припадала (так попросив організатор 04.11). Було
+//       «рівно за шість діб», і для суботньої поїздки виходила неділя.
+//       Поїздка в понеділок — оголошення в попередній понеділок.
+//       Поїздки в архіві (App.jsx v146) сповіщень не розсилають, як і
+//       чернетки. Раз на виклик годинник просить api/tg.js звірити, чи
+//       учасники ще в Telegram-групі (вхід через Telegram, v146).
 // c10 — «Мало місць» і «Місць немає» — лише до 22:00 (було до 23:00), так
 //       попросив організатор 04.10; уночі чекають до 07:00.
 //       Стан «Завершено», вибраний колись вручну, більше не вимикає
@@ -120,6 +127,16 @@ const addDays = (iso, n) => {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
+// День оголошення «Відкрито запис» (c11): понеділок перед поїздкою.
+// Вівторок–неділя — понеділок того ж тижня (за 1–6 днів), поїздка в
+// понеділок — попередній понеділок (за 7 днів).
+export function openDayOf(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  const dow = new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00Z`).getUTCDay(); // 0 — неділя
+  const back = dow === 1 ? 7 : (dow + 6) % 7;
+  return addDays(`${m[1]}-${m[2]}-${m[3]}`, -back);
+}
 const hhmm = (min) =>
   `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 const tx = (v, lang) => {
@@ -511,6 +528,8 @@ function build(kind, tr, extra) {
   return out;
 }
 
+const r404 = (e) => /404/.test(String((e && e.message) || ""));
+
 export default async function handler(req, res) {
   // Ключ приймаємо двома шляхами.
   //
@@ -559,7 +578,9 @@ export default async function handler(req, res) {
   // б саме те, що від глядачів ховається. Пропускаємо ДО журналу
   // push_log: так жоден ключ не займається завчасно, і коли поїздку
   // опублікують, її сповіщення підуть як звичайно.
-  for (const row of (trips || []).filter((r) => !(r && r.data && r.data.draft === true))) {
+  // Архів (v146) — так само: поїздка, яку організатор прибрав в архів, не
+  // розсилає нічого. Повернуть з архіву — сповіщення знову за розкладом.
+  for (const row of (trips || []).filter((r) => !(r && r.data && (r.data.draft === true || r.data.archived === true)))) {
     // Одна зіпсована поїздка не має зупинити сповіщення решти (c9): помилка
     // в її даних іде у звіт, а цикл іде далі.
     try {
@@ -585,22 +606,18 @@ export default async function handler(req, res) {
     const days = daysBetween(nowB.date, date);
     const tag = (kind) => tagOf(id, kind);
 
-    // ① За 7 днів о 09:00 — набір відкрито. Або будь-коли пізніше,
-    //    якщо той момент проґавили.
-    // Рівно за ШІСТЬ діб до поїздки о 18:00 — і тільки того дня.
+    // ① Набір відкрито — у ПОНЕДІЛОК перед поїздкою о 18:00 (c11) і лише
+    //    того дня: пропущені 18:00 (годинник не озвався) наздоганяються до
+    //    опівночі, але не наступного дня.
     //
-    // Було «за 7 діб або пізніше, при першій нагоді». Через це сповіщення
-    // приходило на добу пізніше: момент на сьомий день о 18:00 губився
-    // (годинник у ті хвилини не викликався), а наздоганяння спрацьовувало
-    // вже наступного дня в довільну годину.
-    //
-    // Шість діб, а не сім, — це те, що ви задавали прикладами: поїздка в
-    // суботу 05.09 → сповіщення в неділю 30.08; поїздка в неділю 20.09 →
-    // сповіщення в понеділок 14.09. Обидва рази це шостий день до.
-    const openDay = addDays(date, -6);
+    // Було «рівно за шість діб»: для недільної поїздки це понеділок, а для
+    // суботньої — неділя, і оголошення приходило не в той день. Тепер день
+    // один для всіх: понеділок того ж тижня. Поїздка саме в понеділок —
+    // попередній понеділок, щоб запис відкрився заздалегідь.
+    const openDay = openDayOf(date);
     const openDue = nowB.date === openDay && nowMin >= 18 * 60;
     if (openDue) planned.push({ key: `open:${id}`, tag: tag("open"), msgs: build("open", tr), url: goTo(id, GO.open) });
-    else why.push(`open — потрібен день ${openDay} після 18:00 · зараз ${nowB.date} ${hhmm(nowMin)}`);
+    else why.push(`open — потрібен понеділок ${openDay} після 18:00 · зараз ${nowB.date} ${hhmm(nowMin)}`);
 
     // ② Лишається мало місць. Перевіряється щоразу, надсилається один раз.
     //    Вночі (22:00–07:00) чекає ранку: заявку можуть прийняти й опівночі,
@@ -873,7 +890,7 @@ export default async function handler(req, res) {
 
   if (debug) {
     res.status(200).json({
-      version: "c10",
+      version: "c11",
       berlin: nowText,
       window: "від моменту й пізніше",
       trips: report,
@@ -890,9 +907,28 @@ export default async function handler(req, res) {
 
   await deliver(trainPlanned);
 
+  // Вхід через Telegram (v146): чи учасники ще в групі. Звіряє api/tg.js
+  // невеликими порціями; хто вийшов — без доступу й без сповіщень. Наприкінці
+  // і з власним таймаутом: сповіщення важливіші.
+  // Раз на годину (перший виклик години) і не довше 6 с: cron-job.org
+  // обриває виклик на 30-й секунді, а звірка поїздів уже могла забрати 15.
+  let telegram = "не звірялось — лише в першу чверть години";
+  if (nowB.minute < 15) try {
+    const r = await fetch(`${origin}/api/tg`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "sweep", secret: process.env.CRON_SECRET }),
+      signal: AbortSignal.timeout(6000),
+    });
+    const j = await r.json().catch(() => null);
+    telegram = !j ? `api/tg відповів ${r.status}` : j.gate === false ? "вхід через Telegram вимкнено"
+      : j.error ? `помилка: ${String(j.error).slice(0, 120)}` : `звірено ${j.checked || 0}, вийшли ${j.left || 0}, без відповіді ${j.errors || 0}`;
+  } catch (e) {
+    telegram = r404(e) ? "api/tg ще немає" : `не відповів: ${String((e && e.message) || e).slice(0, 80)}`;
+  }
+
   res.status(200).json({
-    version: "c10", berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped,
+    version: "c11", berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped,
     journal: journalOk === null ? "нічого не надсилалось" : journalOk ? "записано" : "не пишеться — виконай supabase-v140.sql",
-    trains: trainReport,
+    trains: trainReport, telegram,
   });
 }
