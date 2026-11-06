@@ -1,4 +1,32 @@
-// ═══ Tropa Club · api/tg.js · ВЕРСІЯ g1 ═══
+// ═══ Tropa Club · api/tg.js · ВЕРСІЯ g3 ═══
+// g3 (v147) — двері більше не відчиняються через збій. Щойно хтось хоч раз
+//      увійшов через бота, перевірка лишається ввімкненою за будь-якої
+//      помилки (Telegram мовчить, бот втратив права, база не відповіла).
+//      Відчинено лише тоді, коли бота немає, TELEGRAM_GATE=off, у базі немає
+//      таблиць входу або ще ніхто ніколи не входив. Що саме зламалось —
+//      видно в панелі організатора й за адресою /api/tg.
+//      • Записи на поїздки й підписка на сповіщення — теж лише тут (дія rpc)
+//        і лише з квитком: supabase-v147.sql забирає ці функції бази в
+//        публічного ключа. Хто вийшов із групи, не запишеться, не побачить
+//        списку учасників і не підпишеться на сповіщення в обхід застосунку.
+//      • Квиток організатора за PIN діє 14 днів (було 180) і поновлюється
+//        щоразу, як організатор входить у свій режим із PIN.
+//      • Звірку квитків використовує й api/trains.js (функція admit).
+//      • «Таблиць входу немає» — лише коли база прямо каже «таблицю не
+//        знайдено» (404 з кодом PGRST205/42P01) і через бота ще ніхто не
+//        входив; випадкове «404» у тексті помилки двері більше не відчиняє.
+//      • Тестова збірка Vercel (preview) без діючого входу даних не віддає.
+//      • Запис — лише на опубліковану поїздку; підписка й запис звіряють
+//        квиток без хвилинної пам'яті; годинник вимикає телефони тих, хто
+//        вийшов, навіть якщо їх устигли прив'язати знову.
+//      • Поки є проблема з ботом, «вимкнути сповіщення без входу» не діє.
+// g2 (v147) — поїздки тепер видає ЛИШЕ цей сервер (дія trips) і лише тим,
+//      кого пускає вхід через Telegram. Пряме читання таблиці поїздок
+//      публічним ключем закриває supabase-v147.sql — після нього людина,
+//      що вийшла з групи, не дістане поїздок і в обхід застосунку.
+//      Членство звіряється частіше: не рідше ніж раз на 6 годин (було 20).
+//      Тимчасовий збій Telegram більше не відчиняє двері: якщо вхід уже
+//      працював, він лишається чинним, поки Telegram не відповість знову.
 // ═══════════════════════════════════════════════════════════════════
 // ВХІД ЧЕРЕЗ TELEGRAM — застосунок лише для учасників групи (v146)
 //
@@ -38,20 +66,37 @@
 //   admin { pin }     — зведення для організатора
 //   cleanup { pin }   — вимкнути сповіщення телефонам без входу
 //   sweep { secret }  — щоденна звірка (кличе годинник push-cron)
+//   trips { token }   — поїздки для учасника (g2)
+//   rpc { fn, args, token } — функції бази від імені учасника: записи на
+//                       поїздки й підписка на сповіщення (g3, перелік RPC_MEMBER)
 // GET — перевірка налаштувань без секретів; заодно ставить webhook.
 // ═══════════════════════════════════════════════════════════════════
 
 import crypto from "crypto";
+import zlib from "zlib";
 
 export const config = { maxDuration: 30 };
-export const VERSION = "g1";
+export const VERSION = "g3";
 
 const TG = "https://api.telegram.org";
 const NONCE_MIN = 30;            // код входу живе 30 хвилин
-const RECHECK_H = 20;            // членство звіряємо, якщо минуло 20+ годин
+const RECHECK_H = 6;             // членство звіряємо, якщо минуло 6+ годин (g2; було 20)
 const SWEEP_LIMIT = 40;          // скільки людей звіряє один виклик годинника (раз на годину)
-const ADMIN_DAYS = 180;          // квиток організатора (за PIN) діє півроку
+const ADMIN_DAYS = 14;           // квиток організатора (за PIN) діє 14 днів; поновлюється з кожним входом за PIN (g3; було 180)
 const IN = ["creator", "administrator", "member"];
+// Функції бази, які застосунок кличе від імені учасника (g3). З
+// supabase-v147.sql публічний ключ їх не кличе — лише цей сервер (дія rpc).
+// Функції організатора з PIN тут немає: їх захищає сам PIN.
+export const RPC_MEMBER = [
+  "booked_counts", "trip_guests", "book_trip", "my_booking", "claim_booking",
+  "cancel_booking", "update_booking", "booking_link_push", "push_subscribe",
+];
+// Дії, що лишають слід: квиток для них звіряємо без хвилинної пам'яті.
+const LASTING = ["push_subscribe", "booking_link_push", "book_trip", "claim_booking"];
+// Тестова збірка Vercel (preview) бачить ту саму базу. Без діючого входу
+// через Telegram вона даних не віддає зовсім — інакше її адреса відкривала
+// б усе кожному.
+const PREVIEW_NO = { gate: true, ok: false, reason: "preview", error: "тестова збірка без входу через Telegram — дані не віддаються" };
 
 const env = () => ({
   bot: String(process.env.TELEGRAM_BOT_TOKEN || "").trim(),
@@ -95,7 +140,10 @@ export function readToken(secret, token) {
     const p = JSON.parse(Buffer.from(m[1], "base64url").toString("utf8"));
     if (!p || typeof p !== "object") return null;
     if (p.a === 1) {
-      if (!Number(p.e) || Date.now() / 1000 > Number(p.e)) return null;
+      const now = Date.now() / 1000;
+      if (!Number(p.e) || now > Number(p.e)) return null;
+      // g3: не довше 14 днів від видачі — і для квитків, виданих ще на півроку.
+      if (!Number(p.t) || now - Number(p.t) > ADMIN_DAYS * 86400 + 300) return null;
       return { admin: true, uid: 0, name: clean(p.n, 60) || "організатор" };
     }
     const uid = Number(p.u);
@@ -137,42 +185,63 @@ export async function memberState(bot, group, uid) {
   return { state: "error", status: "", why: d.slice(0, 120) || "Telegram не відповів" };
 }
 let BOT_ME = null;
+let BOT_NET = false;   // останній getMe не вдався через мережу, а не через токен
 async function botMe(bot) {
   if (BOT_ME && BOT_ME.token === bot) return BOT_ME.me;
   const j = await tgCall(bot, "getMe", {}, 6000);
+  BOT_NET = Boolean(j && j.net);
   if (j && j.ok && j.result) { BOT_ME = { token: bot, me: j.result }; return j.result; }
   return null;
 }
 let HOOK_DONE = false;
-// Готовність (g1): перевірка вмикається, лише коли все налаштовано — бот
-// відповідає, бачить групу й він у ній адміністратор, webhook стоїть на
-// цю адресу з чинним секретом, а в базі є таблиці входу. Інакше застосунок
-// лишається відкритим: помилка в налаштуваннях не має зачинити двері всім.
-// Відповідь пам'ятаємо 10 хвилин (невдалу — 2).
+// Готовність. Поки вхід ще жодного разу не працював, перевірка вмикається
+// лише коли все налаштовано — бот відповідає, бачить групу й він у ній
+// адміністратор, webhook стоїть на цю адресу з чинним секретом, а в базі
+// є таблиці входу. Так помилка в першому налаштуванні не зачиняє двері всім.
+// g3: щойно хтось хоч раз увійшов через бота, перевірка лишається
+// ввімкненою за будь-якої помилки — і тимчасової (Telegram мовчить), і
+// сталої (бот втратив права, токен відкликали, webhook не ставиться).
+// Хто вже увійшов, заходить, як і раніше; хто вийшов із групи — ні; нові
+// входи чекають, доки організатор не виправить (причину видно в його
+// панелі — поле problem — і за адресою /api/tg). Відчиняє двері лише
+// TELEGRAM_GATE=off, відсутність бота чи таблиць входу у базі.
+// Відповідь пам'ятаємо 10 хвилин (невдалу чи вимушену — 2).
 let READY = null;
-export function resetReady() { READY = null; BOT_ME = null; HOOK_DONE = false; }
+export function resetReady() { READY = null; BOT_ME = null; HOOK_DONE = false; SEEN.clear(); }
 async function ready(C, E) {
   if (READY && READY.bot === C.bot && Date.now() - READY.at < (READY.ok ? 600000 : 120000)) return READY;
   let why = "";
   const me = await botMe(C.bot);
-  if (!me) why = "бот не відповідає або токен неправильний";
+  if (!me) why = BOT_NET ? "Telegram не відповідає" : "бот не відповідає або токен неправильний — перевір TELEGRAM_BOT_TOKEN";
   if (!why) {
     const g = await tgCall(C.bot, "getChat", { chat_id: C.group }, 6000);
-    if (!(g && g.ok)) why = `бот не бачить групу ${C.group} — додай його в групу адміністратором`;
+    if (!(g && g.ok)) why = g && g.net ? "Telegram не відповідає" : `бот не бачить групу ${C.group} — додай його в групу адміністратором`;
   }
   if (!why) {
     const bm = await tgCall(C.bot, "getChatMember", { chat_id: C.group, user_id: me.id }, 6000);
     const st = bm && bm.ok && bm.result ? String(bm.result.status || "") : "";
-    if (st !== "administrator" && st !== "creator") why = `бот не адміністратор групи ${C.group} — зроби його адміністратором (права можна не давати)`;
+    if (st !== "administrator" && st !== "creator") why = bm && bm.net ? "Telegram не відповідає" : `бот не адміністратор групи ${C.group} — зроби його адміністратором (права можна не давати)`;
   }
   if (!why) {
     try { await db(E, "GET", "tg_logins?select=nonce&limit=1"); }
     catch (e) { why = setupHint(e) || "база не відповіла"; }
   }
   if (!why) {
-    const h = await ensureHook(C.bot).catch(() => ({ ok: false, why: "Telegram не відповів" }));
+    const h = await ensureHook(C.bot).catch(() => ({ ok: false, why: "Telegram не відповів", net: true }));
     if (!h.ok) why = `webhook не встановлено (${h.why || "невідомо чому"})`;
     else HOOK_DONE = true;
+  }
+  if (why) {
+    // Чи вхід уже колись працював: готовність була на цьому сервері або
+    // хтось уже входив через бота. Не вдалось навіть спитати базу — теж
+    // вважаємо, що так: краще не пустити, ніж пустити всіх. Відчинено лише
+    // тоді, коли таблиці людей справді немає або в ній порожньо.
+    let used = Boolean(READY && READY.ok);
+    if (!used) {
+      try { const rows = await db(E, "GET", "tg_members?select=uid&limit=1"); used = Array.isArray(rows) && rows.length > 0; }
+      catch (e) { used = !isMissingTable(e); }
+    }
+    if (used) { READY = { bot: C.bot, at: Date.now() - 480000, ok: true, why: "", assumed: why }; return READY; }
   }
   READY = { bot: C.bot, at: Date.now(), ok: !why, why };
   return READY;
@@ -184,11 +253,12 @@ async function ensureHook(bot) {
   if (!isProd()) return { ok: false, why: "не основна збірка" };
   const want = appUrl(hookPath(bot));
   const info = await tgCall(bot, "getWebhookInfo", {}, 6000);
+  if (info && info.net) return { ok: false, net: true, why: "Telegram не відповів" };
   const cur = info && info.ok && info.result ? info.result : null;
   const updates = cur && Array.isArray(cur.allowed_updates) ? cur.allowed_updates : [];
   if (cur && cur.url === want && updates.includes("chat_member")) return { ok: true, set: false };
   const j = await tgCall(bot, "setWebhook", { url: want, secret_token: hookSecret(bot), allowed_updates: ["message", "chat_member"], drop_pending_updates: true }, 8000);
-  return j && j.ok ? { ok: true, set: true } : { ok: false, why: clean(j && j.description, 120) };
+  return j && j.ok ? { ok: true, set: true } : { ok: false, net: Boolean(j && j.net), why: clean(j && j.description, 120) };
 }
 
 // ── База (службовий ключ; таблиці закриті для телефонів) ─────────────
@@ -215,8 +285,13 @@ async function rpc(E, fn, body, key) {
   return txt ? JSON.parse(txt) : null;
 }
 const pinOk = async (E, pin) => Boolean(pin) && (await rpc(E, "check_pin", { pin: String(pin) }).catch(() => null)) === true;
-const setupHint = (e) => (/tg_(members|logins|devices)/.test(String(e && e.message)) && /404|42P01|does not exist|PGRST20/.test(String(e && e.message))
-  ? "у базі немає таблиць входу — виконай supabase-v146.sql" : "");
+// Таблиць входу справді немає (supabase-v146.sql не виконано): база
+// відповідає 404 з кодом «таблицю не знайдено». Будь-який інший збій
+// (тимчасова помилка, «404» десь у тексті відповіді) — не про налаштування.
+const isMissingTable = (e) => Boolean(e) && e.status === 404
+  && /tg_(members|logins|devices)/.test(`${e.message || ""} ${e.body || ""}`)
+  && /"code"\s*:\s*"(PGRST205|42P01)"/.test(String(e.body || ""));
+const setupHint = (e) => (isMissingTable(e) ? "у базі немає таблиць входу — виконай supabase-v146.sql" : "");
 
 async function saveMember(E, uid, u, state) {
   const now = new Date().toISOString();
@@ -284,6 +359,7 @@ export async function onUpdate(E, C, up) {
     if (!ours || !u || !u.id || u.is_bot) return null;
     const st = String(cm.new_chat_member.status || "");
     const inside = IN.includes(st) || (st === "restricted" && cm.new_chat_member.is_member === true);
+    if (!inside) seenDrop(u.id);
     try {
       await saveMember(E, u.id, u, { state: inside ? "in" : "out", status: inside ? st : (st === "kicked" ? "kicked" : "left") });
       if (!inside) await dropDevices(E, u.id);
@@ -323,28 +399,73 @@ export async function onUpdate(E, C, up) {
 }
 
 // ── Квиток → чи пускати ─────────────────────────────────────────────
-export async function checkToken(E, C, token) {
+// Щойно перевірений квиток пам'ятаємо хвилину: застосунок, відкриваючись,
+// питає кілька речей одразу (поїздки, місця, учасники), і зайвий раз
+// питати базу ні до чого. Вихід із групи (chat_member) забуває відразу.
+const SEEN = new Map();
+const SEEN_MS = 60000;
+const seenGet = (token) => {
+  const h = SEEN.get(token);
+  if (!h) return null;
+  if (Date.now() - h.at > SEEN_MS) { SEEN.delete(token); return null; }
+  return h.r;
+};
+const seenPut = (token, uid, r) => {
+  if (SEEN.size >= 400) SEEN.delete(SEEN.keys().next().value);
+  SEEN.set(token, { at: Date.now(), uid, r });
+};
+const seenDrop = (uid) => { for (const [k, v] of SEEN) if (v.uid === uid) SEEN.delete(k); };
+
+// fresh — не брати з пам'яті: для дій, що лишають слід (підписка на
+// сповіщення, запис), — щоб вихід із групи, який щойно обробив інший
+// сервер, діяв відразу.
+export async function checkToken(E, C, token, noMemo = false) {
   const p = readToken(C.sess, token);
   if (!p) return { ok: false, reason: "bad" };
   if (p.admin) return { ok: true, admin: true, name: p.name };
-  let row = null;
+  const key = String(token);
+  const hit = noMemo ? null : seenGet(key);
+  if (hit) return hit;
+  let row = null, dbDown = false;
   try { row = ((await db(E, "GET", `tg_members?uid=eq.${p.uid}&select=*`)) || [])[0] || null; }
-  catch (e) { return { ok: true, name: p.name, soft: "база не відповіла" }; }   // не зачиняємо через збій
+  catch { dbDown = true; }
   const fresh = row && (Date.now() - new Date(row.checked_at).getTime()) / 3600000 < RECHECK_H;
   if (row && fresh) {
     if (!isIn(row.status)) return { ok: false, reason: "left" };
     db(E, "PATCH", `tg_members?uid=eq.${p.uid}`, { last_seen: new Date().toISOString() }).catch(() => {});
-    return { ok: true, name: row.name || p.name };
+    const r = { ok: true, uid: p.uid, name: row.name || p.name };
+    seenPut(key, p.uid, r);
+    return r;
   }
+  // Давно не звіряли, людини немає в базі або база не відповіла (g3: тоді
+  // не пускаємо наосліп, а питаємо Telegram).
   const ms = await memberState(C.bot, C.group, p.uid);
   if (ms.state === "error") {
     // Telegram мовчить — віримо останньому відомому стану.
     if (row && !isIn(row.status)) return { ok: false, reason: "left" };
-    return { ok: true, name: (row && row.name) || p.name, soft: ms.why };
+    return { ok: true, uid: p.uid, name: (row && row.name) || p.name, soft: dbDown ? "база й Telegram не відповіли" : ms.why };
   }
-  try { await saveMember(E, p.uid, null, ms); } catch { /* */ }
-  if (ms.state === "out") { await dropDevices(E, p.uid).catch(() => 0); return { ok: false, reason: "left" }; }
-  return { ok: true, name: (row && row.name) || p.name };
+  if (!dbDown) { try { await saveMember(E, p.uid, null, ms); } catch { /* */ } }
+  if (ms.state === "out") {
+    seenDrop(p.uid);
+    if (!dbDown) await dropDevices(E, p.uid).catch(() => 0);
+    return { ok: false, reason: "left" };
+  }
+  const r = { ok: true, uid: p.uid, name: (row && row.name) || p.name };
+  if (!dbDown) seenPut(key, p.uid, r);
+  return r;
+}
+
+// Для інших серверів (api/trains.js): чи пускати запит із цим квитком до
+// даних поїздок. Перевірки входу немає або вона ще не діє — пускаємо всіх.
+export async function admit(token) {
+  const C = env();
+  if (!C.bot || C.off) return isProd() ? { ok: true, gate: false } : { ok: false, gate: true, reason: "preview" };
+  const E = { url: C.url, svc: C.svc, anon: C.anon };
+  const rd = await ready(C, E);
+  if (!rd.ok) return isProd() ? { ok: true, gate: false } : { ok: false, gate: true, reason: "preview" };
+  const who = await checkToken(E, C, token);
+  return who.ok ? { ok: true, gate: true, admin: Boolean(who.admin) } : { ok: false, gate: true, reason: who.reason || "bad" };
 }
 
 // ── Щоденна звірка (годинник) ───────────────────────────────────────
@@ -363,9 +484,19 @@ export async function sweep(E, C) {
       if (ms.state === "error") { out.errors++; return; }
       out.checked++;
       try { await saveMember(E, r.uid, null, ms); } catch { out.errors++; return; }
-      if (ms.state === "out") { out.left++; out.pushOff += await dropDevices(E, r.uid).catch(() => 0); }
+      if (ms.state === "out") { seenDrop(r.uid); out.left++; out.pushOff += await dropDevices(E, r.uid).catch(() => 0); }
     }));
   }
+  // Телефони тих, хто вже вийшов, але знову опинився прив'язаним (скажімо,
+  // підписався в ту саму хвилину, коли виходив): вимикаємо й їх.
+  try {
+    const devs = (await db(E, "GET", "tg_devices?select=uid")) || [];
+    const uids = [...new Set(devs.map((d) => Number(d.uid)).filter((u) => Number.isSafeInteger(u) && u > 0))].slice(0, 300);
+    if (uids.length) {
+      const gone = (await db(E, "GET", `tg_members?uid=in.(${uids.join(",")})&status=in.(left,kicked)&select=uid`)) || [];
+      for (const g of gone) out.pushOff += await dropDevices(E, Number(g.uid)).catch(() => 0);
+    }
+  } catch { /* наступного разу */ }
   // Старі коди входу прибираємо: потрібні лише пів години.
   try { await db(E, "DELETE", `tg_logins?created_at=lt.${encodeURIComponent(new Date(Date.now() - 86400000).toISOString())}`); } catch { /* */ }
   return out;
@@ -375,6 +506,23 @@ async function pushLists(E) {
   const all = await rpc(E, "push_list", { p_secret: process.env.PUSH_SECRET, p_only_admin: false }, E.anon || E.svc);
   const adm = await rpc(E, "push_list", { p_secret: process.env.PUSH_SECRET, p_only_admin: true }, E.anon || E.svc).catch(() => []);
   return { all: (all || []).map((x) => x.endpoint).filter(Boolean), admin: new Set((adm || []).map((x) => x.endpoint)) };
+}
+
+// Відповідь JSON; великі (список поїздок) — стиснуто gzip: Vercel пропускає
+// з функції не більше 4,5 МБ, а поїздок з роками більшає.
+function sendJson(req, res, status, obj) {
+  const raw = Buffer.from(JSON.stringify(obj));
+  res.setHeader("Cache-Control", "no-store");
+  const ae = String((req.headers && req.headers["accept-encoding"]) || "");
+  if (raw.length > 20000 && /\bgzip\b/i.test(ae) && typeof res.end === "function") {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Encoding", "gzip");
+    res.setHeader("Vary", "Accept-Encoding");
+    res.statusCode = status;
+    res.end(zlib.gzipSync(raw));
+    return;
+  }
+  res.status(status).json(obj);
 }
 
 export default async function handler(req, res) {
@@ -394,7 +542,9 @@ export default async function handler(req, res) {
 
   if (req.method === "GET") {
     const rd = wanted ? await ready(C, E) : null;
-    const rep = { "версія": VERSION, "перевірка входу": !wanted ? (C.bot ? "вимкнена (TELEGRAM_GATE=off)" : "вимкнена — немає TELEGRAM_BOT_TOKEN у Vercel; застосунок відкритий для всіх") : rd.ok ? "увімкнена" : `ще не діє — ${rd.why}; поки застосунок відкритий для всіх`, "група": C.group };
+    const rep = { "версія": VERSION, "перевірка входу": !wanted ? (C.bot ? "вимкнена (TELEGRAM_GATE=off)" : "вимкнена — немає TELEGRAM_BOT_TOKEN у Vercel; застосунок відкритий для всіх")
+      : rd.ok ? (rd.assumed ? `увімкнена, але зараз проблема: ${rd.assumed}. Хто вже увійшов, заходить як і раніше; нові входи не спрацюють, доки це не виправиш` : "увімкнена")
+      : `ще не діє — ${rd.why}; поки застосунок відкритий для всіх`, "група": C.group };
     if (C.bot) {
       const me = await botMe(C.bot);
       rep["бот"] = me ? `@${me.username}` : "токен не приймається — перевір TELEGRAM_BOT_TOKEN";
@@ -422,15 +572,88 @@ export default async function handler(req, res) {
   const action = String(body.action || "");
   try {
     // Для дій застосунку перевірка діє, лише коли все налаштовано (ready).
-    const needReady = ["status", "check", "begin", "poll", "link", "pin"].includes(action);
+    const needReady = ["status", "check", "begin", "poll", "link", "pin", "trips", "rpc"].includes(action);
     const rd = wanted && needReady ? await ready(C, E) : null;
     const gate = wanted && (!needReady || Boolean(rd && rd.ok));
     if (action === "status") { res.status(200).json({ gate, group: C.group, join: groupLink(C.group) }); return; }
 
+    // Поїздки для учасника (g2): лише опубліковані й не з архіву, і лише
+    // з чинним квитком. Перевірки входу ще немає (бота не налаштовано) —
+    // віддаємо всім, як раніше віддавала сама база.
+    if (action === "trips") {
+      if (!gate && !isProd()) { res.status(403).json(PREVIEW_NO); return; }
+      let who = null;
+      if (gate) {
+        who = await checkToken(E, C, body.token);
+        if (!who.ok) { res.status(403).json({ gate: true, ok: false, reason: who.reason || "bad", group: C.group, join: groupLink(C.group) }); return; }
+      }
+      let rows = null;
+      try { rows = await db(E, "GET", "trips?select=data&order=updated_at.asc"); }
+      catch (e) { res.status(502).json({ error: "база не відповіла — спробуй ще раз", code: "db" }); return; }
+      const all = (rows || []).map((x) => x && x.data).filter((x) => x && typeof x === "object");
+      const trips = all.filter((t) => t.draft !== true && t.archived !== true);
+      const teasers = all.filter((t) => t.draft === true && t.archived !== true).map((t) => String(t.heroGradient || ""));
+      sendJson(req, res, 200, { gate, ok: true, trips, teasers });
+      return;
+    }
+
     if (action === "check") {
       if (!gate) { res.status(200).json({ gate: false, ok: true }); return; }
-      const r = await checkToken(E, C, body.token);
+      const { uid, ...r } = await checkToken(E, C, body.token);   // номер у Telegram телефону ні до чого
       res.status(200).json({ gate: true, group: C.group, join: groupLink(C.group), ...r });
+      return;
+    }
+
+    // Функції бази від імені учасника (g3): записи на поїздки, список
+    // учасників, підписка на сповіщення. Публічний ключ їх більше не кличе
+    // (supabase-v147.sql) — лише цей сервер службовим ключем і лише для
+    // того, кого пускає вхід через Telegram. Відповідь бази — як є: застосунок
+    // читає її так само, як читав би напряму. Заголовок X-Tropa-Rpc каже
+    // застосунку, що відповів саме цей сервер, а не старий.
+    if (action === "rpc") {
+      res.setHeader("X-Tropa-Rpc", VERSION);
+      res.setHeader("Cache-Control", "no-store");
+      const fn = String(body.fn || "");
+      if (!RPC_MEMBER.includes(fn)) { res.status(400).json({ error: "ця функція — не через сервер", code: "fn" }); return; }
+      const args = body.args && typeof body.args === "object" && !Array.isArray(body.args) ? body.args : {};
+      if (!gate && !isProd()) { res.status(403).json(PREVIEW_NO); return; }
+      let who = null;
+      if (gate) {
+        who = await checkToken(E, C, body.token, LASTING.includes(fn));
+        if (!who.ok) { res.status(403).json({ gate: true, ok: false, reason: who.reason || "bad", group: C.group, join: groupLink(C.group) }); return; }
+      }
+      // Записатись можна лише на опубліковану поїздку. Службовий ключ бачить
+      // і чернетки, тож сервер перевіряє це сам, хоч би як була написана
+      // функція бази. Відповідь — та сама, що й «запис закрито».
+      if (fn === "book_trip" || fn === "claim_booking") {
+        let t = null;
+        try { t = ((await db(E, "GET", `trips?id=eq.${encodeURIComponent(String(args.p_trip_id || ""))}&select=data`)) || [])[0]; }
+        catch { res.status(502).json({ error: "база не відповіла — спробуй ще раз", code: "db" }); return; }
+        const d = t && t.data;
+        if (!d || d.draft === true || (fn === "book_trip" && d.archived === true)) {
+          res.status(400).json({ code: "P0001", details: null, hint: null, message: "Zapys zakryto" });
+          return;
+        }
+      }
+      let r = null, txt = "";
+      try {
+        r = await fetch(`${E.url}/rest/v1/rpc/${fn}`, {
+          method: "POST", headers: { apikey: E.svc, Authorization: `Bearer ${E.svc}`, "Content-Type": "application/json" },
+          body: JSON.stringify(args), signal: AbortSignal.timeout(10000),
+        });
+        txt = await r.text();
+      } catch { res.status(502).json({ error: "база не відповіла — спробуй ще раз", code: "db" }); return; }
+      // Нова підписка на сповіщення — одразу до людини: вийде з групи —
+      // сповіщення на цей телефон вимкнуться самі.
+      if (r.ok && fn === "push_subscribe" && who && who.ok && !who.admin && who.uid) {
+        const ep = String(args.p_endpoint || "").trim();
+        if (/^https:\/\/\S{10,600}$/.test(ep)) {
+          try { await upsert(E, "tg_devices", [{ endpoint: ep, uid: who.uid, linked_at: new Date().toISOString() }], "endpoint"); } catch { /* застосунок прив'яже сам (link) */ }
+        }
+      }
+      res.statusCode = r.status;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(txt);
       return;
     }
 
@@ -489,7 +712,7 @@ export default async function handler(req, res) {
     if (action === "admin" || action === "cleanup") {
       if (!(await pinOk(E, body.pin))) { res.status(403).json({ error: "потрібен PIN організатора", code: "pin" }); return; }
       const rdA = wanted ? await ready(C, E) : null;
-      const out = { gate: wanted && Boolean(rdA && rdA.ok), configured: Boolean(C.bot), off: C.off, notReady: rdA && !rdA.ok ? rdA.why : "", group: C.group, version: VERSION };
+      const out = { gate: wanted && Boolean(rdA && rdA.ok), configured: Boolean(C.bot), off: C.off, notReady: rdA && !rdA.ok ? rdA.why : "", problem: rdA && rdA.ok && rdA.assumed ? rdA.assumed : "", group: C.group, version: VERSION };
       if (C.bot) { const me = await botMe(C.bot); out.bot = me ? me.username : ""; }
       let members = [], devices = [];
       try {
@@ -514,6 +737,9 @@ export default async function handler(req, res) {
           // Поки вхід не діє, ніхто не може прив'язати телефон — «без входу»
           // тоді всі. Вимкнули б сповіщення всім учасникам.
           if (!out.gate) { res.status(409).json({ error: "вхід через Telegram ще не діє — поки він не працює, вимикати сповіщення не можна (вимкнулись би в усіх)", code: "gate" }); return; }
+          // Поки є проблема з ботом, нові входи не працюють — учасники, які
+          // саме зараз хотіли б увійти, лишились би без сповіщень.
+          if (out.problem) { res.status(409).json({ error: `спершу виправ проблему: ${out.problem}`, code: "problem" }); return; }
           let removed = 0;
           for (const ep of unlinked) {
             try { await rpc(E, "push_unsubscribe", { p_endpoint: ep }, E.anon || E.svc); removed++; } catch { /* наступного разу */ }

@@ -1,4 +1,13 @@
-// ═══ Tropa Club · api/trains.js · ВЕРСІЯ t3 ═══
+// ═══ Tropa Club · api/trains.js · ВЕРСІЯ t5 ═══
+// t5 — стан поїздів поїздки віддається лише тому, кого пускає вхід через
+//      Telegram (квиток у заголовку X-Tropa-Ticket — його ставить сам
+//      застосунок), і годиннику сповіщень (заголовок X-Cron-Secret).
+//      Хто вийшов із групи, за номером поїздки більше не дізнається ні
+//      маршруту, ні часу. Через це відповідь більше не кешується мережею
+//      Vercel (кеш віддавав би її будь-кому без перевірки), а лише на
+//      хвилину в пам'яті самого сервера.
+// t4 — поїздку читає службовим ключем бази: з supabase-v147.sql публічний
+//      ключ поїздок не бачить. Чернетки, як і раніше, — «поїздки немає».
 // t3 — станції знаходяться за власним переліком станцій табло DB (IRIS):
 //      пошук DB за назвою «München-Pasing» не знаходив ні так, ні як
 //      «München Pasing», тож поїзди звідти лишались незвіреними. Тепер
@@ -77,20 +86,29 @@
 //                                    ключі й чи DB їх приймає
 //
 // КЕШ
-// Відповідь для поїздки кешується мережею Vercel на 2 хвилини: скільки б
-// учасників не відкрили поїздку, до DB іде один запит на 2 хвилини.
-// Годинник додає &fresh=… і отримує свіжі дані.
+// t5: відповідь для поїздки пам'ятає сам сервер хвилину (раніше — мережа
+// Vercel на 2 хвилини, але мережевий кеш віддавав би її й без квитка).
+// Розклади станцій DB пам'ятаються окремо й довше — до DB однаково йде
+// небагато запитів. Годинник додає &fresh=… і отримує свіжі дані.
+//
+// ДОСТУП (t5)
+// GET /api/trains?trip=… — лише з квитком входу через Telegram (заголовок
+// X-Tropa-Ticket) або від годинника (X-Cron-Secret = CRON_SECRET). Немає
+// перевірки входу (бота не налаштовано) — як і раніше, без квитка.
 //
 // ЗМІННІ СЕРЕДОВИЩА (Vercel → Settings → Environment Variables)
 //   DB_CLIENT_ID       — Client ID застосунку з DB API Marketplace
 //   DB_API_KEY         — Client Secret (API Key) того ж застосунку
 //   SUPABASE_URL       — уже є
-//   SUPABASE_ANON_KEY  — уже є (читає лише опубліковані поїздки)
+//   SUPABASE_SERVICE_ROLE_KEY — уже є (t4: поїздки читаються ним; без нього — SUPABASE_ANON_KEY)
+//   CRON_SECRET, TELEGRAM_BOT_TOKEN — ті самі, що вже є (t5: хто має доступ)
 // ═══════════════════════════════════════════════════════════════════
+
+import { admit } from "./tg.js";
 
 export const config = { maxDuration: 30 };
 
-const VERSION = "t3";
+const VERSION = "t5";
 const BASE = "https://apis.deutschebahn.com/db-api-marketplace/apis/timetables/v1";
 const TZ = "Europe/Berlin";
 const WINDOW_MIN = 18 * 60;          // DB дає розклад приблизно на 18 год наперед
@@ -825,12 +843,13 @@ const creds = () => ({ id: process.env.DB_CLIENT_ID || "", key: process.env.DB_A
 
 async function loadTrip(id) {
   const url = `${process.env.SUPABASE_URL}/rest/v1/trips?id=eq.${encodeURIComponent(id)}&select=data`;
-  const r = await fetch(url, {
-    headers: { apikey: process.env.SUPABASE_ANON_KEY, Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}` },
-  });
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+  const r = await fetch(url, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
   if (!r.ok) throw new Error(`trip ${r.status}`);
   const rows = await r.json();
-  return Array.isArray(rows) && rows[0] ? rows[0].data : null;
+  const data = Array.isArray(rows) && rows[0] ? rows[0].data : null;
+  // Службовий ключ бачить і чернетки — їх, як і досі, не звіряємо.
+  return data && data.draft === true ? null : data;
 }
 
 export default async function handler(req, res) {
@@ -869,7 +888,7 @@ export default async function handler(req, res) {
     const report = {
       "версія": VERSION,
       "налаштовано": configured,
-      "бракує змінних": ["DB_CLIENT_ID", "DB_API_KEY", "SUPABASE_URL", "SUPABASE_ANON_KEY"].filter((k) => !process.env[k]),
+      "бракує змінних": ["DB_CLIENT_ID", "DB_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "CRON_SECRET"].filter((k) => !process.env[k]),
       "джерело": SOURCE,
     };
     if (configured) {
@@ -892,8 +911,23 @@ export default async function handler(req, res) {
     return;
   }
 
+  // t5: хто питає. Годинник — своїм секретом; застосунок — квитком входу.
+  const hv = (k) => String((req.headers && req.headers[k]) || "");
+  const cron = Boolean(process.env.CRON_SECRET) && hv("x-cron-secret") === process.env.CRON_SECRET;
+  if (!cron) {
+    let a;
+    try { a = await admit(hv("x-tropa-ticket")); }
+    catch { a = { ok: false, gate: true, reason: "server" }; }   // збій перевірки — не відчиняємо
+    if (!a.ok) {
+      res.setHeader("Cache-Control", "no-store");
+      res.status(403).json({ version: VERSION, gate: true, legs: [], error: "gate" });
+      return;
+    }
+  }
+
   const fresh = Boolean(q.fresh);
-  res.setHeader("Cache-Control", fresh ? "no-store" : "public, max-age=0, s-maxage=120, stale-while-revalidate=300");
+  // Лише в цьому телефоні й ненадовго: мережа Vercel не кешує (t5).
+  res.setHeader("Cache-Control", fresh ? "no-store" : "private, max-age=60");
   if (!configured) {
     res.status(200).json({ version: VERSION, configured: false, legs: [] });
     return;
@@ -905,13 +939,20 @@ export default async function handler(req, res) {
     res.status(200).json({ version: VERSION, configured: true, legs: [], note: "поїздки немає або вона в розробці" });
     return;
   }
+  // Та сама поїздка з тим самим переліком поїздів протягом хвилини —
+  // з пам'яті (t5; замість мережевого кешу Vercel).
+  const memoKey = `res:${tripId}:${JSON.stringify([trip.date || "", trip.status || "", tripLegs(trip)])}`;
+  const hit = fresh ? undefined : cget(memoKey);
+  if (hit) { res.status(200).json(hit); return; }
   const db = makeDb(c);
   try {
     const r = await checkTrip(db, trip);
-    res.status(200).json({ version: VERSION, configured: true, auth: true, trip: tripId, date: trip.date || "", source: SOURCE, calls: db.calls(), ...r });
+    const out = { version: VERSION, configured: true, auth: true, trip: tripId, date: trip.date || "", source: SOURCE, calls: db.calls(), ...r };
+    cset(memoKey, out, 60 * 1000);
+    res.status(200).json(out);
   } catch (e) {
     if (e && e.code === "auth") {
-      res.setHeader("Cache-Control", "public, max-age=0, s-maxage=60");
+      res.setHeader("Cache-Control", "private, max-age=60");
       res.status(200).json({ version: VERSION, configured: true, auth: false, legs: [], error: `auth ${e.status}` });
       return;
     }

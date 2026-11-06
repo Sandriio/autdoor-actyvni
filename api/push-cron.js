@@ -1,4 +1,11 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c11 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c13 ═══
+// c13 — зайняті місця (booked_counts) читає службовим ключем: з
+//       supabase-v147.sql цю функцію публічний ключ не кличе. Звірку
+//       поїздів (api/trains.js t5) питає зі своїм секретом (X-Cron-Secret):
+//       без квитка входу чи секрету стан поїздів тепер не віддається.
+// c12 — поїздки читає службовим ключем бази: з supabase-v147.sql
+//       публічний ключ поїздок більше не бачить (їх видає лише сервер і лише
+//       учасникам групи). Чернетки й архів годинник однаково пропускає.
 // c11 — «Відкрито запис» — лише в ПОНЕДІЛОК о 18:00 перед поїздкою, хоч би
 //       на який день вона припадала (так попросив організатор 04.11). Було
 //       «рівно за шість діб», і для суботньої поїздки виходила неділя.
@@ -558,11 +565,14 @@ export default async function handler(req, res) {
 
   let trips = [], taken = {};
   try {
+    // Службовий ключ (c12): публічний після supabase-v147.sql поїздок не бачить.
+    const TK = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
     const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/trips?select=id,data`, {
-      headers: { apikey: process.env.SUPABASE_ANON_KEY, Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}` },
+      headers: { apikey: TK, Authorization: `Bearer ${TK}` },
     });
     trips = await r.json();
-    const counts = await sb("booked_counts", {});
+    // c13: службовим ключем — з supabase-v147.sql публічний цю функцію не кличе.
+    const counts = await (process.env.SUPABASE_SERVICE_ROLE_KEY ? sbService : sb)("booked_counts", {});
     (counts || []).forEach((c) => { taken[c.trip_id] = Number(c.taken) || 0; });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
@@ -833,12 +843,16 @@ export default async function handler(req, res) {
     try {
       // Власний таймаут: DB буває повільним, а годинник не може чекати
       // вічно (cron-job.org сам обриває виклик за 30 секунд).
-      const r = await fetch(`${origin}/api/trains?trip=${encodeURIComponent(String(id))}&fresh=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
+      // c13: свій секрет — api/trains.js t5 без квитка чи секрету стану не віддає.
+      const r = await fetch(`${origin}/api/trains?trip=${encodeURIComponent(String(id))}&fresh=${Date.now()}`, {
+        headers: { "X-Cron-Secret": String(process.env.CRON_SECRET || "") }, signal: AbortSignal.timeout(15000),
+      });
       j = await r.json();
     } catch (e) {
       item.error = `api/trains не відповів: ${String((e && e.message) || e).slice(0, 120)}`;
       return;
     }
+    if (j && j.gate === true && j.error === "gate") { item.error = "api/trains не впустив годинник — перевір, що CRON_SECRET у Vercel задано"; return; }
     if (!j || j.configured === false) { item.note = "не налаштовано: у Vercel немає DB_CLIENT_ID і DB_API_KEY"; return; }
     if (j.auth === false) {
       item.error = "DB не приймає ключі";
@@ -890,7 +904,7 @@ export default async function handler(req, res) {
 
   if (debug) {
     res.status(200).json({
-      version: "c11",
+      version: "c13",
       berlin: nowText,
       window: "від моменту й пізніше",
       trips: report,
@@ -927,7 +941,7 @@ export default async function handler(req, res) {
   }
 
   res.status(200).json({
-    version: "c11", berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped,
+    version: "c13", berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped,
     journal: journalOk === null ? "нічого не надсилалось" : journalOk ? "записано" : "не пишеться — виконай supabase-v140.sql",
     trains: trainReport, telegram,
   });

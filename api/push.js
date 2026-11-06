@@ -1,4 +1,6 @@
-// ═══ Tropa Club · api/push.js · ВЕРСІЯ p3 ═══
+// ═══ Tropa Club · api/push.js · ВЕРСІЯ p4 ═══
+// p4 — назву й дату поїздки для тексту читає службовим ключем бази: з
+//      supabase-v147.sql публічний ключ поїздок не бачить.
 // p3 — сповіщення учасникові, коли організатор прийняв чи відхилив
 //      заявку (режим notifyDecision; потрібен supabase-v134.sql).
 //      Сповіщення організаторові про заявку — мовою його телефона.
@@ -99,11 +101,11 @@ const DECISION_MSG = {
     ru: (w, n) => ({ title: "Заявка отклонена", body: `Ваша заявка на вступление в группу до ${w} ${n} отклонена. Обратитесь к организатору.` }),
   },
 };
-// Поїздка — назва й дата для тексту. Чернеток тут не буває: на них не
-// записуються, тож вистачає публічного читання.
+// Поїздка — назва й дата для тексту. Службовим ключем (p4), а без нього —
+// як раніше, публічним.
 async function loadTrip(id) {
   try {
-    const key = process.env.SUPABASE_ANON_KEY;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
     const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/trips?id=eq.${encodeURIComponent(id)}&select=data`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
     });
