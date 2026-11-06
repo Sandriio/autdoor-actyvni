@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v146 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v147 ═══
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -28,7 +28,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v146";
+const APP_VERSION = "v147";
 
 // ── Анімації (v146) ──────────────────────────────────────────────────
 // Сторінка поїздки виїжджає знизу, головний екран і вкладки з'являються
@@ -412,7 +412,31 @@ async function sbTripsFor(pin) {
     try { return { trips: await sbAdminTrips(pin), teasers: [] }; }
     catch { /* падаємо на звичайне читання нижче */ }
   }
+  // v147: поїздки видає сервер (api/tg.js, дія trips) — і лише з чинним
+  // квитком входу через Telegram. Пряме читання бази публічним ключем
+  // закриває supabase-v147.sql, тож той, хто вийшов із групи, не дістане
+  // поїздок і в обхід застосунку.
+  const c = tgLoad();
+  const viaServer = await tgApi({ action: "trips", token: c ? c.token : "" }, 20000);
+  if (viaServer.status === 200 && viaServer.j.ok && Array.isArray(viaServer.j.trips)) {
+    return {
+      trips: viaServer.j.trips.filter((x) => x && !isDraft(x)),
+      teasers: (Array.isArray(viaServer.j.teasers) ? viaServer.j.teasers : []).map((g, i) => ({ id: `draft-${i}`, draft: true, heroGradient: g || "" })),
+    };
+  }
+  // Квиток не дійсний (людина вийшла з групи) — без поїздок, на екран входу.
+  if (viaServer.status === 403) throw Object.assign(new Error("gate"), { gate: true });
+  // Напряму з бази — лише коли сервер ще старий: до v146 (немає api/tg —
+  // 404) чи v146 (не знає дії trips). Будь-який інший збій — помилка з
+  // кнопкою «Спробувати ще раз», а не тихий порожній список: після
+  // supabase-v147.sql база напряму вже нічого не віддасть.
+  const oldServer = viaServer.status === 404 || (viaServer.status === 400 && viaServer.j.code === "action");
+  if (!oldServer) throw new Error(`trips ${viaServer.status}`);
   const all = await sbLoadTrips();
+  // Порожньо напряму — найімовірніше, база вже закрита (supabase-v147.sql), а
+  // сервер ще старий: краще помилка з «Спробувати ще раз», ніж тихий порожній
+  // список, ніби поїздок немає.
+  if (!all.length) throw new Error("trips: empty via old path");
   // Архівна чернетка (v146) не показується глядачеві навіть заглушкою.
   const leaked = all.filter((x) => isDraft(x) && !isArchived(x));
   const trips = all.filter((x) => !isDraft(x));
@@ -441,7 +465,45 @@ async function sbDeleteTrip(tripId, pin) {
 // Уся робота йде через функції бази, а не через пряме читання таблиці.
 // Причина проста: застосунок відкритий за посиланням, і пряме читання
 // означало б, що телефони учасників може вивантажити будь-хто.
+//
+// v147: те, що учасник робить від свого імені (записатись, подивитись
+// список, підписатись на сповіщення), іде через сервер (api/tg.js, дія
+// rpc) — з квитком входу через Telegram. Публічний ключ цих функцій бази
+// більше не кличе (supabase-v147.sql): хто вийшов із групи, не запишеться
+// й не підпишеться в обхід застосунку. Функції організатора — як і досі
+// напряму: їх захищає PIN. Перелік той самий, що RPC_MEMBER в api/tg.js.
+const SERVER_RPC = new Set([
+  "booked_counts", "trip_guests", "book_trip", "my_booking", "claim_booking",
+  "cancel_booking", "update_booking", "booking_link_push", "push_subscribe",
+]);
+// useTgGate кладе сюди «звір вхід знову»: сервер відмовив — квиток уже не дійсний.
+let GATE_RECHECK = null;
+// PIN організатора, поки він у своєму режимі (лише в пам'яті, не в сховищі):
+// ним поновлюється квиток організатора, коли сплинуть його 14 днів.
+let ADMIN_PIN_MEM = "";
 async function sbRpc(fn, body) {
+  if (SERVER_RPC.has(fn)) {
+    const c = tgLoad();
+    const r = await fetch("/api/tg", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "rpc", fn, args: body || {}, token: c ? c.token : "" }),
+    });
+    // Відповів новий сервер (позначка X-Tropa-Rpc). Без позначки сервер ще
+    // старий — тоді, як і раніше, напряму в базу.
+    if (r.headers.get("X-Tropa-Rpc")) {
+      const txt = await r.text();
+      if (r.status === 403) {
+        let j = null;
+        try { j = JSON.parse(txt); } catch { j = null; }
+        if (j && j.gate) {
+          if (GATE_RECHECK) GATE_RECHECK();
+          throw Object.assign(new Error(txt), { gate: true });
+        }
+      }
+      if (!r.ok) throw new Error(txt);
+      return txt ? JSON.parse(txt) : null;
+    }
+  }
   const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: "POST", headers: sbHeaders(), body: JSON.stringify(body || {}),
   });
@@ -1853,8 +1915,8 @@ function trainCheckActive(trip) {
 }
 // Стан поїздів для сторінки поїздки: при відкритті, далі кожні 3 хвилини,
 // поки сторінка на екрані, і щоразу, як застосунок повертається на екран.
-// Сервер відповідає з кешу мережі, тож хоч сотня учасників — до DB іде
-// один запит на 2 хвилини.
+// Сервер пам'ятає відповідь хвилину, а розклади станцій — довше, тож хоч
+// сотня учасників — до DB іде небагато запитів.
 function useTrainStatus(trip) {
   const active = trainCheckActive(trip);
   const sig = active ? JSON.stringify(tripJourneys(trip).map((j) => filledLegs(j).map(trainLegKey))) : "";
@@ -1868,7 +1930,9 @@ function useTrainStatus(trip) {
     for (const ch of sig) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
     const v = h.toString(36);
     const load = () => {
-      fetch(`/api/trains?trip=${encodeURIComponent(trip.id)}&v=${v}`)
+      // Квиток входу (v147): без нього сервер стану поїздів не віддасть.
+      const c = tgLoad();
+      fetch(`/api/trains?trip=${encodeURIComponent(trip.id)}&v=${v}`, { headers: c ? { "X-Tropa-Ticket": c.token } : {} })
         .then((r) => (r.ok ? r.json() : null))
         .then((j) => { if (!stop && j && typeof j === "object") setData(j); })
         .catch(() => { /* немає мережі — лишаємо попередній стан */ });
@@ -4728,18 +4792,45 @@ function useTgGate() {
       setWhy(""); setState("in"); tgLinkCurrent();
       return;
     }
-    if (c && (r.j.reason === "left" || r.j.reason === "bad")) tgSave(null);
+    // Квиток організатора відслужив свої 14 днів, а організатор саме в
+    // своєму режимі (PIN у пам'яті) — поновлюємо мовчки, не викидаючи з
+    // редактора (v147).
+    if (c && c.admin && r.j.reason === "bad" && ADMIN_PIN_MEM) {
+      const q = await tgApi({ action: "pin", pin: ADMIN_PIN_MEM });
+      if (q.status === 200 && q.j.token) {
+        tgSave({ ...c, token: q.j.token, okAt: Date.now() });
+        setWhy(""); setState("in");
+        return;
+      }
+    }
+    // Квиток прибираємо лише тоді, коли людина вийшла з групи. Не дійсний
+    // («bad») — лишаємо: якщо причина в заміні ключа на сервері й ключ
+    // повернуть, квиток запрацює знову; новий вхід просто його перепише.
+    if (c && r.j.reason === "left") tgSave(null);
     setWhy(c && r.j.reason === "left" ? "left" : "");
     setState("locked");
   }, []);
   useEffect(() => { run(); }, [run]);
   useEffect(() => {
-    const onVis = () => { if (document.visibilityState === "visible" && Date.now() - last.current > 6 * 3600000) run(); };
+    // Повернулись у застосунок — якщо минуло пів години, звіряємо знову (v147).
+    const onVis = () => { if (document.visibilityState === "visible" && Date.now() - last.current > 30 * 60000) run(); };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
   }, [run]);
   const unlock = useCallback(() => { setWhy(""); setState("in"); tgLinkCurrent(); }, []);
-  return { state, why, unlock };
+  // Сервер відмовив у поїздках (квиток уже не дійсний) — звіряємо вхід.
+  // Кілька відмов поспіль (поїздки, місця, учасники) — одна звірка.
+  const kicked = useRef(0);
+  const recheck = useCallback(() => {
+    if (Date.now() - kicked.current < 5000) return;
+    kicked.current = Date.now();
+    run();
+  }, [run]);
+  useEffect(() => {
+    GATE_RECHECK = recheck;
+    return () => { if (GATE_RECHECK === recheck) GATE_RECHECK = null; };
+  }, [recheck]);
+  return { state, why, unlock, recheck };
 }
 
 // ── Доступ через Telegram — панель організатора (v146) ────────────────
@@ -4805,6 +4896,11 @@ function TgAccessPanel({ pin }) {
                   Ще не діє: {info.notReady}. Поки застосунок відкритий для всіх — нікого не зачинить через помилку в налаштуваннях.
                 </p>
               )}
+              {info.problem && (
+                <p data-tg="problem" style={{ margin: "8px 0 4px", fontSize: 12, color: C.rasp, background: C.raspSoft, border: `1px solid ${C.rasp}`, borderRadius: 9, padding: "8px 10px", lineHeight: 1.5, fontWeight: 600 }}>
+                  Проблема: {info.problem}. Вхід однаково діє: хто вже увійшов — заходить, хто вийшов із групи — ні. Нові входи не спрацюють, доки це не виправиш.
+                </p>
+              )}
               {row("Увійшли через Telegram", info.members != null ? info.members : "—")}
               {row("Вийшли з групи (без доступу)", info.left != null ? info.left : "—")}
               {info.recent && info.recent.length > 0 && row("Останні", info.recent.join(", "))}
@@ -4813,7 +4909,7 @@ function TgAccessPanel({ pin }) {
               {info.pushTotal != null && row("— організатора", info.pushAdmin)}
               {info.pushTotal != null && row("— без входу", info.pushUnlinked)}
               {info.dbError && <p style={{ margin: "8px 0 0", fontSize: 12, color: C.rasp }}>{info.dbError}</p>}
-              {info.gate && info.pushUnlinked > 0 && (
+              {info.gate && !info.problem && info.pushUnlinked > 0 && (
                 <>
                   <p style={{ margin: "10px 0 8px", fontSize: 12, color: C.inkSoft, lineHeight: 1.5 }}>
                     «Без входу» — телефони, з яких ще не входили через Telegram: серед них і ті, хто вийшов із групи ще до v146. Коли учасники встигнуть увійти (скажімо, за тиждень після оголошення в групі), вимкни сповіщення решті.
@@ -9608,12 +9704,6 @@ export default function App() {
   // й оновлюємо після кожного нового запису, щоб цифра на картці була
   // справжньою, а не вписаною руками.
   const [counts, setCounts] = useState({});
-  // Записи цього телефона — до його підписки на сповіщення (див.
-  // linkBookingPush). Трохи згодом, щоб не гальмувати сам запуск.
-  useEffect(() => {
-    const timer = setTimeout(() => { linkAllBookingsPush().catch(() => {}); }, 2500);
-    return () => clearTimeout(timer);
-  }, []);
   // Відео, яке вже на Диску, але минулого разу не записалось у галерею
   // (v142), — дописуємо при запуску, не чекаючи, поки відкриють альбом.
   useEffect(() => {
@@ -9624,7 +9714,6 @@ export default function App() {
     if (!sbConfigured()) return;
     sbBookedCounts().then(setCounts).catch(() => {});
   }, []);
-  useEffect(() => { refreshCounts(); }, [refreshCounts]);
   const [adminPin, setAdminPin] = useState("");
   // Заглушки чернеток для глядача: лише колір, без жодних даних поїздки.
   // Окремо від trips свідомо — уся решта логіки (стани, дати, сортування)
@@ -9649,11 +9738,24 @@ export default function App() {
   // Вхід через Telegram (v146): хто не учасник групи, бачить лише екран входу.
   const gate = useTgGate();
   const gateOpen = gate.state === "in" || gate.state === "open";
+  // Зайняті місця — лише коли людину пустили (v147: без квитка сервер їх не дасть).
+  useEffect(() => { if (gateOpen) refreshCounts(); }, [refreshCounts, gateOpen]);
+  // Записи цього телефона — до його підписки на сповіщення (див.
+  // linkBookingPush). Трохи згодом, щоб не гальмувати сам запуск; лише
+  // коли людину пустили (v147).
+  useEffect(() => {
+    if (!gateOpen) return undefined;
+    const timer = setTimeout(() => { linkAllBookingsPush().catch(() => {}); }, 2500);
+    return () => clearTimeout(timer);
+  }, [gateOpen]);
   // Сповіщення приходять мовою, збереженою в підписці. Якщо людина
   // перемкнула мову вже після того, як увімкнула сповіщення, підписку
   // треба переписати — інакше пуші й далі йшли б старою мовою.
+  // v147: лише коли людину пустили. Раніше підписка переписувалась при
+  // кожному відкритті — і телефон того, хто вийшов із групи, знову
+  // підписувався на сповіщення, хоч сервер його щойно відписав.
   useEffect(() => {
-    if (!pushSupported() || !sbConfigured()) return;
+    if (!pushSupported() || !sbConfigured() || !gateOpen) return;
     navigator.serviceWorker.ready
       .then((reg) => reg.pushManager.getSubscription())
       .then((sub) => {
@@ -9665,7 +9767,20 @@ export default function App() {
         });
       })
       .catch(() => {});
-  }, [lang]);
+  }, [lang, gateOpen]);
+  // Сервер сказав, що людина вийшла з групи (v147): сповіщення на цьому
+  // телефоні вимикаються й тут, а не лише на сервері.
+  useEffect(() => {
+    if (gate.state !== "locked" || gate.why !== "left" || !pushSupported()) return;
+    navigator.serviceWorker.getRegistration()
+      .then((reg) => (reg ? reg.pushManager.getSubscription() : null))
+      .then((sub) => {
+        if (!sub) return;
+        sbRpc("push_unsubscribe", { p_endpoint: sub.endpoint }).catch(() => {});
+        return sub.unsubscribe();
+      })
+      .catch(() => {});
+  }, [gate.state, gate.why]);
 
   // Завантаження поїздок із Supabase (якщо підключено). Якщо база
   // недоступна — тихо відкочуємось на демо-дані, щоб сайт ніколи не падав.
@@ -9675,7 +9790,7 @@ export default function App() {
     setLoadError(false);
     sbTripsFor(adminPin)
       .then((r) => { setTrips(r.trips); setTeasers(r.teasers); setLoadingTrips(false); })
-      .catch(() => { setLoadingTrips(false); setLoadError(true); });
+      .catch((e) => { setLoadingTrips(false); setLoadError(true); if (e && e.gate) { setTrips([]); gate.recheck(); } });
   };
   useEffect(() => {
     // ВАЖЛИВО: на невдалому читанні НЕ відкочуємось на демо-дані з коду —
@@ -9691,9 +9806,16 @@ export default function App() {
     let cancelled = false;
     sbTripsFor(adminPin)
       .then((r) => { if (!cancelled) { setTrips(r.trips); setTeasers(r.teasers); setLoadingTrips(false); } })
-      .catch(() => { if (!cancelled) { setLoadingTrips(false); setLoadError(true); } });
+      .catch((e) => {
+        if (cancelled) return;
+        setLoadingTrips(false);
+        // Відмова сервера — теж помилка з кнопкою «Спробувати ще раз»: якщо
+        // звірка входу знову пустить, список не лишиться мовчки порожнім.
+        setLoadError(true);
+        if (e && e.gate) { setTrips([]); gate.recheck(); }
+      });
     return () => { cancelled = true; };
-  }, [adminPin, gateOpen]);
+  }, [adminPin, gateOpen]); // eslint-disable-line react-hooks/exhaustive-deps
   const [selected, setSelected] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [editing, setEditing] = useState(null); // trip object being edited, or "new"
@@ -9732,8 +9854,17 @@ export default function App() {
     try {
       const ok = await sbRpc("check_pin", { pin: value });
       if (ok === true) {
+        ADMIN_PIN_MEM = value;
         setIsAdmin(true); setAdminPin(value); setPinOpen(false); setPin(""); setPinReason("");
         sbMarkAdminDevice(value).catch(() => {});
+        // Квиток організатора за PIN діє 14 днів (v147) — поновлюємо з кожним
+        // входом у режим організатора.
+        const c0 = tgLoad();
+        if (c0 && c0.admin) {
+          tgApi({ action: "pin", pin: value })
+            .then((r) => { if (r.status === 200 && r.j.token) tgSave({ ...c0, token: r.j.token, okAt: Date.now() }); })
+            .catch(() => {});
+        }
         if (afterPin.current) {
           const g = afterPin.current;
           afterPin.current = null;
@@ -10122,7 +10253,7 @@ export default function App() {
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: 26, gap: 14 }}>
               {null}
               {isAdmin ? (
-                <button onClick={() => { setIsAdmin(false); setAdminPin(""); }} style={{ background: "none", border: "1px solid rgba(255,255,255,0.3)", color: "rgba(255,255,255,0.7)", borderRadius: 20, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                <button onClick={() => { ADMIN_PIN_MEM = ""; setIsAdmin(false); setAdminPin(""); }} style={{ background: "none", border: "1px solid rgba(255,255,255,0.3)", color: "rgba(255,255,255,0.7)", borderRadius: 20, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                   {t("exitOrganizer")}
                 </button>
               ) : (
