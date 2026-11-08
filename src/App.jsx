@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v147 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v148 ═══
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -28,7 +28,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v147";
+const APP_VERSION = "v148";
 
 // ── Анімації (v146) ──────────────────────────────────────────────────
 // Сторінка поїздки виїжджає знизу, головний екран і вкладки з'являються
@@ -9915,7 +9915,12 @@ export default function App() {
     const n = new Date();
     return Math.round((d - new Date(n.getFullYear(), n.getMonth(), n.getDate())) / 86400000);
   };
-  const upcoming = upcomingAll.filter((x) => { const n = daysUntil(x.date); return n == null || n <= SOON_DAYS; });
+  // Ще не готові поїздки (чернетки, v148) — завжди в самому низу списку,
+  // під усіма готовими, незалежно від дати. Учасник бачить на їхньому місці
+  // картки «Нова поїздка в розробці» (teasers), організатор — самі чернетки.
+  const draftsAll = upcomingAll.filter(isDraft);
+  const readyAll = upcomingAll.filter((x) => !isDraft(x));
+  const upcoming = readyAll.filter((x) => { const n = daysUntil(x.date); return n == null || n <= SOON_DAYS; });
   // Виконати перехід зі сповіщення. Чекає, поки завантажаться поїздки, і
   // не перебиває редагування: незбережені правки дорожчі за перехід, тож
   // він виконається, щойно редактор закриють.
@@ -9948,7 +9953,7 @@ export default function App() {
       setSelected(null); setFocusSec(null); window.scrollTo(0, 0);
     }
   }, [go, loadingTrips, editing, isAdmin, trips]);
-  const later = upcomingAll.filter((x) => { const n = daysUntil(x.date); return n != null && n > SOON_DAYS; });
+  const later = readyAll.filter((x) => { const n = daysUntil(x.date); return n != null && n > SOON_DAYS; });
   // Архівну поїздку відкриває лише організатор; учасник за старим
   // посиланням чи сповіщенням потрапляє на список поїздок.
   const trip = trips.find((t) => t.id === selected && (isAdmin || !isArchived(t)));
@@ -10205,17 +10210,14 @@ export default function App() {
                 <button onClick={reloadTrips} style={{ background: "rgba(255,255,255,0.15)", color: "#fff", border: "1.5px solid rgba(255,255,255,0.4)", borderRadius: 10, padding: "9px 16px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{t("retry")}</button>
               </div>
             )}
-            {!loadingTrips && !loadError && upcoming.length === 0 && teasers.length === 0 && <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: "0 4px 14px" }}>{t("noUpcoming")}</p>}
+            {!loadingTrips && !loadError && upcoming.length === 0 && later.length === 0 && teasers.length === 0 && draftsAll.length === 0 && <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: "0 4px 14px" }}>{t("noUpcoming")}</p>}
             {!loadingTrips && !loadError && sbConfigured() && trips.length === 0 && isAdmin && (
               <button onClick={seedDemo} style={{ width: "100%", background: "rgba(255,255,255,0.12)", color: "#fff", border: "1.5px dashed rgba(255,255,255,0.5)", padding: "12px", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 14 }}>
                 Завантажити демо-поїздки в базу
               </button>
             )}
-            {!loadingTrips && !loadError && teasers.map((d, i) => (
-              <TripCard key={d.id} animIndex={i} trip={d} isAdmin={false} counts={counts} onClick={() => {}} />
-            ))}
             {upcoming.map((t, i) => (
-              <TripCard key={t.id} animIndex={i + teasers.length} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} onArchive={() => setArchived(t.id, true)} />
+              <TripCard key={t.id} animIndex={i} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} onArchive={() => setArchived(t.id, true)} />
             ))}
 
             {later.length > 0 && (
@@ -10225,7 +10227,14 @@ export default function App() {
               </div>
             )}
             {later.map((t, i) => (
-              <TripCard key={t.id} animIndex={upcoming.length + teasers.length + i} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} onArchive={() => setArchived(t.id, true)} />
+              <TripCard key={t.id} animIndex={upcoming.length + i} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} onArchive={() => setArchived(t.id, true)} />
+            ))}
+
+            {draftsAll.map((t, i) => (
+              <TripCard key={t.id} animIndex={upcoming.length + later.length + i} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} onArchive={() => setArchived(t.id, true)} />
+            ))}
+            {!loadingTrips && !loadError && teasers.map((d, i) => (
+              <TripCard key={d.id} animIndex={upcoming.length + later.length + draftsAll.length + i} trip={d} isAdmin={false} counts={counts} onClick={() => {}} />
             ))}
 
             {past.length > 0 && (
@@ -10235,7 +10244,7 @@ export default function App() {
               </div>
             )}
             {past.map((t, i) => (
-              <TripCard key={t.id} animIndex={upcoming.length + teasers.length + later.length + i} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} onArchive={() => setArchived(t.id, true)} />
+              <TripCard key={t.id} animIndex={upcoming.length + later.length + draftsAll.length + teasers.length + i} trip={t} counts={counts} onClick={() => setSelected(t.id)} isAdmin={isAdmin} onSetStatus={(s) => setStatus(t.id, s)} onSetPostponedDate={(d) => setPostponedDate(t.id, d)} onEdit={() => setEditing(toEditable(t))} onCopy={() => openCopy(t)} onArchive={() => setArchived(t.id, true)} />
             ))}
 
             {isAdmin && (
