@@ -1,4 +1,8 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c13 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c14 ═══
+// c14 — у журналі надсилань видно, ЧОМУ котрийсь телефон не прийняв
+//       сповіщення: коди відмов серверів Apple й Google (api/push.js p5),
+//       напр. «відмови: 410×1» — підписка того телефона більше не дійсна.
+//       Решта — без змін.
 // c13 — зайняті місця (booked_counts) читає службовим ключем: з
 //       supabase-v147.sql цю функцію публічний ключ не кличе. Звірку
 //       поїздів (api/trains.js t5) питає зі своїм секретом (X-Cron-Secret):
@@ -232,8 +236,20 @@ export async function sendPush(origin, msgs, tag, url, onlyAdmin) {
   if (!r.ok) return { ok: false, unknown: true, sent: 0, failed: 0, note: `сервер надсилання: помилка ${r.status} без пояснення — чи пішло, невідомо` };
   const sent = Number(j && j.sent) || 0;
   const failed = Number(j && j.failed) || 0;
-  if (sent === 0 && failed > 0) return { ok: false, sent, failed, note: "жоден телефон не прийняв" };
-  return { ok: true, sent, failed, note: j && j.note === "no subscribers" ? "жодної підписки" : "" };
+  const codes = codesText(j && j.codes);
+  if (sent === 0 && failed > 0) return { ok: false, sent, failed, note: `жоден телефон не прийняв${codes ? ` (${codes})` : ""}` };
+  return { ok: true, sent, failed, note: j && j.note === "no subscribers" ? "жодної підписки" : (failed > 0 && codes ? `відмови: ${codes}` : "") };
+}
+// Коди відмов серверів сповіщень одним рядком (c14): «410×2, 403×1».
+// 410 і 404 — підписка телефона більше не дійсна; «без відповіді» — сервер
+// сповіщень не відповів.
+export function codesText(codes) {
+  if (!codes || typeof codes !== "object") return "";
+  return Object.entries(codes)
+    .filter(([, n]) => Number(n) > 0)
+    .sort(([a], [b]) => (a === "0") - (b === "0") || Number(a) - Number(b))
+    .map(([k, n]) => `${k === "0" ? "без відповіді" : String(k).slice(0, 4)}×${Number(n)}`)
+    .join(", ").slice(0, 90);
 }
 
 // Не дійшло — звільняємо ключ журналу, щоб наступний виклик годинника
@@ -904,7 +920,7 @@ export default async function handler(req, res) {
 
   if (debug) {
     res.status(200).json({
-      version: "c13",
+      version: "c14",
       berlin: nowText,
       window: "від моменту й пізніше",
       trips: report,
@@ -941,7 +957,7 @@ export default async function handler(req, res) {
   }
 
   res.status(200).json({
-    version: "c13", berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped,
+    version: "c14", berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped,
     journal: journalOk === null ? "нічого не надсилалось" : journalOk ? "записано" : "не пишеться — виконай supabase-v140.sql",
     trains: trainReport, telegram,
   });

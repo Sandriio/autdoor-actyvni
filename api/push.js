@@ -1,4 +1,11 @@
-// ═══ Tropa Club · api/push.js · ВЕРСІЯ p4 ═══
+// ═══ Tropa Club · api/push.js · ВЕРСІЯ p5 ═══
+// p5 — перевірка сповіщень на ОДНОМУ телефоні (режим testDevice, за PIN):
+//      тестове йде лише на телефон, з якого натиснули, а відповідь каже,
+//      що відповів сервер сповіщень Apple чи Google (201 — прийняв, 410 —
+//      підписка телефона більше не дійсна тощо). Раніше тестове можна було
+//      надіслати лише всім одразу, і чому мовчить саме цей телефон, лишалось
+//      здогадкою. У відповіді на звичайну розсилку — ще й коди відмов
+//      (codes): їх годинник записує в журнал надсилань.
 // p4 — назву й дату поїздки для тексту читає службовим ключем бази: з
 //      supabase-v147.sql публічний ключ поїздок не бачить.
 // p3 — сповіщення учасникові, коли організатор прийняв чи відхилив
@@ -203,8 +210,30 @@ async function sendOne(sub, payload) {
   // 404 і 410 означають, що підписка мертва: людина зняла дозвіл або
   // видалила застосунок. Такі прибираємо, інакше вони накопичуються
   // й уповільнюють кожну наступну розсилку.
-  return { ok: r.ok, status: r.status, gone: r.status === 404 || r.status === 410 };
+  // reason (p5) — що сервер сповіщень написав у відмові (скажімо,
+  // «BadJwtToken»): лише для перевірки одного телефона.
+  let reason = "";
+  if (!r.ok) { try { reason = (await r.text()).replace(/\s+/g, " ").trim().slice(0, 160); } catch (e) { reason = ""; } }
+  return { ok: r.ok, status: r.status, gone: r.status === 404 || r.status === 410, reason };
 }
+
+// Чий це сервер сповіщень — для зрозумілої відповіді організаторові.
+const serviceOf = (endpoint) => {
+  try {
+    const h = new URL(String(endpoint)).host.toLowerCase();
+    if (/(^|\.)apple\.com$/.test(h)) return "Apple";
+    if (/(^|\.)(googleapis|google)\.com$/.test(h)) return "Google";
+    if (/(^|\.)mozilla\.(com|org)$/.test(h)) return "Mozilla";
+    if (/(^|\.)(windows|microsoft)\.com$/.test(h)) return "Microsoft";
+    return h.slice(0, 60);
+  } catch (e) { return ""; }
+};
+// Текст перевірки одного телефона — мовою цього телефона.
+const TEST_MSG = {
+  uk: { title: "Перевірка сповіщень", body: "Сповіщення на цьому телефоні працюють." },
+  en: { title: "Notification test", body: "Notifications work on this phone." },
+  ru: { title: "Проверка уведомлений", body: "Уведомления на этом телефоне работают." },
+};
 
 async function sb(fn, body) {
   const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
@@ -237,7 +266,7 @@ export default async function handler(req, res) {
     //   pin    — для застосунку в руках організатора; перевіряється в базі.
     // Раніше застосунок надсилав secret, і той лежав у відкритому коді:
     // будь-хто міг розіслати сповіщення на всі телефони.
-    const { secret, pin, title, body, url, tag, msgs, notifyBooking, notifyDecision, onlyAdmin } = req.body || {};
+    const { secret, pin, title, body, url, tag, msgs, notifyBooking, notifyDecision, onlyAdmin, testDevice } = req.body || {};
 
     // Окремий режим: сповістити ЛИШЕ організатора про новий запис.
     // Авторизації тут немає — її замінює ключ самого запису. Він
@@ -270,7 +299,14 @@ export default async function handler(req, res) {
       let ok = 0;
       for (const sub of subs) {
         const payload = JSON.stringify({ ...msgFor(langOf(sub.lang)), url: go, tag: "booking" });
-        try { if ((await sendOne(sub, payload)).ok) ok++; } catch (e) {}
+        try {
+          const r = await sendOne(sub, payload);
+          if (r.ok) ok++;
+          // Мертву підписку організатора прибираємо й тут (p5): тоді його
+          // телефон при наступному відкритті застосунку створить нову, а не
+          // лишатиметься без сповіщень про заявки.
+          else if (r.gone) await sb("push_unsubscribe", { p_endpoint: sub.endpoint }).catch(() => {});
+        } catch (e) {}
       }
       res.status(200).json({ sent: ok });
       return;
@@ -322,6 +358,30 @@ export default async function handler(req, res) {
       res.status(200).json(r.ok ? { sent: 1 } : { sent: 0, failed: 1, note: r.gone ? "notifications off" : "push failed" });
       return;
     }
+    // Окремий режим (p5): перевірити сповіщення на ОДНОМУ телефоні. Право —
+    // PIN організатора. Тестове йде лише на підписку, яку назвав телефон
+    // (і лише якщо вона є в базі), а відповідь переказує, що сказав сервер
+    // сповіщень: так видно, яка ланка мовчить, і не турбує решту групи.
+    if (testDevice && testDevice.endpoint) {
+      let okPin = false;
+      try { okPin = Boolean(pin) && (await sb("check_pin", { pin })) === true; } catch (e) { okPin = false; }
+      if (!okPin) { res.status(403).json({ error: "not allowed" }); return; }
+      if (!process.env.VAPID_PRIVATE_KEY || !process.env.VAPID_PUBLIC_KEY) { res.status(200).json({ test: true, sent: 0, note: "no vapid" }); return; }
+      const endpoint = String(testDevice.endpoint).slice(0, 700);
+      const subs = await sb("push_list", { p_secret: process.env.PUSH_SECRET, p_only_admin: false });
+      const list = Array.isArray(subs) ? subs : [];
+      const sub = list.find((x) => x && x.endpoint === endpoint);
+      if (!sub) { res.status(200).json({ test: true, sent: 0, note: "not in db", total: list.length }); return; }
+      const payload = JSON.stringify({ ...TEST_MSG[langOf(sub.lang)], url: "/", tag: "test" });
+      let r = { ok: false, status: 0, gone: false, reason: "" }, err = "";
+      try { r = await sendOne(sub, payload); } catch (e) { err = String((e && e.message) || e).slice(0, 160); }
+      if (r.gone) await sb("push_unsubscribe", { p_endpoint: endpoint }).catch(() => {});
+      res.status(200).json({
+        test: true, sent: r.ok ? 1 : 0, status: Number(r.status) || 0, gone: Boolean(r.gone), service: serviceOf(endpoint),
+        ...(r.reason ? { reason: r.reason } : {}), ...(err ? { error: err } : {}),
+      });
+      return;
+    }
     if (!process.env.VAPID_PRIVATE_KEY) {
       res.status(500).json({ error: "VAPID_PRIVATE_KEY not set in Vercel" });
       return;
@@ -365,6 +425,9 @@ export default async function handler(req, res) {
     const cache = {};
     let sent = 0, failed = 0;
     const dead = [];
+    // Коди відмов серверів сповіщень (p5): { "410": 2, "403": 1 }; "0" — сервер
+    // не відповів. Годинник записує їх у журнал надсилань.
+    const codes = {};
 
     // Розсилаємо пачками по 20: одночасно всім — і функція впирається
     // в ліміт часу, по одному — надто повільно.
@@ -376,7 +439,8 @@ export default async function handler(req, res) {
         return sendOne(s, cache[lang]).catch(() => ({ ok: false, gone: false }));
       }));
       out.forEach((r, k) => {
-        if (r.ok) sent++; else failed++;
+        if (r.ok) sent++;
+        else { failed++; const c = String(Number(r.status) || 0); codes[c] = (codes[c] || 0) + 1; }
         if (r.gone) dead.push(chunk[k].endpoint);
       });
     }
@@ -385,7 +449,7 @@ export default async function handler(req, res) {
       await sb("push_unsubscribe", { p_endpoint: e }).catch(() => {});
     }
 
-    res.status(200).json({ sent, failed, removed: dead.length });
+    res.status(200).json({ sent, failed, removed: dead.length, ...(failed ? { codes } : {}) });
   } catch (e) {
     res.status(500).json({ error: String((e && e.message) || e) });
   }

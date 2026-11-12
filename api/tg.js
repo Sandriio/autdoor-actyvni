@@ -1,4 +1,11 @@
-// ═══ Tropa Club · api/tg.js · ВЕРСІЯ g3 ═══
+// ═══ Tropa Club · api/tg.js · ВЕРСІЯ g4 ═══
+// g4 (v149) — записуючи підписку на сповіщення (дія rpc, push_subscribe),
+//      сервер каже телефону, чи база вже знала цю підписку (заголовок
+//      X-Tropa-Push: known | new). Телефон, чию підписку сервер сповіщень
+//      Apple чи Google оголосив недійсною (база її через це прибрала), досі
+//      щоразу записував ту саму мертву адресу наново — і так і лишався без
+//      сповіщень. Тепер, почувши «new» про підписку, яку вже записував,
+//      застосунок створює на телефоні нову. Решта — без змін.
 // g3 (v147) — двері більше не відчиняються через збій. Щойно хтось хоч раз
 //      увійшов через бота, перевірка лишається ввімкненою за будь-якої
 //      помилки (Telegram мовчить, бот втратив права, база не відповіла).
@@ -76,7 +83,7 @@ import crypto from "crypto";
 import zlib from "zlib";
 
 export const config = { maxDuration: 30 };
-export const VERSION = "g3";
+export const VERSION = "g4";
 
 const TG = "https://api.telegram.org";
 const NONCE_MIN = 30;            // код входу живе 30 хвилин
@@ -635,6 +642,17 @@ export default async function handler(req, res) {
           return;
         }
       }
+      // g4: чи база вже знала цю підписку — питаємо ДО запису. Порожній
+      // перелік чи помилку вважаємо «невідомо»: інакше збій у налаштуваннях
+      // змусив би всі телефони перестворювати підписки.
+      let pushWas = "";
+      if (fn === "push_subscribe") {
+        const ep0 = String(args.p_endpoint || "").trim();
+        try {
+          const all = await rpc(E, "push_list", { p_secret: process.env.PUSH_SECRET, p_only_admin: false }, E.anon || E.svc);
+          if (ep0 && Array.isArray(all) && all.length > 0) pushWas = all.some((x) => x && x.endpoint === ep0) ? "known" : "new";
+        } catch { pushWas = ""; }
+      }
       let r = null, txt = "";
       try {
         r = await fetch(`${E.url}/rest/v1/rpc/${fn}`, {
@@ -651,6 +669,7 @@ export default async function handler(req, res) {
           try { await upsert(E, "tg_devices", [{ endpoint: ep, uid: who.uid, linked_at: new Date().toISOString() }], "endpoint"); } catch { /* застосунок прив'яже сам (link) */ }
         }
       }
+      if (r.ok && pushWas) res.setHeader("X-Tropa-Push", pushWas);
       res.statusCode = r.status;
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.end(txt);
