@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v148 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v149 ═══
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -28,7 +28,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v148";
+const APP_VERSION = "v149";
 
 // ── Анімації (v146) ──────────────────────────────────────────────────
 // Сторінка поїздки виїжджає знизу, головний екран і вкладки з'являються
@@ -201,21 +201,49 @@ async function tgLinkCurrent() {
   } catch { /* без підписки — нема що прив'язувати */ }
 }
 
+// ── Підписка, яка не губиться (v149) ──────────────────────────────────
+// Телефон може лишитись без сповіщень, хоч людина їх не вимикала:
+//  • система сама прибрала підписку (iPhone робить це після оновлень і
+//    збоїв) — картка на головному екрані тоді знову пропонує «Увімкнути»,
+//    і цього легко не помітити;
+//  • сервер сповіщень Apple чи Google оголосив підписку недійсною: наш
+//    сервер прибирає таку з бази, а телефон і далі вважав її чинною й при
+//    кожному відкритті записував ту саму мертву адресу наново.
+// Тому застосунок пам'ятає, що сповіщення на цьому телефоні ввімкнені
+// (позначка PUSH_MARK), і при відкритті сам відновлює підписку — не частіше
+// ніж раз на добу й лише поки дозвіл на сповіщення в телефоні чинний.
+// Людина вимкнула сповіщення сама або вийшла з групи — позначка стирається,
+// і нічого не відновлюється.
+const PUSH_MARK = "tropa_push";          // { ep: хвіст адреси підписки, at: коли записали, heal: коли востаннє відновлювали }
+const PUSH_ADM = "tropa_push_adm";       // "1" — цей телефон позначено як телефон організатора; "again" — позначку треба поновити (PIN)
+const PUSH_HEAL_EVERY = 24 * 3600000;
+const epTail = (ep) => String(ep || "").slice(-40);
+const pushMarkGet = () => { try { const v = JSON.parse(lsGet(PUSH_MARK) || "null"); return v && typeof v === "object" ? v : null; } catch { return null; } };
+const pushMarkSet = (v) => lsSet(PUSH_MARK, v ? JSON.stringify(v) : null);
+// Картка сповіщень і підказка організаторові перечитують стан за цим сигналом.
+const pushChanged = () => { try { window.dispatchEvent(new Event("tropa-push")); } catch { /* старий браузер */ } };
+const newPushSub = (reg) => reg.pushManager.subscribe({
+  userVisibleOnly: true,
+  applicationServerKey: urlB64ToBytes(VAPID_PUBLIC_KEY),
+});
+// Записати підписку цього телефона на сервері. Відповідь: "known" — сервер
+// її вже мав, "new" — бачить уперше (або встиг прибрати), "" — не сказав
+// (старий сервер, до g4).
+async function pushSave(j, lang) {
+  const r = await sbRpcRaw("push_subscribe", {
+    p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_lang: lang || "uk",
+  });
+  return String((r.headers && r.headers.get("X-Tropa-Push")) || "");
+}
 async function pushSubscribe(lang) {
   const reg = await navigator.serviceWorker.ready;
   const perm = await Notification.requestPermission();
   if (perm !== "granted") throw new Error("denied");
   let sub = await reg.pushManager.getSubscription();
-  if (!sub) {
-    sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlB64ToBytes(VAPID_PUBLIC_KEY),
-    });
-  }
+  if (!sub) sub = await newPushSub(reg);
   const j = sub.toJSON();
-  await sbRpc("push_subscribe", {
-    p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_lang: lang || "uk",
-  });
+  await pushSave(j, lang);
+  pushMarkSet({ ep: epTail(j.endpoint), at: Date.now(), heal: (pushMarkGet() || {}).heal || 0 });
   // Записи, зроблені ще до вмикання сповіщень, — теж на цей телефон.
   linkAllBookingsPush().catch(() => {});
   // І саму підписку — до людини, що увійшла через Telegram (v146).
@@ -223,11 +251,71 @@ async function pushSubscribe(lang) {
   return sub;
 }
 async function pushUnsubscribe() {
+  // Людина вимкнула сама — відновлювати нічого (v149).
+  pushMarkSet(null); lsSet(PUSH_ADM, null);
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.getSubscription();
-  if (!sub) return;
+  if (!sub) { pushChanged(); return; }
   await sbRpc("push_unsubscribe", { p_endpoint: sub.endpoint }).catch(() => {});
   await sub.unsubscribe();
+  pushChanged();
+}
+// Нова підписка замість утраченої чи недійсної. Стару (якщо є) телефон
+// спершу відпускає: інакше браузер повернув би ту саму адресу.
+async function pushResubscribe(reg, oldSub, lang) {
+  // Час спроби — ДО неї: не вийде — наступна за добу, а не при кожному відкритті.
+  pushMarkSet({ ...(pushMarkGet() || {}), heal: Date.now() });
+  try {
+    if (oldSub) { try { await oldSub.unsubscribe(); } catch { /* її вже немає */ } }
+    const sub = await newPushSub(reg);
+    const j = sub.toJSON();
+    await pushSave(j, lang);
+    pushMarkSet({ ep: epTail(j.endpoint), at: Date.now(), heal: Date.now() });
+    linkAllBookingsPush().catch(() => {});
+    tgLinkEndpoint(j.endpoint).catch(() => {});
+    // Нова підписка — нова адреса: позначку «телефон організатора» треба
+    // поставити наново. PIN у пам'яті — ставимо одразу; ні — підкажемо на
+    // головному екрані, що потрібен вхід із PIN.
+    if (ADMIN_PIN_MEM) sbMarkAdminDevice(ADMIN_PIN_MEM).catch(() => {});
+    else if (lsGet(PUSH_ADM)) lsSet(PUSH_ADM, "again");
+    return sub;
+  } finally { pushChanged(); }
+}
+// При відкритті застосунку: записати підписку на сервері (мова могла
+// змінитись) і відновити її, якщо вона загубилась. Виклики йдуть один за
+// одним — вхід і зміна мови поспіль не відновлюватимуть підписку двічі.
+let PUSH_KEEP = Promise.resolve("");
+function pushKeepAlive(lang) {
+  PUSH_KEEP = PUSH_KEEP.catch(() => "").then(async () => {
+    try {
+      if (!pushSupported() || !sbConfigured()) return "";
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      const mark = pushMarkGet();
+      const granted = typeof Notification !== "undefined" && Notification.permission === "granted";
+      const mayHeal = granted && (!mark || !mark.heal || Date.now() - mark.heal > PUSH_HEAL_EVERY);
+      if (!sub) {
+        // Сповіщення тут були ввімкнені (позначка), а підписки вже немає —
+        // її прибрала система. Створюємо нову мовчки.
+        if (!mark || !mark.ep || !mayHeal) return "";
+        await pushResubscribe(reg, null, lang);
+        return "restored";
+      }
+      const j = sub.toJSON();
+      tgLinkEndpoint(j.endpoint).catch(() => {});
+      const was = await pushSave(j, lang);
+      // Сервер цієї підписки вже не має, хоч телефон її записував:
+      // найімовірніше, сервер сповіщень оголосив її недійсною. Та сама
+      // адреса вдруге не запрацює — потрібна нова.
+      if (was === "new" && mark && mark.ep === epTail(j.endpoint) && mayHeal) {
+        await pushResubscribe(reg, sub, lang);
+        return "renewed";
+      }
+      pushMarkSet({ ep: epTail(j.endpoint), at: Date.now(), heal: (mark && mark.heal) || 0 });
+      return was;
+    } catch { return ""; }
+  });
+  return PUSH_KEEP;
 }
 // Надсилання — лише з режиму організатора. Раніше тут лежало спільне
 // слово-пароль, і будь-хто, відкривши код, міг розіслати сповіщення на
@@ -252,6 +340,34 @@ async function pushSendMsgs(pin, msgs, tag, url) {
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
+}
+// Тестове сповіщення лише на ЦЕЙ телефон (api/push.js p5; v149). У запиті
+// свідомо немає тексту: старий сервер (p4) цього режиму не знає й з текстом
+// розіслав би тестове всій групі; без тексту він просто відмовляє.
+async function pushTestDevice(pin, endpoint) {
+  const r = await fetch("/api/push", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin, testDevice: { endpoint } }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 400 && j && j.error === "no title") return { old: true };
+  if (!r.ok) throw new Error((j && j.error) || `сервер відповів ${r.status}`);
+  return j || {};
+}
+// Що означає відмова сервера сповіщень — словами, з яких видно, що робити.
+function pushFailText(r) {
+  const svc = r.service ? ` ${r.service}` : "";
+  const why = r.reason ? ` Відповідь: «${String(r.reason).slice(0, 120)}».` : "";
+  const st = Number(r.status) || 0;
+  if (r.note === "no vapid") return "У Vercel немає ключів сповіщень (VAPID_PUBLIC_KEY і VAPID_PRIVATE_KEY) — без них сервер нічого не надішле.";
+  if (r.note === "not in db") return `Сервер не бачить підписки цього телефона в базі (усього підписок у базі: ${r.total == null ? "?" : r.total}). Покажи цей текст тому, хто допомагає з застосунком.`;
+  if (st === 404 || st === 410) return `Сервер сповіщень${svc} і нову підписку вважає недійсною (відповідь ${st}).${why} Вимкни й увімкни сповіщення на головному екрані; не допоможе — покажи цей текст тому, хто допомагає з застосунком.`;
+  if (st === 401 || st === 403) return `Сервер сповіщень${svc} не прийняв підпис нашого сервера (відповідь ${st}).${why} Найімовірніше, ключі VAPID у Vercel не збігаються з ключем у застосунку. Покажи цей текст тому, хто допомагає з застосунком.`;
+  if (st === 413) return `Сервер сповіщень${svc} відхилив сповіщення як завелике (відповідь 413).${why}`;
+  if (st === 429) return `Сервер сповіщень${svc} просить зачекати — забагато запитів (відповідь 429). Спробуй за кілька хвилин.`;
+  if (st >= 500) return `Сервер сповіщень${svc} зараз не працює (відповідь ${st}). Спробуй пізніше.`;
+  if (st === 0) return `Сервер сповіщень${svc} не відповів${r.error ? ` (${String(r.error).slice(0, 120)})` : ""}. Спробуй ще раз за хвилину.`;
+  return `Сервер сповіщень${svc} відмовив (відповідь ${st}).${why} Покажи цей текст тому, хто допомагає з застосунком.`;
 }
 
 // ── Перехід зі сповіщення ─────────────────────────────────────────────
@@ -481,7 +597,9 @@ let GATE_RECHECK = null;
 // PIN організатора, поки він у своєму режимі (лише в пам'яті, не в сховищі):
 // ним поновлюється квиток організатора, коли сплинуть його 14 днів.
 let ADMIN_PIN_MEM = "";
-async function sbRpc(fn, body) {
+// sbRpcRaw — те саме, що sbRpc, але разом із заголовками відповіді (v149:
+// записуючи підписку на сповіщення, сервер каже в заголовку, чи знав її).
+async function sbRpcRaw(fn, body) {
   if (SERVER_RPC.has(fn)) {
     const c = tgLoad();
     const r = await fetch("/api/tg", {
@@ -501,7 +619,7 @@ async function sbRpc(fn, body) {
         }
       }
       if (!r.ok) throw new Error(txt);
-      return txt ? JSON.parse(txt) : null;
+      return { data: txt ? JSON.parse(txt) : null, headers: r.headers };
     }
   }
   const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
@@ -509,7 +627,10 @@ async function sbRpc(fn, body) {
   });
   if (!r.ok) throw new Error(await r.text());
   const txt = await r.text();
-  return txt ? JSON.parse(txt) : null;
+  return { data: txt ? JSON.parse(txt) : null, headers: r.headers };
+}
+async function sbRpc(fn, body) {
+  return (await sbRpcRaw(fn, body)).data;
 }
 // Скільки місць уже зайнято в кожній поїздці — одним запитом на всі.
 async function sbBookedCounts() {
@@ -557,6 +678,10 @@ const sbMarkAdminDevice = async (pin) => {
   const sub = await reg.pushManager.getSubscription();
   if (!sub) return;
   await sbRpc("push_mark_admin", { p_endpoint: sub.toJSON().endpoint, pin });
+  // Телефон пам'ятає, що він — організатора (v149): якщо підписку доведеться
+  // відновити, застосунок підкаже, що позначку треба поновити входом із PIN.
+  lsSet(PUSH_ADM, "1");
+  pushChanged();
 };
 // Сповістити організатора про нову заявку. Ключ заявки замінює тут
 // авторизацію: він доводить, що заявка справді щойно створена.
@@ -1492,6 +1617,20 @@ function autoStatus(trip) {
   return "recruiting";
 }
 const statusLabel = (status) => t(STATUS[status]?.tkey || "stUpcoming");
+// Поїздка «відпрацювала» (v149): завершена — або скасована, і її день уже
+// минув. У списку така картка тьмяна, ніби вимкнена. Скасована поїздка, день
+// якої ще попереду, лишається яскравою: скасування мають помітити.
+function tripIsOver(trip) {
+  const st = autoStatus(trip);
+  if (st === "done") return true;
+  if (st !== "cancelled") return false;
+  const date = String((trip && trip.date) || "").trim();
+  return date !== "" && berlinNow().date > date;
+}
+// Вигляд «вимкненої» картки: майже без кольору й напівпрозора — крізь неї
+// проступає зелене тло сторінки, тож поруч з активними вона відступає назад.
+// Лише сама картка: кнопки організатора під нею лишаються звичайними.
+const CARD_OVER = { opacity: 0.6, filter: "saturate(0.2)" };
 
 // Стан поїздки в руках організатора (v141). Звичайні стани рахуються самі
 // за годинником (autoStatus), тож у списку — «Автоматично: <стан зараз>»,
@@ -2519,6 +2658,20 @@ function PushToggle() {
       setState(sub ? "on" : "idle");
     }).catch(() => setState("unsupported"));
   }, []);
+  // Підписку могли відновити чи вимкнути не цією кнопкою (v149:
+  // самовідновлення при відкритті, перевірка в панелі організатора) —
+  // картка перечитує стан.
+  useEffect(() => {
+    const again = () => {
+      if (!pushSupported() || (isIOS() && !isStandalone())) return;
+      navigator.serviceWorker.ready
+        .then((reg) => reg.pushManager.getSubscription())
+        .then((sub) => setState((cur) => (cur === "busy" || cur === "denied" || cur === "unsupported" || cur === "needInstall" ? cur : sub ? "on" : "idle")))
+        .catch(() => {});
+    };
+    window.addEventListener("tropa-push", again);
+    return () => window.removeEventListener("tropa-push", again);
+  }, []);
 
   const turnOn = async () => {
     setState("busy"); setErr("");
@@ -2574,6 +2727,28 @@ function PushToggle() {
       {state === "busy" ? "…" : t("pnOn")}
     </button>
   </>, "rgba(255,255,255,0.22)");
+}
+
+// Телефон організатора після відновлення підписки (v149). Сповіщення про
+// нові заявки йдуть лише на позначені телефони, а позначку ставить вхід із
+// PIN: у нової підписки — нова адреса. Підказка зникає сама, щойно
+// організатор увійде.
+function OrganizerPushHint({ onPin }) {
+  const [show, setShow] = useState(() => lsGet(PUSH_ADM) === "again");
+  useEffect(() => {
+    const again = () => setShow(lsGet(PUSH_ADM) === "again");
+    window.addEventListener("tropa-push", again);
+    return () => window.removeEventListener("tropa-push", again);
+  }, []);
+  if (!show) return null;
+  return (
+    <div data-push="adm-hint" style={{ display: "flex", alignItems: "center", gap: 11, margin: "10px 30px 0", border: "1px solid rgba(253,228,70,0.6)", borderRadius: 14, padding: "11px 13px" }}>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: "rgba(255,255,255,0.85)", lineHeight: 1.4 }}>
+        Сповіщення на цьому телефоні відновлено. Щоб знову приходили й сповіщення про нові заявки, увійди з PIN організатора.
+      </span>
+      <button onClick={onPin} style={{ border: `1px solid ${C.yellow}`, background: "transparent", color: C.yellow, fontSize: 11.5, fontWeight: 700, cursor: "pointer", flexShrink: 0, fontFamily: "inherit", borderRadius: 9, padding: "7px 12px" }}>PIN</button>
+    </div>
+  );
 }
 
 // Іконка типу місця. Один перелік на весь застосунок: і для заглушки
@@ -5012,13 +5187,17 @@ function TripCard({ trip, onClick, isAdmin, onSetStatus, onSetPostponedDate, onE
     );
   }
   const left = Math.max(0, (Number(trip.spots) || 0) - takenOf(trip, counts));
+  // Завершена поїздка — тьмяна (v149). Тло картки переїжджає на її
+  // внутрішню частину: інакше крізь напівпрозору картку проступало б її ж
+  // власне світле тло, а не зелене тло сторінки.
+  const over = tripIsOver(trip);
   return (
-    <div className="tc-card" style={{
-      width: "100%", borderRadius: 20, overflow: "hidden", background: C.card,
-      boxShadow: "0 2px 14px rgba(60,79,44,0.08)", marginBottom: 16,
+    <div className="tc-card" data-over={over ? "1" : undefined} style={{
+      width: "100%", borderRadius: 20, overflow: "hidden", background: over ? "transparent" : C.card,
+      boxShadow: over ? "none" : "0 2px 14px rgba(60,79,44,0.08)", marginBottom: 16,
       animationDelay: `${Math.min(Number(animIndex) || 0, 8) * 45}ms`,
     }}>
-      <div className="tc-press" onClick={onClick} style={{ cursor: "pointer" }}>
+      <div className="tc-press" onClick={onClick} style={{ cursor: "pointer", ...(over ? { background: C.card, ...CARD_OVER } : null) }}>
         {isAdmin && isDraft(trip) && (
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
@@ -6322,6 +6501,8 @@ function situationMsgs(kind, trip, reasonCode, newDate) {
 // щоразу година навмання. Відповідь називає ланку одразу.
 function PushDiagnostics({ pin, trip }) {
   const [state, setState] = useState("");
+  // Результат перевірки цього телефона (v149) — окремо, одразу під її кнопкою.
+  const [check, setCheck] = useState("");
   const [busy, setBusy] = useState(false);
   const [subs, setSubs] = useState(null);
   const [beat, setBeat] = useState(null);
@@ -6441,8 +6622,60 @@ function PushDiagnostics({ pin, trip }) {
     } finally { setBusy(false); }
   };
 
+  // Перевірка сповіщень САМЕ на цьому телефоні (v149). Тестове йде лише
+  // сюди, а не всій групі, і відповідь називає ланку, яка мовчить: дозвіл
+  // у телефоні, підписка телефона, база чи сервер сповіщень Apple / Google.
+  // Що можна полагодити на місці — лагодить сама: втрачену чи недійсну
+  // підписку створює наново й пробує ще раз.
+  const selfTest = async () => {
+    setBusy(true); setState(""); setCheck("");
+    const L = [];
+    const say = (line) => { L.push(line); setCheck(L.join("\n")); };
+    try {
+      if (isIOS() && !isStandalone()) { say("✗ На iPhone сповіщення працюють лише в застосунку, відкритому з іконки на початковому екрані, — не у вкладці Safari."); return; }
+      if (!pushSupported()) { say("✗ Цей браузер не підтримує сповіщень."); return; }
+      const perm = Notification.permission;
+      if (perm === "denied") { say("✗ Сповіщення для застосунку заборонені в налаштуваннях телефона. Дозволь їх там (на iPhone: Параметри → Сповіщення → Tropa Club) і натисни ще раз."); return; }
+      if (perm !== "granted") { say("✗ Сповіщення на цьому телефоні ще не ввімкнені. Увімкни їх на головному екрані застосунку — картка «Сповіщення про поїздки» під списком поїздок, — тоді натисни ще раз."); return; }
+      await pushRegister();
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        say("Підписки на цьому телефоні не було — телефон її втратив. Створюю нову…");
+        sub = await pushResubscribe(reg, null, CURRENT_LANG);
+      } else {
+        const j = sub.toJSON();
+        const was = await pushSave(j, CURRENT_LANG);
+        pushMarkSet({ ep: epTail(j.endpoint), at: Date.now(), heal: (pushMarkGet() || {}).heal || 0 });
+        say(was === "new" ? "У базі цього телефона не було — записав." : "Підписка цього телефона є в базі.");
+      }
+      await sbMarkAdminDevice(pin).catch(() => {});
+      let r = await pushTestDevice(pin, sub.endpoint);
+      if (r.old) { say("✗ На сервері ще стара версія api/push.js — завантаж у папку api файл push.js (p5) з v149."); return; }
+      if (!r.sent && (r.gone || r.note === "not in db")) {
+        say(r.gone
+          ? `Сервер сповіщень${r.service ? ` ${r.service}` : ""} відповів ${r.status}: підписка цього телефона більше не дійсна. Створюю нову…`
+          : "Сервер не знайшов цієї підписки в базі. Створюю нову…");
+        sub = await pushResubscribe(reg, sub, CURRENT_LANG);
+        await sbMarkAdminDevice(pin).catch(() => {});
+        r = await pushTestDevice(pin, sub.endpoint);
+      }
+      if (r.sent) {
+        say(`✓ Сервер сповіщень${r.service ? ` ${r.service}` : ""} прийняв тестове (відповідь ${r.status}). Воно має з'явитися на цьому телефоні за кілька секунд.`);
+        say(isIOS()
+          ? "Не з'явилось — причина вже в самому телефоні: Параметри → Сповіщення → Tropa Club (дозволити, показувати банери) і режим «Не турбувати» чи «Фокус»."
+          : "Не з'явилось — причина вже в самому телефоні: налаштування телефона → Сповіщення → Tropa Club або Chrome (дозволити) і режим «Не турбувати».");
+      } else say(`✗ ${pushFailText(r)}`);
+      checkMine();
+      sbRpc("push_count", {}).then((n) => setSubs(Number(n) || 0)).catch(() => {});
+    } catch (e) {
+      say("✗ Не вдалося перевірити: " + String((e && e.message) || e).slice(0, 200));
+    } finally { setBusy(false); }
+  };
+
   const test = async () => {
-    setBusy(true); setState("");
+    if (!window.confirm("Надіслати тестове сповіщення ВСІМ, хто ввімкнув сповіщення?\n\nЩоб перевірити лише свій телефон, є кнопка «Перевірити сповіщення на цьому телефоні».")) return;
+    setBusy(true); setState(""); setCheck("");
     const lines = [];
     lines.push(`Підписок у базі: ${subs === null ? "…" : subs === -1 ? "не вдалося прочитати (немає функції push_count?)" : subs}`);
     lines.push(`Дозвіл у цьому браузері: ${typeof Notification === "undefined" ? "не підтримується" : Notification.permission}`);
@@ -6462,6 +6695,10 @@ function PushDiagnostics({ pin, trip }) {
         ru: { title: "Проверка уведомлений", body: "Если вы это видите — всё работает." },
       }, "test", "/");
       lines.push(`Сервер відповів: надіслано ${r.sent}, не вдалось ${r.failed}${r.removed ? `, прибрано мертвих ${r.removed}` : ""}${r.note ? ` (${r.note})` : ""}`);
+      // Чому не вдалось (api/push.js p5): коди відмов серверів сповіщень.
+      const codes = r.codes && typeof r.codes === "object"
+        ? Object.entries(r.codes).map(([k, n]) => `${k === "0" ? "без відповіді" : k}×${n}`).join(", ") : "";
+      if (codes) lines.push(`Відмови: ${codes}. 410 і 404 — підписка телефона більше не дійсна: телефон створить нову сам, щойно на ньому відкриють застосунок.`);
     } catch (e) {
       lines.push(`ПОМИЛКА СЕРВЕРА: ${String(e.message || e).slice(0, 220)}`);
     }
@@ -6528,7 +6765,7 @@ function PushDiagnostics({ pin, trip }) {
             ? `✓ прийняли ${sent} ${phones}${failed ? `, не вдалось ${failed}` : ""}`
             : bad ? "✗ не дійшло" : unknown ? "? чи дійшло — невідомо" : "";
           return (
-            <div key={`${j.key}-${j.sent_at}-${i}`} style={{ padding: "6px 0", borderTop: i ? `1px solid ${C.line}` : "none" }}>
+            <div key={`${j.key}-${j.sent_at}-${i}`} data-push="jrow" style={{ padding: "6px 0", borderTop: i ? `1px solid ${C.line}` : "none" }}>
               <div style={{ fontSize: 12, color: C.ink, lineHeight: 1.4 }}>
                 <span style={{ color: C.muted }}>{when}</span> · <b>{j.title || j.key}</b>{adminOnly ? <span style={{ color: C.muted }}> · лише вам</span> : null}
               </div>
@@ -6540,6 +6777,12 @@ function PushDiagnostics({ pin, trip }) {
             </div>
           );
         })}
+        {/* Коди відмов у журналі (c14) — що вони означають. */}
+        {Array.isArray(journal) && journal.some((j) => /\d{3}×\d|без відповіді×/.test(String(j.note || ""))) && (
+          <div data-push="codes" style={{ fontSize: 11, color: C.muted, lineHeight: 1.45, marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.line}` }}>
+            «410×1» чи «404×1» — підписка одного телефона більше не дійсна; той телефон створить нову сам, щойно на ньому відкриють застосунок. «403» — сервер сповіщень не прийняв наш ключ.
+          </div>
+        )}
       </div>
       <div style={{ background: mine === true ? C.greenSoft : C.raspSoft, borderRadius: 10, padding: "9px 11px", marginBottom: 10, display: "flex", alignItems: "center", gap: 9 }}>
         <span style={{ flex: 1, fontSize: 12, color: mine === true ? C.greenDark : C.rasp, lineHeight: 1.45 }}>
@@ -6566,9 +6809,18 @@ function PushDiagnostics({ pin, trip }) {
             : <>Фоновий скрипт на цьому телефоні <b>застарий</b>{sw ? ` (${sw})` : ""}. Закрийте застосунок повністю й відкрийте знову.</>}
         </p>
       )}
-      <button onClick={test} disabled={busy}
-        style={{ width: "100%", border: `1.5px solid ${C.green}`, background: busy ? C.greenSoft : "transparent", color: C.greenDark, borderRadius: 10, padding: "11px", fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
-        {busy ? "Перевіряю…" : "Надіслати тестове сповіщення"}
+      {/* Перевірка цього телефона (v149) — головна кнопка: тестове йде лише
+          сюди й каже, яка ланка мовчить. «Тестове всім» — запасна, нижче. */}
+      <button data-push="selftest" onClick={selfTest} disabled={busy}
+        style={{ width: "100%", border: "none", background: busy ? C.greenSoft : C.green, color: busy ? C.greenDark : "#fff", borderRadius: 10, padding: "12px", fontSize: 12.5, fontWeight: 800, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+        {busy ? "Перевіряю…" : "Перевірити сповіщення на цьому телефоні"}
+      </button>
+      {check !== "" && (
+        <pre data-push="result" style={{ background: "#fff", border: `1px solid ${/^✓/m.test(check) ? C.green : /^✗/m.test(check) ? C.rasp : C.line}`, borderRadius: 10, padding: 11, fontSize: 11.5, color: C.ink, lineHeight: 1.55, whiteSpace: "pre-wrap", fontFamily: "inherit", margin: "9px 0 0" }}>{check}</pre>
+      )}
+      <button data-push="testall" onClick={test} disabled={busy}
+        style={{ width: "100%", marginTop: 9, border: `1.5px solid ${C.green}`, background: "transparent", color: C.greenDark, borderRadius: 10, padding: "10px", fontSize: 12, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+        Надіслати тестове всім
       </button>
       {/* Розсилка про зміну часу. Кнопкою, а не автоматично при правці
           поля: під час редагування час міняється кілька разів, і кожна
@@ -6618,7 +6870,7 @@ function PushDiagnostics({ pin, trip }) {
         <pre style={{ marginTop: 10, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, fontSize: 11, color: C.ink, lineHeight: 1.6, whiteSpace: "pre-wrap", fontFamily: "inherit", margin: "10px 0 0" }}>{state}</pre>
       )}
       <p style={{ fontSize: 11, color: C.muted, lineHeight: 1.5, margin: "9px 0 0" }}>
-        Сповіщення отримають усі, хто його увімкнув, включно з вами.
+        «Тестове всім», оголошення й зміну часу отримують усі, хто ввімкнув сповіщення, включно з тобою. Перевірка цього телефона йде лише сюди.
       </p>
     </div>
   );
@@ -9754,24 +10006,20 @@ export default function App() {
   // v147: лише коли людину пустили. Раніше підписка переписувалась при
   // кожному відкритті — і телефон того, хто вийшов із групи, знову
   // підписувався на сповіщення, хоч сервер його щойно відписав.
+  // v149: заодно підписка відновлюється, якщо загубилась (pushKeepAlive):
+  // телефон, який система чи сервер сповіщень лишили без підписки, сам
+  // створює нову — людині не треба помічати це й вмикати сповіщення наново.
   useEffect(() => {
     if (!pushSupported() || !sbConfigured() || !gateOpen) return;
-    navigator.serviceWorker.ready
-      .then((reg) => reg.pushManager.getSubscription())
-      .then((sub) => {
-        if (!sub) return;
-        const j = sub.toJSON();
-        tgLinkEndpoint(j.endpoint).catch(() => {});
-        return sbRpc("push_subscribe", {
-          p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_lang: lang,
-        });
-      })
-      .catch(() => {});
+    pushKeepAlive(lang);
   }, [lang, gateOpen]);
   // Сервер сказав, що людина вийшла з групи (v147): сповіщення на цьому
   // телефоні вимикаються й тут, а не лише на сервері.
   useEffect(() => {
-    if (gate.state !== "locked" || gate.why !== "left" || !pushSupported()) return;
+    if (gate.state !== "locked" || gate.why !== "left") return;
+    // І відновлювати підписку на цьому телефоні більше нічого (v149).
+    pushMarkSet(null); lsSet(PUSH_ADM, null);
+    if (!pushSupported()) return;
     navigator.serviceWorker.getRegistration()
       .then((reg) => (reg ? reg.pushManager.getSubscription() : null))
       .then((sub) => {
@@ -10257,6 +10505,7 @@ export default function App() {
             </div>)}
 
             <PushToggle />
+            {!isAdmin && <OrganizerPushHint onPin={() => { afterPin.current = null; openPin(""); }} />}
 
             {/* Footer + organizer gear */}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: 26, gap: 14 }}>
