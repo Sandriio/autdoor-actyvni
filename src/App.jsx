@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v151 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v152 ═══
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -6,7 +6,7 @@ import {
   Footprints, TrendingUp, TrendingDown, Users, Info, Snowflake, Phone, Send, Signal, MessageCircle,
   Waves, Building2, Camera, Settings, Pencil, Trash2, TreePine, Landmark, Bike, ClipboardCheck, Loader2, Play, Lock, Info as InfoIcon,
   GripVertical, Copy, Sparkles, Undo2, Download, Megaphone, RotateCcw, ClipboardPaste, Route, FileUp,
-  Archive, ArchiveRestore, ImagePlus, RefreshCw, LogOut, Key, Dices
+  Archive, ArchiveRestore, ImagePlus, RefreshCw, LogOut, Key, Dices, Eraser
 } from "lucide-react";
 // Розрахунки маршруту з GPX/KML/Google Maps (v144) — окремим файлом.
 import * as RT from "./route-tools.js";
@@ -28,7 +28,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v151";
+const APP_VERSION = "v152";
 
 // ── Анімації (v146) ──────────────────────────────────────────────────
 // Сторінка поїздки виїжджає знизу, головний екран і вкладки з'являються
@@ -8539,6 +8539,17 @@ function DbFill({ pin, tripDate, target = "all", filled = 0, onApply, onRestore 
     if (x) { try { URL.revokeObjectURL(x.url); } catch { /* */ } }
     return xs.filter((y) => y.id !== id);
   });
+  // «Стерти» (v152): одним натиском прибрати вставлений текст і скріншоти,
+  // щоб вставити наступне з'єднання (на телефоні виділяти й видаляти текст
+  // руками незручно). Поїзди, вже заповнені в поїздку, не чіпає — для них
+  // «Скасувати заповнення» чи «Видалити» біля відправлення.
+  const canClear = !busy && !prep && (text !== "" || shots.length > 0);
+  const clearInput = () => {
+    if (!canClear) return;
+    shots.forEach((x) => { try { URL.revokeObjectURL(x.url); } catch { /* */ } });
+    setShots([]); setText(""); setPending(null);
+    setMsg((m) => (m && m.ok ? m : null));
+  };
 
   const done = (r, snap, line) => {
     setUndo(snap); setPending(null);
@@ -8628,11 +8639,17 @@ function DbFill({ pin, tripDate, target = "all", filled = 0, onApply, onRestore 
           ? "Або встав текст чи посилання, наприклад:\nVerbindung am Sa. 08.11.2026\n• von München Hbf, Abfahrt 07:52 Uhr Gl. 27 mit RE 70\n• nach Füssen, Ankunft 09:58 Uhr Gl. 2 mit RE 70\nVerbindung ansehen: https://www.bahn.de/buchung/start?vbid=…"
           : "Або встав текст чи посилання з «Поділитися»"}
         style={{ ...inp, minHeight: target === "all" ? 110 : 70, resize: "vertical", lineHeight: 1.45, marginBottom: 9, background: "#fff" }} />
-      <button data-dbf="run" onClick={run} disabled={!canRun}
-        style={{ ...btn, width: "100%", border: "none", background: canRun ? C.rasp : "#ecc7d1", color: "#fff", cursor: canRun ? "pointer" : "default" }}>
-        {busy ? <Loader2 size={16} /> : <Sparkles size={16} />}
-        {busy ? (nParts > 0 ? "Claude читає скріншот… (до пів хвилини)" : "Читаю розклад… (до пів хвилини)") : target === "return" ? "Заповнити дорогу назад" : target === "journey" ? "Оновити відправлення" : "Заповнити поїзди"}
-      </button>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button data-dbf="run" onClick={run} disabled={!canRun}
+          style={{ ...btn, flex: 1, minWidth: 0, border: "none", background: canRun ? C.rasp : "#ecc7d1", color: "#fff", cursor: canRun ? "pointer" : "default" }}>
+          {busy ? <Loader2 size={16} /> : <Sparkles size={16} />}
+          {busy ? (nParts > 0 ? "Claude читає скріншот… (до пів хвилини)" : "Читаю розклад… (до пів хвилини)") : target === "return" ? "Заповнити дорогу назад" : target === "journey" ? "Оновити відправлення" : "Заповнити поїзди"}
+        </button>
+        <button data-dbf="clear" onClick={clearInput} disabled={!canClear} aria-label="Стерти вставлений текст і скріншоти"
+          style={{ ...btn, flexShrink: 0, padding: "11px 14px", background: "#fff", border: `1.5px solid ${canClear ? C.rasp : "#ecc7d1"}`, color: canClear ? C.rasp : "#e2a9b8", cursor: canClear ? "pointer" : "default" }}>
+          <Eraser size={16} /> Стерти
+        </button>
+      </div>
       {pending && (
         <div data-dbf="choose" style={{ marginTop: 10, background: "#fff", borderRadius: 11, padding: "10px 12px" }}>
           <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.5, marginBottom: 8 }}>
