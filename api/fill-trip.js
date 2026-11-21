@@ -1,4 +1,14 @@
-// ═══ Tropa Club · api/fill-trip.js · ВЕРСІЯ f4 ═══
+// ═══ Tropa Club · api/fill-trip.js · ВЕРСІЯ f5 ═══
+// f5 (v150) — карта Google My Maps за посиланням. Раніше посилання на карту
+//   My Maps давало «експортуйте у файл», а KML-файл, експортований із
+//   галочкою «мережеве посилання», не мав у собі ні лінії, ні точки — лише
+//   адресу карти («У файлі немає точок маршруту»). Тепер mode "gmaps" з
+//   адресою карти (…/maps/d/edit?mid=…, …/maps/d/kml?mid=…) бере її KML у
+//   Google (…/maps/d/kml?mid=…&forcekml=1) і віддає застосунку { kml }.
+//   Карта має бути відкрита «усім, хто має посилання»; закрита — code
+//   "private" з поясненням. KMZ розпаковується тут же (zlib).
+//   Нові типи місця: quest (квест-кімната), boardgames (настільні ігри),
+//   market (ярмарок) — для першого абзацу оголошення.
 // f4 (v146) — «Розклад з DB» уміє більше:
 //   • СКРІНШОТИ з'єднання (DB Navigator, bahn.de): Claude читає з картинки
 //     всі поїзди, пересадки, колії й назви ліній (images: до 6 частин).
@@ -56,9 +66,11 @@
 //  • SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — ті самі, що вже є.
 // ═══════════════════════════════════════════════════════════════════
 
+import zlib from "zlib";
+
 export const config = { maxDuration: 60 };
 
-export const VERSION = "f4";
+export const VERSION = "f5";
 const API = "https://api.anthropic.com/v1";
 const DEFAULT_MODEL = "claude-sonnet-5-5";
 // Запасна модель: якщо основна не прийме параметрів запиту (400) чи її вже
@@ -77,7 +89,7 @@ const PRICES = {
 const BUDGET_MS = 54000;
 
 const MAX_TEXT = 12000;
-const PLACE_TYPES = ["mountain", "lake", "city", "gorge", "forest", "valley", "river", "museum", "waterfall", "bike"];
+const PLACE_TYPES = ["mountain", "lake", "city", "gorge", "forest", "valley", "river", "museum", "waterfall", "bike", "quest", "boardgames", "market"];
 const DIFFICULTIES = ["Легкий", "Середній", "Складний"];
 
 // ── Спільні дрібниці ────────────────────────────────────────────────
@@ -236,6 +248,7 @@ export function cleanFields(raw) {
 const PLACE_UK = {
   mountain: "гори", lake: "озеро", city: "місто", gorge: "ущелина", forest: "ліс",
   valley: "долина", river: "ріка", museum: "музей", waterfall: "водоспад", bike: "велопоїздка",
+  quest: "квест-кімната", boardgames: "настільні ігри", market: "ярмарок",
 };
 const MONTHS = ["січень", "лютий", "березень", "квітень", "травень", "червень", "липень", "серпень", "вересень", "жовтень", "листопад", "грудень"];
 const SEASONS = ["зима", "зима", "весна", "весна", "весна", "літо", "літо", "літо", "осінь", "осінь", "осінь", "зима"];
@@ -822,6 +835,90 @@ export async function expandGoogleUrl(href, fetchImpl = fetch, deadline = Infini
   return { code: "fetch" };
 }
 
+// ═══ Карта My Maps → KML (f5) ═══════════════════════════════════════
+// Номер карти — параметр mid у будь-якій її адресі (edit, viewer, kml,
+// embed); lid — окремий шар, якщо посилання на нього.
+export function myMapsIds(href) {
+  try {
+    const u = new URL(href);
+    if (!/^\/maps\/d\//.test(u.pathname) && !/mymaps/i.test(u.hostname)) return null;
+    const mid = String(u.searchParams.get("mid") || "");
+    const lid = String(u.searchParams.get("lid") || "");
+    return /^[\w-]{8,100}$/.test(mid) ? { mid, lid: /^[\w-]{1,100}$/.test(lid) ? lid : "" } : null;
+  } catch { return null; }
+}
+// KMZ (ZIP) → текст doc.kml чи першого .kml. Розміри — з центрального
+// каталогу (у заголовках файлів бувають нулі).
+export function kmzToKml(buf) {
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+  let eocd = -1;
+  for (let i = b.length - 22; i >= Math.max(0, b.length - 22 - 65535); i--) {
+    if (b.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;
+  const count = b.readUInt16LE(eocd + 10);
+  let p = b.readUInt32LE(eocd + 16);
+  const files = [];
+  for (let k = 0; k < count && p + 46 <= b.length; k++) {
+    if (b.readUInt32LE(p) !== 0x02014b50) break;
+    const nlen = b.readUInt16LE(p + 28);
+    files.push({ name: b.toString("utf8", p + 46, p + 46 + nlen), method: b.readUInt16LE(p + 10), csize: b.readUInt32LE(p + 20), off: b.readUInt32LE(p + 42) });
+    p += 46 + nlen + b.readUInt16LE(p + 30) + b.readUInt16LE(p + 32);
+  }
+  const f = files.find((x) => /(^|\/)doc\.kml$/i.test(x.name)) || files.find((x) => /\.kml$/i.test(x.name));
+  if (!f || f.off + 30 > b.length || b.readUInt32LE(f.off) !== 0x04034b50) return null;
+  const start = f.off + 30 + b.readUInt16LE(f.off + 26) + b.readUInt16LE(f.off + 28);
+  const data = b.subarray(start, start + f.csize);
+  try {
+    if (f.method === 0) return data.toString("utf8");
+    if (f.method === 8) return zlib.inflateRawSync(data, { maxOutputLength: 20 * 1024 * 1024 }).toString("utf8");
+  } catch { return null; }
+  return null;
+}
+// Більше за це в одній відповіді Vercel не пропустить (межа 4,5 МБ).
+const MYMAPS_MAX = 4 * 1024 * 1024;
+// KML карти My Maps. Ходимо лише на адреси Google; переадресація на
+// сторінку входу (accounts.google.com) означає закриту карту.
+export async function fetchMyMapsKml(href, fetchImpl = fetch, deadline = Infinity) {
+  const id = myMapsIds(href);
+  if (!id) return { code: "mymaps" };
+  let u = new URL(`https://www.google.com/maps/d/kml?mid=${encodeURIComponent(id.mid)}${id.lid ? `&lid=${encodeURIComponent(id.lid)}` : ""}&forcekml=1`);
+  for (let hop = 0; hop < 5; hop++) {
+    if (Date.now() > deadline) return { code: "fetch" };
+    let r;
+    try {
+      r = await fetchImpl(u.href, { method: "GET", redirect: "manual", headers: { "User-Agent": "Mozilla/5.0 (TropaClub route import)", "Accept-Language": "de,en;q=0.8" }, signal: AbortSignal.timeout(10000) });
+    } catch { return { code: "fetch" }; }
+    const hdr = (k) => (r.headers && (r.headers.get ? r.headers.get(k) : r.headers[k])) || "";
+    const loc = hdr("location");
+    if (r.status >= 300 && r.status < 400 && loc) {
+      let next;
+      try { next = googleUrlOk(new URL(loc, u.href).href); } catch { next = null; }
+      if (!next) return { code: "private" };
+      // Сторінка згоди Google (Європа): справжня адреса — у continue.
+      if (/^consent\./i.test(next.hostname) && next.searchParams.get("continue")) {
+        const c = googleUrlOk(next.searchParams.get("continue"));
+        if (!c) return { code: "private" };
+        u = c; continue;
+      }
+      u = next; continue;
+    }
+    if (r.status === 404) return { code: "mymaps404" };
+    if (r.status === 401 || r.status === 403) return { code: "private" };
+    if (r.status !== 200) return { code: "fetch" };
+    let buf;
+    try { buf = Buffer.from(await r.arrayBuffer()); } catch { return { code: "fetch" }; }
+    if (buf.length > MYMAPS_MAX * 3) return { code: "mymapsbig" };
+    let text = buf.length > 3 && buf[0] === 0x50 && buf[1] === 0x4b ? kmzToKml(buf) : buf.toString("utf8");
+    if (!text) return { code: "fetch" };
+    text = text.replace(/^﻿/, "");
+    if (!/<kml[\s>]/i.test(text.slice(0, 3000))) return { code: "private" };   // сторінка входу замість карти
+    if (Buffer.byteLength(text, "utf8") > MYMAPS_MAX) return { code: "mymapsbig" };
+    return { kml: text };
+  }
+  return { code: "fetch" };
+}
+
 // ═══ Claude ═════════════════════════════════════════════════════════
 export function claudeError(status, j) {
   const msg = String((j && j.error && j.error.message) || "");
@@ -935,7 +1032,10 @@ const cleanText = (v) => String(v == null ? "" : v).replace(/\r\n?/g, "\n").repl
 const GMAPS_ERRORS = {
   badurl: "це не посилання Google Maps на маршрут",
   notroute: "у посиланні одне місце, а не маршрут — у Google Maps прокладіть маршрут («Маршрути», кілька зупинок) і поділіться ним",
-  mymaps: "це карта My Maps — експортуйте її у файл KML (⋮ → «Експортувати в KML/KMZ», галочка «KML») і завантажте файл",
+  mymaps: "це карта My Maps, але номера карти в посиланні немає — відкрийте карту й скопіюйте посилання з адресного рядка (у ньому є «mid=») або експортуйте карту у файл KML/KMZ",
+  private: "карта My Maps закрита для перегляду за посиланням — у My Maps натисніть «Поділитися» → «Усі, хто має посилання, можуть переглядати» і спробуйте ще раз (або експортуйте карту у файл KML/KMZ)",
+  mymaps404: "Google каже, що такої карти My Maps немає — можливо, її видалено; перевірте посилання",
+  mymapsbig: "карта My Maps завелика, щоб узяти її за посиланням — експортуйте у файл KML/KMZ і завантажте файл",
   fetch: "Google не віддав маршрут за цим посиланням — спробуйте повне посилання з адресного рядка браузера",
 };
 
@@ -994,6 +1094,13 @@ export default async function handler(req, res) {
       const x = await expandGoogleUrl(String(body.url || ""), fetch, started + BUDGET_MS - 9000);
       if (x.code) { res.status(400).json({ error: GMAPS_ERRORS[x.code], code: x.code }); return; }
       const p = parseGmapsUrl(x.url);
+      // Карта My Maps (f5) — віддаємо її KML; лінії й точки розбере застосунок.
+      if (p.code === "mymaps") {
+        const k = await fetchMyMapsKml(x.url, fetch, started + BUDGET_MS - 9000);
+        if (k.code) { res.status(400).json({ error: GMAPS_ERRORS[k.code], code: k.code }); return; }
+        res.status(200).json({ ok: true, kml: k.kml, url: x.url.slice(0, 2000) });
+        return;
+      }
       if (p.code) { res.status(400).json({ error: GMAPS_ERRORS[p.code], code: p.code }); return; }
       res.status(200).json({ ok: true, stops: p.stops, travel: p.travel, dropped: p.dropped || 0, url: x.url.slice(0, 2000) });
       return;

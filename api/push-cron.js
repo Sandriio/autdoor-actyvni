@@ -1,4 +1,14 @@
-// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c14 ═══
+// ═══ Tropa Club · api/push-cron.js · ВЕРСІЯ c15 ═══
+// c15 — «Відкрито запис» (сповіщення про нову поїздку) — у понеділок о
+//       18:00 ЗА ДВА ТИЖНІ, а не за тиждень (так попросив організатор
+//       21.11): поїздка у вівторок–неділю — понеділок попереднього тижня
+//       (за 8–13 днів), поїздка в понеділок — за 14 днів.
+//       Пропущений понеділок більше не губить оголошення: якщо його день
+//       минув, а поїздка ще попереду, воно піде найближчого понеділка о
+//       18:00 (до дня поїздки). Так у тиждень переходу оголошення не
+//       пропадуть, а поїздка, внесена пізно, однаково отримає своє.
+//       Двічі одне оголошення не прийде: ключ open:<id> у push_log той
+//       самий, що й у кнопки «Оголосити поїздку».
 // c14 — у журналі надсилань видно, ЧОМУ котрийсь телефон не прийняв
 //       сповіщення: коди відмов серверів Apple й Google (api/push.js p5),
 //       напр. «відмови: 410×1» — підписка того телефона більше не дійсна.
@@ -138,15 +148,25 @@ const addDays = (iso, n) => {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
-// День оголошення «Відкрито запис» (c11): понеділок перед поїздкою.
-// Вівторок–неділя — понеділок того ж тижня (за 1–6 днів), поїздка в
-// понеділок — попередній понеділок (за 7 днів).
+// День оголошення «Відкрито запис» (c15): понеділок за ДВА тижні.
+// Вівторок–неділя — понеділок попереднього тижня (за 8–13 днів), поїздка
+// в понеділок — за 14 днів. (c11: понеділок того ж тижня, за 1–7 днів.)
+export const OPEN_WEEKS = 2;
 export function openDayOf(iso) {
   const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return "";
   const dow = new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00Z`).getUTCDay(); // 0 — неділя
-  const back = dow === 1 ? 7 : (dow + 6) % 7;
+  const back = (dow === 1 ? 7 : (dow + 6) % 7) + 7 * (OPEN_WEEKS - 1);
   return addDays(`${m[1]}-${m[2]}-${m[3]}`, -back);
+}
+// Чи пора оголошувати зараз (c15): понеділок, 18:00 або пізніше, день
+// оголошення настав (або минув — тоді найближчий понеділок), а поїздка
+// ще не сьогодні й не в минулому.
+export function openDueAt(tripDate, nowDate, nowMin) {
+  const day = openDayOf(tripDate);
+  if (!day || !nowDate) return false;
+  const dow = new Date(`${nowDate}T12:00:00Z`).getUTCDay();
+  return dow === 1 && nowMin >= 18 * 60 && nowDate >= day && nowDate < String(tripDate).slice(0, 10);
 }
 const hhmm = (min) =>
   `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
@@ -632,18 +652,16 @@ export default async function handler(req, res) {
     const days = daysBetween(nowB.date, date);
     const tag = (kind) => tagOf(id, kind);
 
-    // ① Набір відкрито — у ПОНЕДІЛОК перед поїздкою о 18:00 (c11) і лише
-    //    того дня: пропущені 18:00 (годинник не озвався) наздоганяються до
-    //    опівночі, але не наступного дня.
-    //
-    // Було «рівно за шість діб»: для недільної поїздки це понеділок, а для
-    // суботньої — неділя, і оголошення приходило не в той день. Тепер день
-    // один для всіх: понеділок того ж тижня. Поїздка саме в понеділок —
-    // попередній понеділок, щоб запис відкрився заздалегідь.
+    // ① Набір відкрито — у ПОНЕДІЛОК о 18:00 за два тижні до поїздки (c15).
+    //    Пропущені 18:00 (годинник не озвався) наздоганяються до опівночі.
+    //    Минув сам понеділок (поїздку внесли пізно, тиждень переходу з c14) —
+    //    оголошення піде найближчого понеділка о 18:00, поки поїздка
+    //    попереду. Не в понеділок — ніколи: так домовлено з організатором.
+    //    Повтору не буде: ключ open:<id> у push_log займається один раз.
     const openDay = openDayOf(date);
-    const openDue = nowB.date === openDay && nowMin >= 18 * 60;
+    const openDue = openDueAt(date, nowB.date, nowMin);
     if (openDue) planned.push({ key: `open:${id}`, tag: tag("open"), msgs: build("open", tr), url: goTo(id, GO.open) });
-    else why.push(`open — потрібен понеділок ${openDay} після 18:00 · зараз ${nowB.date} ${hhmm(nowMin)}`);
+    else why.push(`open — потрібен понеділок ${openDay} після 18:00 (минув — найближчий понеділок до поїздки) · зараз ${nowB.date} ${hhmm(nowMin)}`);
 
     // ② Лишається мало місць. Перевіряється щоразу, надсилається один раз.
     //    Вночі (22:00–07:00) чекає ранку: заявку можуть прийняти й опівночі,
@@ -920,7 +938,7 @@ export default async function handler(req, res) {
 
   if (debug) {
     res.status(200).json({
-      version: "c14",
+      version: "c15",
       berlin: nowText,
       window: "від моменту й пізніше",
       trips: report,
@@ -957,7 +975,7 @@ export default async function handler(req, res) {
   }
 
   res.status(200).json({
-    version: "c14", berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped,
+    version: "c15", berlin: nowText, pulse: beat, planned: planned.length + trainPlanned.length, sent, skipped,
     journal: journalOk === null ? "нічого не надсилалось" : journalOk ? "записано" : "не пишеться — виконай supabase-v140.sql",
     trains: trainReport, telegram,
   });
