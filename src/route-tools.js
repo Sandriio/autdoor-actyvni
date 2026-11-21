@@ -1,4 +1,19 @@
-// ═══ Tropa Club · src/route-tools.js · ВЕРСІЯ r1 ═══
+// ═══ Tropa Club · src/route-tools.js · ВЕРСІЯ r2 ═══
+// r2 (v150) — маршрут з файлу чи посилання читається в більшій кількості
+// випадків (перші справжні маршрути 21.11 не прочиталися):
+//   • KMZ (стиснутий KML, так My Maps експортує без галочки «KML») —
+//     розпаковуємо самі, як і ZIP з GPX/KML усередині.
+//   • Кільце, намальоване в My Maps як замкнена фігура (клік на першу
+//     точку робить з лінії багатокутник), — тепер теж трек.
+//   • KML, у якому лише посилання на карту (галочка «мережеве посилання»
+//     при експорті), — помилка «netlink» з адресою: застосунок бере карту
+//     за нею через сервер.
+//   • Кодування файлу: UTF-16 та Windows-1252/ISO-8859-1 (старі GPX).
+//   • «Порожній файл» і «лише одна точка» — окремі помилки з описом
+//     вмісту, щоб із скріншота було видно, що саме в файлі.
+//   • Зупинки з посилання Google Maps, що явно не з цієї прогулянки
+//     (місце, де стояв телефон, дорога до старту, місце з такою самою
+//     назвою за сотню кілометрів), прибираються — trimStops.
 // ═══════════════════════════════════════════════════════════════════
 // Маршрут із файлу чи посилання → точки для розділу «Маршрут» (v144)
 //
@@ -16,7 +31,7 @@
 // Усі три служби безкоштовні й без ключа.
 // ═══════════════════════════════════════════════════════════════════
 
-export const ROUTE_TOOLS_VERSION = "r1";
+export const ROUTE_TOOLS_VERSION = "r2";
 const RAD = Math.PI / 180;
 
 // Відстань між двома точками, метри.
@@ -34,7 +49,81 @@ export function timeoutSignal(ms) {
 }
 
 // ── 1. Файл ──────────────────────────────────────────────────────────
-const fail = (code) => Object.assign(new Error(code), { code });
+// extra — подробиці для пояснення (info: що знайшлося у файлі; href).
+const fail = (code, extra) => Object.assign(new Error(code), { code }, extra || {});
+
+// Байти файлу → текст. Більшість файлів — UTF-8. Старі GPX (Garmin,
+// деякі сайти) бувають у Windows-1252 / ISO-8859-1, файли з програм для
+// Windows — у UTF-16. Не вгадаємо — зламаються лише умлаути в назвах,
+// а не координати.
+export function decodeText(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  const dec = (enc, from = 0) => {
+    try { return new TextDecoder(enc).decode(b.subarray(from)); } catch { return new TextDecoder("utf-8").decode(b.subarray(from)); }
+  };
+  if (b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) return dec("utf-8", 3);
+  if (b[0] === 0xff && b[1] === 0xfe) return dec("utf-16le", 2);
+  if (b[0] === 0xfe && b[1] === 0xff) return dec("utf-16be", 2);
+  // UTF-16 без позначки: кожен другий байт — нуль («<\0?\0x\0m\0l\0»).
+  if (b.length > 4 && b[0] !== 0 && b[1] === 0 && b[3] === 0) return dec("utf-16le");
+  if (b.length > 4 && b[0] === 0 && b[2] === 0 && b[1] !== 0) return dec("utf-16be");
+  let head = "";
+  for (let i = 0; i < Math.min(b.length, 200); i++) head += String.fromCharCode(b[i]);
+  const m = head.match(/^<\?xml[^>]*encoding\s*=\s*["']([\w.-]+)["']/i);
+  if (m && /^(iso-?8859-?1|iso-?8859-?15|latin-?1|windows-?1252|cp-?1252)$/i.test(m[1])) return dec("windows-1252");
+  return dec("utf-8");
+}
+
+// KMZ — це ZIP із doc.kml усередині: так Google My Maps експортує карту,
+// якщо не поставити галочку «KML». Розпаковуємо самі: у браузері телефона
+// є DecompressionStream («deflate-raw»: Chrome 103+, Safari 16.4+).
+// Читаємо центральний каталог ZIP — розміри в ньому точні, навіть коли в
+// заголовках самих файлів нулі. Так само відкривається ZIP, у якому лежить
+// GPX чи KML. inflateRaw — для перевірок (у Node — zlib).
+const u16 = (b, o) => b[o] | (b[o + 1] << 8);
+const u32 = (b, o) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+export const isZip = (bytes) => Boolean(bytes) && bytes.length > 22 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 3 && bytes[3] === 4;
+async function inflateRawStream(data) {
+  if (typeof DecompressionStream === "undefined") throw fail("kmz");
+  let ds;
+  try { ds = new DecompressionStream("deflate-raw"); } catch { throw fail("kmz"); }
+  const buf = await new Response(new Blob([data]).stream().pipeThrough(ds)).arrayBuffer();
+  return new Uint8Array(buf);
+}
+export async function unzipRoute(bytes, inflateRaw) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let eocd = -1;
+  for (let i = b.length - 22; i >= Math.max(0, b.length - 22 - 65535); i--) {
+    if (b[i] === 0x50 && b[i + 1] === 0x4b && b[i + 2] === 5 && b[i + 3] === 6) { eocd = i; break; }
+  }
+  if (eocd < 0) throw fail("bad");
+  const count = u16(b, eocd + 10);
+  let p = u32(b, eocd + 16);
+  const files = [];
+  for (let k = 0; k < count && p + 46 <= b.length; k++) {
+    if (u32(b, p) !== 0x02014b50) break;
+    const nlen = u16(b, p + 28);
+    files.push({
+      name: new TextDecoder().decode(b.subarray(p + 46, p + 46 + nlen)),
+      flags: u16(b, p + 8), method: u16(b, p + 10), csize: u32(b, p + 20), off: u32(b, p + 42),
+    });
+    p += 46 + nlen + u16(b, p + 30) + u16(b, p + 32);
+  }
+  // Службове (теки __MACOSX, файли з крапкою на початку) — геть.
+  const usable = files.filter((f) => !/(^|\/)(__MACOSX|\.)/.test(f.name));
+  const pick = usable.find((f) => /(^|\/)doc\.kml$/i.test(f.name)) || usable.find((f) => /\.kml$/i.test(f.name))
+    || usable.find((f) => /\.gpx$/i.test(f.name)) || usable.find((f) => /\.(geo)?json$/i.test(f.name));
+  if (!pick) throw fail("nokml", { info: { files: files.slice(0, 6).map((f) => f.name) } });
+  if ((pick.flags & 1) || u32(b, pick.off) !== 0x04034b50) throw fail("bad");   // зашифрований чи зіпсований
+  const start = pick.off + 30 + u16(b, pick.off + 26) + u16(b, pick.off + 28);
+  const data = b.subarray(start, start + pick.csize);
+  let raw;
+  if (pick.method === 0) raw = data;
+  else if (pick.method === 8) raw = await (inflateRaw || inflateRawStream)(data);
+  else throw fail("kmz");
+  return decodeText(raw);
+}
+
 const byTag = (root, name) => Array.from(root.getElementsByTagNameNS ? root.getElementsByTagNameNS("*", name) : root.getElementsByTagName(name));
 const kids = (el) => Array.from((el && el.childNodes) || []).filter((n) => n.nodeType === 1);
 const child = (el, name) => kids(el).find((n) => (n.localName || n.nodeName) === name) || null;
@@ -49,8 +138,8 @@ function gpxPoint(el) {
 }
 function parseGpx(doc) {
   const root = doc.documentElement;
-  let pts = byTag(root, "trkpt");
-  if (pts.length < 2) pts = byTag(root, "rtept");
+  const trkpt = byTag(root, "trkpt"), rtept = byTag(root, "rtept");
+  const pts = trkpt.length >= 2 ? trkpt : rtept.length >= 2 ? rtept : trkpt;
   const track = pts.map(gpxPoint).filter(Boolean);
   const wpts = byTag(root, "wpt").map((w) => {
     const p = gpxPoint(w);
@@ -59,7 +148,11 @@ function parseGpx(doc) {
   }).filter(Boolean);
   const trk = child(root, "trk") || child(root, "rte");
   const md = child(root, "metadata");
-  return { format: "gpx", name: (trk && childText(trk, "name")) || (md && childText(md, "name")) || "", track, wpts };
+  return {
+    format: "gpx", name: (trk && childText(trk, "name")) || (md && childText(md, "name")) || "", track, wpts,
+    creator: String(root.getAttribute("creator") || "").slice(0, 60),
+    counts: { trkpt: trkpt.length, rtept: rtept.length, wpt: wpts.length },
+  };
 }
 
 // «11.57,48.13,520 11.58,48.14,522» → точки. Висота 0 у KML означає
@@ -93,10 +186,12 @@ function joinLines(lines) {
   }
   return best;
 }
+const lineKm = (l) => { let s = 0; for (let i = 1; i < l.length; i++) s += distM(l[i - 1], l[i]); return s / 1000; };
 function parseKml(doc) {
   const root = doc.documentElement;
-  const lines = [], wpts = [];
-  for (const pm of byTag(root, "Placemark")) {
+  const lines = [], rings = [], wpts = [];
+  const placemarks = byTag(root, "Placemark");
+  for (const pm of placemarks) {
     const name = childText(pm, "name");
     for (const ls of byTag(pm, "LineString")) lines.push(kmlCoords(childText(ls, "coordinates")));
     for (const tr of byTag(pm, "Track")) {
@@ -105,13 +200,39 @@ function parseKml(doc) {
         return okLatLng(lat, lng) ? { lat, lng, ele: Number.isFinite(alt) && alt !== 0 ? alt : null } : null;
       }).filter(Boolean));
     }
+    // Замкнена фігура: у My Maps клік на першу точку лінії робить з неї
+    // багатокутник — так часто малюють кільцеві маршрути. Беремо зовнішній
+    // контур (внутрішні «дірки» — ні).
+    for (const lr of byTag(pm, "LinearRing")) {
+      const holder = lr.parentNode && (lr.parentNode.localName || lr.parentNode.nodeName);
+      if (holder !== "innerBoundaryIs") rings.push(kmlCoords(childText(lr, "coordinates")));
+    }
     for (const p of byTag(pm, "Point")) {
       const c = kmlCoords(childText(p, "coordinates"))[0];
       if (c) wpts.push({ ...c, name, desc: childText(pm, "description").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200), type: "" });
     }
   }
+  let track = joinLines(lines);
+  let ring = false;
+  if (track.length < 2) {
+    const best = rings.filter((r) => r.length >= 3).sort((a, b) => lineKm(b) - lineKm(a))[0];
+    if (best) {
+      track = best.slice();
+      if (distM(track[0], track[track.length - 1]) > 1) track.push(track[0]);
+      ring = true;
+    }
+  }
+  // Карта, експортована «мережевим посиланням», — лише адреса карти, без
+  // жодної лінії й точки.
+  const links = byTag(root, "NetworkLink").map((nl) => {
+    const l = child(nl, "Link") || child(nl, "Url");
+    return l ? childText(l, "href") : "";
+  }).filter(Boolean);
   const docEl = byTag(root, "Document")[0];
-  return { format: "kml", name: (docEl && childText(docEl, "name")) || "", track: joinLines(lines), wpts };
+  return {
+    format: "kml", name: (docEl && childText(docEl, "name")) || "", track, wpts, ring, links,
+    counts: { placemarks: placemarks.length, lines: lines.filter((l) => l.length >= 2).length, rings: rings.length, points: wpts.length, links: links.length },
+  };
 }
 function parseGeoJson(o) {
   const feats = o && o.type === "FeatureCollection" ? o.features || []
@@ -126,16 +247,24 @@ function parseGeoJson(o) {
     if (g.type === "MultiLineString") (g.coordinates || []).forEach((l) => lines.push((l || []).map(pt).filter(Boolean)));
     if (g.type === "Point") { const p = pt(g.coordinates); if (p) wpts.push({ ...p, name: String(props.name || props.title || "").trim(), desc: "", type: "" }); }
   }
-  return { format: "geojson", name: String((o && o.name) || "").trim(), track: joinLines(lines), wpts };
+  return {
+    format: "geojson", name: String((o && o.name) || "").trim(), track: joinLines(lines), wpts,
+    counts: { features: feats.length, lines: lines.filter((l) => l.length >= 2).length, points: wpts.length },
+  };
 }
 
-// Текст файлу → { format, name, track: [{lat,lng,ele}], wpts: [{lat,lng,ele,name}] }.
-// Помилки: code «kmz» (стиснутий KMZ), «bad» (пошкоджений), «format»
-// (не маршрут), «empty» (немає точок).
+// Текст файлу → { format, name, track: [{lat,lng,ele}], wpts: [{lat,lng,ele,name}],
+// ring (трек — контур замкненої фігури), info (що знайшлося у файлі) }.
+// Помилки (code): «kmz» (стиснутий KMZ, а розпакувати нічим), «blank»
+// (файл порожній), «html» (вебсторінка замість файлу), «bad» (пошкоджений),
+// «format» (не маршрут), «netlink» (лише посилання на карту, err.href),
+// «onepoint» (одна точка), «empty» (ні лінії, ні точок). Помилки після
+// розбору мають err.info — для пояснення.
 export function parseRouteText(text, Parser) {
   const s = String(text || "").replace(/^﻿/, "").trim();
   if (s.startsWith("PK")) throw fail("kmz");
-  if (!s) throw fail("empty");
+  if (!s) throw fail("blank");
+  if (/^(<!doctype\s+html|<html[\s>])/i.test(s)) throw fail("html");
   let r;
   if (s[0] === "{" || s[0] === "[") {
     let o;
@@ -150,7 +279,8 @@ export function parseRouteText(text, Parser) {
     const root = String(doc.documentElement.localName || doc.documentElement.nodeName).toLowerCase();
     if (root === "gpx") r = parseGpx(doc);
     else if (root === "kml") r = parseKml(doc);
-    else throw fail("format");
+    else if (root === "html") throw fail("html");
+    else throw fail("format", { info: { root } });
   }
   // Однакові точки поспіль — геть; дуже довгий трек — рідше.
   const track = [];
@@ -161,8 +291,56 @@ export function parseRouteText(text, Parser) {
   const step = Math.ceil(track.length / 60000);
   r.track = step > 1 ? track.filter((_, i) => i % step === 0 || i === track.length - 1) : track;
   r.wpts = r.wpts.slice(0, 60);
-  if (r.track.length < 2 && r.wpts.length < 2) throw fail("empty");
+  r.info = { format: r.format, creator: r.creator || "", ...(r.counts || {}) };
+  if (r.track.length < 2 && r.wpts.length < 2) {
+    if (r.links && r.links.length) throw fail("netlink", { href: r.links[0], info: r.info });
+    throw fail(r.wpts.length === 1 || r.track.length === 1 ? "onepoint" : "empty", { info: r.info });
+  }
   return r;
+}
+
+// ── Зупинки з посилання: що явно не з цієї прогулянки ───────────────
+// Google Maps на телефоні замість «Моє місцезнаходження» ставить у
+// посилання координати телефона — і маршрут починається, скажімо, з
+// Мюнхена. Буває й дорога до старту чи додому, або місце, знайдене за
+// назвою не там (однакових назв у горах багато). Відрізок, довший за
+// maxLegKm по прямій, для одноденної прогулянки неможливий: перша чи
+// остання така зупинка відкидається, а середня — якщо її сусіди без неї
+// близько. Лишається щонайменше дві зупинки.
+// → { stops, dropped: [{ ...зупинка, n (номер у посиланні), why: start|end|middle, km }] }
+export function trimStops(stops, maxLegKm = 25) {
+  let list = (stops || []).map((s, i) => ({ ...s, n: i + 1 }));
+  const dropped = [];
+  const km = (a, b) => distM(a, b) / 1000;
+  for (let guard = 0; guard < 40 && list.length > 2; guard++) {
+    const L = list.length;
+    // Спершу «острівець»: далеко від обох сусідів, а ті між собою близько —
+    // зайвий саме він (навіть другий у списку), а не старт.
+    let mid = -1;
+    for (let i = 1; i < L - 1; i++) {
+      if (km(list[i - 1], list[i]) > maxLegKm && km(list[i], list[i + 1]) > maxLegKm && km(list[i - 1], list[i + 1]) <= maxLegKm) { mid = i; break; }
+    }
+    if (mid >= 0) {
+      dropped.push({ ...list[mid], why: "middle", km: Math.min(km(list[mid - 1], list[mid]), km(list[mid], list[mid + 1])) });
+      list.splice(mid, 1);
+      continue;
+    }
+    const first = km(list[0], list[1]), last = km(list[L - 2], list[L - 1]);
+    if (first > maxLegKm && first >= last) { dropped.push({ ...list[0], why: "start", km: first }); list = list.slice(1); continue; }
+    if (last > maxLegKm) { dropped.push({ ...list[L - 1], why: "end", km: last }); list = list.slice(0, -1); continue; }
+    break;
+  }
+  return { stops: list, dropped };
+}
+// Найдовший відрізок між сусідніми зупинками (по прямій, км) — щоб
+// пояснити, чому маршрут вийшов задовгим.
+export function longestLeg(stops) {
+  let best = null;
+  for (let i = 1; i < (stops || []).length; i++) {
+    const d = distM(stops[i - 1], stops[i]) / 1000;
+    if (!best || d > best.km) best = { from: stops[i - 1], to: stops[i], i, km: d };
+  }
+  return best;
 }
 
 // ── 2. Відстань і висоти ─────────────────────────────────────────────

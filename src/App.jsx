@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v149 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v150 ═══
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -6,7 +6,7 @@ import {
   Footprints, TrendingUp, TrendingDown, Users, Info, Snowflake, Phone, Send, Signal, MessageCircle,
   Waves, Building2, Camera, Settings, Pencil, Trash2, TreePine, Landmark, Bike, ClipboardCheck, Loader2, Play, Lock, Info as InfoIcon,
   GripVertical, Copy, Sparkles, Undo2, Download, Megaphone, RotateCcw, ClipboardPaste, Route, FileUp,
-  Archive, ArchiveRestore, ImagePlus, RefreshCw, LogOut
+  Archive, ArchiveRestore, ImagePlus, RefreshCw, LogOut, Key, Dices
 } from "lucide-react";
 // Розрахунки маршруту з GPX/KML/Google Maps (v144) — окремим файлом.
 import * as RT from "./route-tools.js";
@@ -28,7 +28,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v149";
+const APP_VERSION = "v150";
 
 // ── Анімації (v146) ──────────────────────────────────────────────────
 // Сторінка поїздки виїжджає знизу, головний екран і вкладки з'являються
@@ -58,6 +58,17 @@ const TC_CSS = `
   .tc-page-in, .tc-home-in, .tc-tab-in, .tc-reveal, .tc-overlay, .tc-sheet, .tc-card { animation: none !important; }
   .tc-press, .tc-press:active { transition: none !important; transform: none !important; }
 }
+/* Сніг (v150): падіння — зовнішній шар, погойдування — внутрішній. Лише
+   transform: телефон рухає готові шари й не перемальовує сторінку. */
+.tc-snow { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 3; }
+.tc-flake { position: absolute; top: -16px; will-change: transform; animation: tcSnowFall linear infinite; }
+.tc-flake > i { display: block; will-change: transform; animation: tcSnowSway ease-in-out infinite alternate; }
+.tc-flake > i > b { display: block; border-radius: 50%; background: radial-gradient(circle, #fff 45%, rgba(255,255,255,0.75) 62%, rgba(255,255,255,0) 72%); }
+.tc-flake > i > svg { display: block; animation: tcSnowSpin linear infinite; }
+@keyframes tcSnowFall { to { transform: translate3d(0, calc(100vh + 36px), 0); } }
+@keyframes tcSnowSway { from { transform: translate3d(-13px, 0, 0); } to { transform: translate3d(13px, 0, 0); } }
+@keyframes tcSnowSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .tc-snow { display: none !important; } }
 `;
 if (typeof document !== "undefined" && !document.getElementById("tc-anim")) {
   try {
@@ -1592,6 +1603,88 @@ function berlinNow() {
   f.formatToParts(new Date()).forEach((x) => { p[x.type] = x.value; });
   return { date: `${p.year}-${p.month}-${p.day}`, min: Number(p.hour) * 60 + Number(p.minute) };
 }
+// ── Новорічний сезон (v150) ──────────────────────────────────────────
+// Сніг і шапочка над «T» у назві — з 20 листопада до 14 січня (Старий
+// Новий рік) за берлінським часом. Потім зникають самі, щороку — нічого
+// не треба прибирати вручну.
+function xmasSeason() {
+  const md = berlinNow().date.slice(5);   // «MM-DD»
+  return md >= "11-20" || md <= "01-14";
+}
+// Сніжинки: розкладка одна на весь показ (не стрибає при оновленнях
+// екрана). Дрібні — далекі: повільні й прозоріші; великі — ближчі.
+// Шість із них — малюнок сніжинки, решта — м'які кульки.
+const SNOW_FLAKES = (() => {
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  return Array.from({ length: 28 }, (_, i) => {
+    const big = i % 5 === 0;
+    const size = big ? 12 + rnd() * 5 : 2.5 + rnd() * 4;
+    const fall = big ? 11 + rnd() * 5 : 17 - size * 1.1 + rnd() * 5;
+    return {
+      left: `${(rnd() * 100).toFixed(2)}%`, size, big,
+      fall: fall.toFixed(1), delay: (-rnd() * fall).toFixed(1),
+      sway: (2.6 + rnd() * 2.6).toFixed(1), spin: (6 + rnd() * 8).toFixed(1),
+      opacity: big ? 0.75 : (0.45 + size / 13).toFixed(2),
+    };
+  });
+})();
+// Сніжинка: шість променів, на кожному — «ялинкова» пара гілочок.
+const SNOWFLAKE_D = (() => {
+  const xy = (r, a) => [12 + r * Math.cos(a), 12 - r * Math.sin(a)];
+  const f = ([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`;
+  let d = "";
+  for (let k = 0; k < 6; k++) {
+    const a = Math.PI / 2 + (k * Math.PI) / 3;
+    d += `M12 12L${f(xy(10, a))}`;
+    const [bx, by] = xy(6.2, a);
+    for (const s of [-1, 1]) d += `M${f([bx, by])}L${f([bx + 3.4 * Math.cos(a + s * 0.8), by - 3.4 * Math.sin(a + s * 0.8)])}`;
+  }
+  return d;
+})();
+function Snowfall() {
+  return (
+    <div className="tc-snow" data-snow="1" aria-hidden="true">
+      {SNOW_FLAKES.map((f, i) => (
+        <span key={i} className="tc-flake" style={{ left: f.left, animationDuration: `${f.fall}s`, animationDelay: `${f.delay}s` }}>
+          <i style={{ animationDuration: `${f.sway}s`, opacity: f.opacity }}>
+            {f.big ? (
+              <svg width={f.size} height={f.size} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" style={{ animationDuration: `${f.spin}s` }}>
+                <path d={SNOWFLAKE_D} />
+              </svg>
+            ) : <b style={{ width: f.size, height: f.size }} />}
+          </i>
+        </span>
+      ))}
+    </div>
+  );
+}
+// Новорічна шапочка над літерою «T» (v150). Власний малюнок: червоний
+// ковпак із загнутим кінчиком, білий хутряний край і помпон.
+function SantaHat({ style }) {
+  return (
+    <svg viewBox="0 0 36 30" aria-hidden="true" focusable="false"
+      style={{ position: "absolute", pointerEvents: "none", overflow: "visible", ...style }}>
+      <path d="M4 23Q8.5 6.5 21.5 3.2Q29.8 1.4 33 12.3L28.6 13.6Q26.8 9.2 23.8 9.6Q27.2 15.6 28.2 23Z" fill="#d93a43" />
+      <path d="M23.8 9.6Q27.2 15.6 28.2 23L22 23Q22.6 15.4 23.8 9.6Z" fill="#b9262f" />
+      <circle cx="31.4" cy="14.6" r="3.7" fill="#fff" />
+      <rect x="1.6" y="20.6" width="28.4" height="7.4" rx="3.7" fill="#fff" />
+      <rect x="1.6" y="25.4" width="28.4" height="2.6" rx="1.3" fill="#ebe4d6" />
+    </svg>
+  );
+}
+// Назва з шапочкою над першою літерою. Шапочка — після тексту й прив'язана
+// до лівого верхнього кута заголовка (там і стоїть «T»): так назва лишається
+// цілим словом для копіювання й читалок екрана. Розміри — в em: шапочка
+// росте разом зі шрифтом заголовка (заголовку потрібне position: relative).
+function XmasName({ name }) {
+  return (
+    <>
+      {name}
+      <SantaHat style={{ width: "1.05em", left: "-0.16em", top: "-0.5em", transform: "rotate(-10deg)", transformOrigin: "30% 85%" }} />
+    </>
+  );
+}
 const TRIP_ONGOING_FROM = 8 * 60;   // «Триває» — у день поїздки з 08:00
 const TRIP_DONE_FROM = 21 * 60;     // «Завершено» — з 21:00
 function autoStatus(trip) {
@@ -2826,6 +2919,18 @@ const PLACE_GLYPHS = {
       <circle cx="12" cy="7" r="2.3" />
     </>
   ),
+  // Новорічна ялинка (ярмарок, v150). Сосна «Ліс» — та сама форма ярусами,
+  // тож ялинку від неї відрізняє зірка на верхівці (суцільна, без обведення:
+  // обведена на 26 px злилася б у пляму) і дві кульки.
+  xmas: (
+    <>
+      <path d="M12 3.1l.66 1.33 1.47.21-1.06 1.04.25 1.46L12 6.45l-1.32.69.25-1.46-1.06-1.04 1.47-.21z" fill="currentColor" stroke="none" />
+      <path d="M12 7.6 8.4 11.4h2.1L6.7 15.6h2.4l-4.1 4.2h14l-4.1-4.2h2.4l-3.8-4.2h2.1Z" />
+      <path d="M12 19.8v2.4" />
+      <path d="M10.6 14.2h.01" />
+      <path d="M13.9 17.4h.01" />
+    </>
+  ),
 };
 
 function PlaceGlyph({ kind, size, strokeWidth }) {
@@ -2851,6 +2956,10 @@ function placeIcon(type, size) {
     museum: <Landmark size={n} strokeWidth={1.8} />,
     waterfall: <PlaceGlyph kind="waterfall" size={n} />,
     bike: <Bike size={n} strokeWidth={1.8} />,
+    // v150: рубрики не лише про природу.
+    quest: <Key size={n} strokeWidth={1.8} />,
+    boardgames: <Dices size={n} strokeWidth={1.8} />,
+    market: <PlaceGlyph kind="xmas" size={n} />,
   }[type] || <Mountain size={n} strokeWidth={1.8} />;
 }
 
@@ -6372,16 +6481,24 @@ function announceMsgs(trip) {
   return out;
 }
 
-// Коли «набір відкрито» приходить саме (v146, годинник c11): у понеділок
-// перед поїздкою о 18:00, хоч би на який день вона припадала. Поїздка в
-// понеділок — попередній понеділок. Потрібно лише для підказки біля
-// кнопки — чи ще прийде автоматичне.
-function autoOpenMoment(trip) {
+// Коли «набір відкрито» приходить саме (v150, годинник c15): у понеділок
+// о 18:00 за ДВА тижні до поїздки — поїздка у вівторок–неділю: понеділок
+// попереднього тижня, у понеділок: за 14 днів. Минув той понеділок, а
+// поїздка ще попереду — найближчого понеділка о 18:00. null — автоматичного
+// вже не буде. Потрібно лише для підказки біля кнопки.
+function autoOpenMoment(trip, now = new Date()) {
   const m = String((trip && trip.date) || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return null;
   const dow = new Date(+m[1], +m[2] - 1, +m[3], 12).getDay(); // 0 — неділя
-  const back = dow === 1 ? 7 : (dow + 6) % 7;
-  return new Date(+m[1], +m[2] - 1, +m[3] - back, 18, 0, 0);
+  const back = (dow === 1 ? 7 : (dow + 6) % 7) + 7;
+  const tripDay = new Date(+m[1], +m[2] - 1, +m[3], 0, 0, 0);
+  for (let k = 0; k < 60; k++) {
+    const at = new Date(+m[1], +m[2] - 1, +m[3] - back + 7 * k, 18, 0, 0);
+    if (at.getTime() >= tripDay.getTime()) return null;
+    // Цей понеділок ще не скінчився — годинник надішле до опівночі.
+    if (new Date(at.getFullYear(), at.getMonth(), at.getDate() + 1).getTime() > now.getTime()) return at;
+  }
+  return null;
 }
 
 function timeChangeMsgs(trip) {
@@ -6826,24 +6943,26 @@ function PushDiagnostics({ pin, trip }) {
           поля: під час редагування час міняється кілька разів, і кожна
           проміжна правка підняла б тривогу всій групі. Момент, коли
           зміна остаточна, знаєте тільки ви. */}
-      {/* Оголошення про поїздку. Автоматичне «набір відкрито» приходить
-          лише в понеділок перед поїздкою о 18:00 і лише того дня —
-          опублікуєш пізніше, і група про поїздку не дізнається. Ця кнопка
-          закриває цей пробіл. */}
+      {/* Оголошення про поїздку. Автоматичне «набір відкрито» приходить у
+          понеділок о 18:00 за два тижні до поїздки (пропущене — найближчого
+          понеділка, поки поїздка попереду; v150). Кнопка — щоб надіслати
+          раніше чи поза розкладом. */}
       {trip && (() => {
         const draft = isDraft(trip);
         const at = autoOpenMoment(trip);
-        const ahead = at && at.getTime() > Date.now();
+        const tonight = at && at.getTime() <= Date.now();
         const day = at ? `${String(at.getDate()).padStart(2, "0")}.${String(at.getMonth() + 1).padStart(2, "0")}` : "";
         return (
-          <div style={{ marginTop: 10, border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, background: "#fff" }}>
+          <div data-push="open-hint" style={{ marginTop: 10, border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, background: "#fff" }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: C.ink, marginBottom: 6 }}>Нова поїздка</div>
             <p style={{ fontSize: 11.5, color: draft ? C.rasp : C.muted, lineHeight: 1.5, margin: "0 0 9px" }}>
               {draft
                 ? "Поїздка ще в розробці. Спершу опублікуй і збережи її: сповіщення містить назву, тож надіслане зараз розкрило б чернетку."
-                : ahead
-                  ? `Автоматично «набір відкрито» прийде в понеділок ${day} о 18:00. Якщо надішлеш зараз — воно вже не повториться.`
-                  : "Час автоматичного оголошення минув — воно приходить лише в понеділок перед поїздкою о 18:00. Якщо група його не отримала, надішли вручну."}
+                : tonight
+                  ? "Автоматичне «набір відкрито» піде сьогодні до опівночі — годинник перевіряє кожні 15 хвилин. Якщо вже надсилалось, повтору не буде."
+                  : at
+                    ? `Автоматично «набір відкрито» прийде в понеділок ${day} о 18:00 (за два тижні до поїздки). Якщо надішлеш зараз — воно вже не повториться.`
+                    : "Автоматичного оголошення вже не буде: воно приходить у понеділок о 18:00 за два тижні до поїздки, а до неї понеділків не лишилось. Якщо група його не отримала, надішли вручну."}
             </p>
             <button onClick={announce} disabled={busy || draft}
               style={{ width: "100%", border: `1.5px solid ${draft ? C.line : C.green}`, background: draft ? C.pageSoft : busy ? C.greenSoft : C.green,
@@ -6993,7 +7112,7 @@ function RedList({ pin }) {
 // поїздки. Нічого не надсилається саме: організатор перевіряє текст і
 // копіює його чи ділиться ним.
 const APP_ORIGIN = "https://tropa-club.vercel.app";
-const PLACE_EMOJI = { mountain: "🏔", lake: "🏞", city: "🏰", gorge: "🏞", forest: "🌲", valley: "🌄", river: "🌊", museum: "🏛", waterfall: "💦", bike: "🚲" };
+const PLACE_EMOJI = { mountain: "🏔", lake: "🏞", city: "🏰", gorge: "🏞", forest: "🌲", valley: "🌄", river: "🌊", museum: "🏛", waterfall: "💦", bike: "🚲", quest: "🔑", boardgames: "🎲", market: "🎄" };
 // Зразок стилю організатора для Claude — лише на цьому пристрої.
 const ANN_STYLE_KEY = "tropa_ann_style";
 const ANN_WD = ["нд", "пн", "вт", "ср", "чт", "пт", "сб"];
@@ -8555,26 +8674,114 @@ function DbFill({ pin, tripDate, target = "all", filled = 0, onApply, onRestore 
 // обирає з них точки маршруту, називає їх українською й коротко описує —
 // як у поїздках організатора. Час на точках рахується від прибуття поїзда.
 // Нічого не зберігається, доки організатор не натисне «Зберегти поїздку».
+// v150: перші справжні маршрути (21.11) не прочиталися — помилки тепер
+// кажуть, ЩО саме знайшлося у файлі (рядок «Що у файлі: …» під помилкою),
+// а KMZ, кільце-фігура з My Maps і KML-посилання на карту читаються.
 const ROUTE_ERR = {
-  kmz: "Це стиснутий файл KMZ. У Google My Maps: ⋮ → «Експортувати в KML/KMZ» → постав галочку «Експортувати як файл .KML».",
-  bad: "Файл пошкоджений або це не маршрут. Потрібен GPX (Komoot, Bergfex, Outdooractive) або KML (Google My Maps).",
+  kmz: "Це стиснутий файл KMZ, а цей браузер не вміє його розпакувати. Онови браузер — або в Google My Maps: ⋮ → «Експортувати в KML/KMZ» → постав галочку «Експортувати як файл .KML».",
+  nokml: "Це архів (ZIP чи KMZ), але маршруту — файлу KML чи GPX — у ньому немає.",
+  bad: "Файл пошкоджений або це не маршрут. Потрібен GPX (Komoot, Bergfex, Outdooractive) або KML/KMZ (Google My Maps).",
+  html: "Це вебсторінка, а не файл маршруту: мабуть, замість файлу збереглась сторінка сайту. Завантаж саме файл GPX чи KML.",
   format: "Цей файл — не маршрут. Потрібен GPX або KML.",
-  empty: "У файлі немає точок маршруту.",
+  blank: "Файл порожній (0 байт). Так буває, коли файл обрано з Google Диска чи месенджера, а в телефон він ще не завантажився. Збережи файл у «Завантаження» й обери ще раз — або встав посилання на карту в поле нижче.",
+  empty: "У файлі немає ні лінії маршруту, ні позначених точок.",
+  onepoint: "У файлі лише одна точка. Потрібна лінія маршруту або хоча б дві позначені точки.",
+  netlink: "Цей KML — лише посилання на карту My Maps, а саму карту взяти не вдалося.",
   big: "Файл завеликий (понад 15 МБ).",
   short: "Маршрут коротший за 200 м — це точно той файл?",
   long: "Маршрут довший за 120 км — для одноденної поїздки щось не те.",
   geo: "Не вдалося знайти на карті зупинки з посилання. Спробуй інше посилання або файл.",
 };
-const routeKind = (trip) => (trip.placeType === "city" || trip.placeType === "museum" ? "city" : trip.placeType === "bike" ? "bike" : "hike");
+// Підказка до «немає точок» — залежно від того, звідки файл.
+const ROUTE_EMPTY_HINT = {
+  gpx: " Перевір, що збережено файл самого маршруту, а не порожньої чернетки.",
+  kml: " У Google My Maps намалюй маршрут інструментом «Додати лінію» або постав хоча б дві позначки — і експортуй ще раз.",
+};
+const routeKind = (trip) => (["city", "museum", "quest", "boardgames", "market"].includes(trip.placeType) ? "city" : trip.placeType === "bike" ? "bike" : "hike");
 const fmtKm = (v) => String(Math.round(v * 10) / 10).replace(".", ",");
 const fmtM = (v) => String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+const fmtSize = (n) => (n < 1024 ? `${n} Б` : n < 1048576 ? `${Math.round(n / 1024)} КБ` : `${String(Math.round(n / 104857.6) / 10).replace(".", ",")} МБ`);
 const routeFail = (code, text) => Object.assign(new Error(code), { code, text });
+// Межі одноденної поїздки: увесь маршрут і один відрізок між сусідніми
+// зупинками по прямій (довший відрізок — явно не з прогулянки). Вело — більші.
+const routeLimits = (kind) => (kind === "bike" ? { total: 200, leg: 60 } : { total: 120, leg: 25 });
+const stopLabel = (s) => (s && s.name ? `«${s.name}»` : `точкою ${(s && s.n) || ""} (${s.lat.toFixed(4)}, ${s.lng.toFixed(4)})`);
+// Чому зупинку з посилання пропущено (RT.trimStops).
+function dropNote(d) {
+  const km = fmtKm(d.km);
+  if (d.why === "start") {
+    return d.name
+      ? `Першу зупинку «${d.name}» пропущено: вона за ${km} км від наступної — схоже, це дорога до старту.`
+      : `Першу точку посилання пропущено: вона за ${km} км від наступної — схоже, це місце, де був телефон, коли прокладали маршрут.`;
+  }
+  if (d.why === "end") return `Останню зупинку ${stopLabel(d)} пропущено: вона за ${km} км від попередньої — схоже, це дорога назад.`;
+  return `Зупинку ${stopLabel(d)} пропущено: вона за ${km} км від сусідніх — мабуть, на карті знайшлося інше місце з такою назвою.`;
+}
+// Помилка маршруту → { text, detail }. detail — що знайшлося у файлі:
+// одного скріншота досить, щоб зрозуміти, що не так.
+function routeErrText(e, file) {
+  let text = (e && e.text) || ROUTE_ERR[e && e.code] || `Не вдалося прочитати маршрут: ${String((e && e.message) || e).slice(0, 120)}`;
+  const i = e && e.info;
+  if (e && e.code === "empty" && i && ROUTE_EMPTY_HINT[i.format]) text += ROUTE_EMPTY_HINT[i.format];
+  const bits = [];
+  if (file) bits.push(`«${String(file.name || "файл").slice(0, 60)}», ${fmtSize(Number(file.size) || 0)}`);
+  if (i) {
+    if (i.format) bits.push(String(i.format).toUpperCase() + (i.creator ? ` (${i.creator})` : ""));
+    if (i.format === "gpx") bits.push(`точок треку ${i.trkpt || 0}, маршруту ${i.rtept || 0}, позначок ${i.wpt || 0}`);
+    if (i.format === "kml") bits.push(`об'єктів ${i.placemarks || 0}: ліній ${i.lines || 0}, фігур ${i.rings || 0}, позначок ${i.points || 0}${i.links ? `, посилань на карту ${i.links}` : ""}`);
+    if (i.format === "geojson") bits.push(`об'єктів ${i.features || 0}: ліній ${i.lines || 0}, точок ${i.points || 0}`);
+    if (i.root) bits.push(`усередині <${String(i.root).slice(0, 30)}>`);
+    if (i.files) bits.push(`в архіві: ${i.files.length ? i.files.join(", ") : "порожньо"}`);
+  }
+  return { text, detail: bits.length && e && e.code !== "big" ? `Що у файлі: ${bits.join(" · ")}` : "" };
+}
+// Пошук місця за назвою — біля решти маршруту (v150). Раніше OpenStreetMap
+// шукав по всьому світу, і гора з поширеною назвою могла знайтися за сотню
+// кілометрів. Не частіше разу на секунду — так просить OpenStreetMap.
+let NOMINATIM_AT = 0;
+async function nominatimSearch(params) {
+  const wait = NOMINATIM_AT + 1100 - Date.now();
+  if (wait > 0) await sleepMs(wait);
+  NOMINATIM_AT = Date.now();
+  const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=3&addressdetails=0&accept-language=uk&${params}`, { headers: { Accept: "application/json" }, signal: RT.timeoutSignal(12000) });
+  if (!r.ok) throw new Error("geocode " + r.status);
+  const j = await r.json();
+  return (Array.isArray(j) ? j : []).map((x) => ({ label: x.display_name, lat: parseFloat(x.lat), lng: parseFloat(x.lon) }))
+    .filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lng));
+}
+// Баварія з Альпами — коли прив'язатися нема до чого.
+const HOME_REGION = { w: 8.9, n: 50.6, e: 14.0, s: 46.4 };
+async function geocodeNear(name, near) {
+  const q = `q=${encodeURIComponent(name)}`;
+  const box = near ? { w: near.lng - 0.7, n: near.lat + 0.45, e: near.lng + 0.7, s: near.lat - 0.45 } : HOME_REGION;
+  const vb = [box.w, box.n, box.e, box.s].map((x) => x.toFixed(4)).join(",");
+  const a = await nominatimSearch(`${q}&viewbox=${vb}&bounded=1`).catch(() => []);
+  if (a[0]) return a[0];
+  const b = await nominatimSearch(`${q}&countrycodes=de,at,ch,it,li`).catch(() => []);
+  return b[0] || null;
+}
+const centerOf = (pts) => ({ lat: pts.reduce((s, p) => s + p.lat, 0) / pts.length, lng: pts.reduce((s, p) => s + p.lng, 0) / pts.length });
+// Місце збору поїздки — якщо організатор його вже вказав (47.5, 11.0 —
+// значення нової поїздки «за замовчуванням», на нього не спираємось).
+function meetPointOf(trip) {
+  const la = parseFloat(String((trip && trip.coords && trip.coords.lat) ?? "").replace(",", "."));
+  const ln = parseFloat(String((trip && trip.coords && trip.coords.lng) ?? "").replace(",", "."));
+  if (!Number.isFinite(la) || !Number.isFinite(ln) || (la === 0 && ln === 0) || (la === 47.5 && ln === 11)) return null;
+  return { lat: la, lng: ln };
+}
+// Відповідь сервера на KML-посилання карти My Maps → пояснення.
+function myMapsFailText(r) {
+  const c = r && r.j && r.j.code;
+  if (c === "private") return "Карта My Maps закрита для перегляду за посиланням. У My Maps: «Поділитися» → «Усі, хто має посилання, можуть переглядати» — і спробуй ще раз. Або експортуй карту без галочки «мережеве посилання».";
+  return `${ROUTE_ERR.netlink} ${aiErrorText(r)}`;
+}
 
 function RouteImport({ trip, pin, onApply, onRestore }) {
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState("idle");   // idle | work | preview | applied | error
   const [step, setStep] = useState("");
   const [err, setErr] = useState("");
+  const [errDetail, setErrDetail] = useState("");
   const [gurl, setGurl] = useState("");
   const [d, setD] = useState(null);
   const [startHM, setStartHM] = useState("");
@@ -8590,10 +8797,10 @@ function RouteImport({ trip, pin, onApply, onRestore }) {
   const kind = routeKind(trip);
   const have = (trip.route || []).filter((p) => String(ukOf(p && p.name) || "").trim() !== "").length;
 
-  const analyze = async (getSource) => {
+  const analyze = async (getSource, file) => {
     if (busy.current) return;
     busy.current = true;
-    setPhase("work"); setErr(""); setDone(""); setUndo(null); setD(null);
+    setPhase("work"); setErr(""); setErrDetail(""); setDone(""); setUndo(null); setD(null);
     try {
       setStep("Читаю маршрут…");
       const src = await getSource();
@@ -8601,8 +8808,17 @@ function RouteImport({ trip, pin, onApply, onRestore }) {
       const cum = RT.cumKm(track);
       const total = cum[cum.length - 1];
       if (track.length < 2 || total < 0.2) throw routeFail("short");
-      if (total > 120) throw routeFail("long");
-      const warns = [];
+      const lim = routeLimits(kind);
+      if (total > lim.total) {
+        // Не просто «задовгий», а де саме (v150): найдовший відрізок між
+        // зупинками посилання — скоріше за все, саме він зайвий.
+        let why = `Маршрут вийшов ${fmtKm(total)} км, а для одноденної поїздки межа — ${lim.total} км.`;
+        const leg = src.stops && src.stops.length >= 2 ? RT.longestLeg(src.stops) : null;
+        if (leg && leg.km >= 5) why += ` Найдовший відрізок — між ${stopLabel(leg.from)} і ${stopLabel(leg.to)}: ${fmtKm(leg.km)} км по прямій. Перевір у Google Maps, чи це ті місця.`;
+        else if (!src.stops || !src.stops.length) why += " Можливо, у файлі записано й дорогу поїздом чи кілька днів.";
+        throw routeFail("long", why);
+      }
+      const warns = (src.notes || []).slice();
       let prof;
       if (RT.hasElevation(track)) prof = RT.profileOf(track, cum, 25);
       else {
@@ -8639,11 +8855,31 @@ function RouteImport({ trip, pin, onApply, onRestore }) {
       setWithUrl(Boolean(src.url));
       setPhase("preview");
     } catch (e) {
-      setErr((e && e.text) || ROUTE_ERR[e && e.code] || `Не вдалося прочитати маршрут: ${String((e && e.message) || e).slice(0, 120)}`);
+      const m = routeErrText(e, file);
+      setErr(m.text);
+      setErrDetail(m.detail);
       setPhase("error");
     } finally {
       busy.current = false;
     }
+  };
+
+  // Розібраний маршрут → джерело для analyze. Є лінія — вона; лише
+  // позначені місця — дорога між ними (без явно зайвих, RT.trimStops).
+  const fromParsed = async (p, label, extra = {}) => {
+    const notes = [];
+    if (p.ring) notes.push("Маршрут у файлі намальовано замкненою фігурою — беру її контур як кільце.");
+    if (p.track.length >= 2) return { source: p.format, label, track: p.track, wpts: p.wpts, stops: [], notes, ...extra };
+    const t = RT.trimStops(p.wpts.slice(0, 25), routeLimits(kind).leg);
+    t.dropped.forEach((x) => notes.push(dropNote(x)));
+    setStep("Прокладаю пішохідну дорогу між точками…");
+    const g = await RT.routeThroughStops(t.stops, kind === "bike" ? "bike" : "foot");
+    return { source: "stops", label, track: g.track, wpts: [], stops: t.stops, straight: g.straight, notes, ...extra };
+  };
+  // Посилання Google Maps чи карта My Maps — через сервер (Google не дає
+  // браузеру читати свої сторінки).
+  const askGmaps = async (url) => {
+    try { return await apiJson("/api/fill-trip", { pin: pin || "", mode: "gmaps", url }); } catch { return { status: 0, j: {} }; }
   };
 
   const onFile = (e) => {
@@ -8652,38 +8888,59 @@ function RouteImport({ trip, pin, onApply, onRestore }) {
     if (!f) return;
     analyze(async () => {
       if (f.size > 15 * 1024 * 1024) throw routeFail("big");
-      const text = typeof f.text === "function" ? await f.text() : await new Response(f).text();
-      const p = RT.parseRouteText(text);
-      if (p.track.length >= 2) return { source: p.format, label: p.name || f.name, track: p.track, wpts: p.wpts, stops: [] };
-      // У файлі лише позначені місця без треку — прокладаємо дорогу між ними.
-      setStep("Прокладаю пішохідну дорогу між точками…");
-      const stops = p.wpts.slice(0, 25);
-      const g = await RT.routeThroughStops(stops, kind === "bike" ? "bike" : "foot");
-      return { source: "stops", label: p.name || f.name, track: g.track, wpts: [], stops, straight: g.straight };
-    });
+      // Байти, а не текст: KMZ — це архів, а GPX буває не в UTF-8.
+      const bytes = new Uint8Array(typeof f.arrayBuffer === "function" ? await f.arrayBuffer() : await new Response(f).arrayBuffer());
+      let text;
+      if (RT.isZip(bytes)) { setStep("Розпаковую файл…"); text = await RT.unzipRoute(bytes); }
+      else text = RT.decodeText(bytes);
+      let p;
+      try { p = RT.parseRouteText(text); }
+      catch (err) {
+        if (!(err && err.code === "netlink")) throw err;
+        // У файлі лише посилання на карту My Maps — беремо саму карту.
+        setStep("Беру карту My Maps за посиланням із файлу…");
+        const r = await askGmaps(String(err.href || "").trim().replace(/^http:\/\//i, "https://"));
+        if (r.status !== 200 || !r.j.ok || !r.j.kml) throw Object.assign(routeFail("netlink", myMapsFailText(r)), { info: err.info });
+        p = RT.parseRouteText(r.j.kml);
+      }
+      return fromParsed(p, p.name || f.name);
+    }, f);
   };
   const onGoogle = () => {
     const url = gurl.trim();
-    if (!/^https:\/\//i.test(url)) { setErr("Встав посилання з Google Maps, що починається з https://"); setPhase("error"); return; }
+    if (!/^https:\/\//i.test(url)) { setErr("Встав посилання з Google Maps, що починається з https://"); setErrDetail(""); setPhase("error"); return; }
     analyze(async () => {
       setStep("Читаю посилання Google Maps…");
-      let r = { status: 0, j: {} };
-      try { r = await apiJson("/api/fill-trip", { pin: pin || "", mode: "gmaps", url }); } catch { r = { status: 0, j: {} }; }
+      const r = await askGmaps(url);
       if (r.status !== 200 || !r.j.ok) throw routeFail("gmaps", aiErrorText(r));
-      // Зупинки без координат шукаємо за назвою (Nominatim — не частіше
-      // разу на секунду, так просить OpenStreetMap).
+      // Карта My Maps (v150) — сервер віддає її KML, далі як із файлом.
+      if (r.j.kml) {
+        const p = RT.parseRouteText(r.j.kml);
+        return fromParsed(p, p.name || "карта My Maps", { url });
+      }
+      const notes = [];
+      if (Number(r.j.dropped) > 0) notes.push("«Моє місцезнаходження» з посилання пропущено — це не точка маршруту.");
+      // Зупинки без координат шукаємо за назвою — біля тих, що з
+      // координатами, або біля місця збору (Nominatim — не частіше разу
+      // на секунду, так просить OpenStreetMap).
+      const raw = r.j.stops || [];
+      const known = raw.filter((s) => s.lat != null && s.lng != null);
+      const near = known.length ? centerOf(known) : meetPointOf(tripRef.current);
       const stops = [];
-      let asked = 0;
-      for (const s of r.j.stops || []) {
+      for (const s of raw) {
         if (s.lat != null && s.lng != null) { stops.push(s); continue; }
         if (!s.name) continue;
-        if (asked++ > 0) await sleepMs(1100);
-        try { const g = await geocodeAddress(s.name); if (g && g[0]) stops.push({ ...s, lat: g[0].lat, lng: g[0].lng }); } catch { /* без цієї зупинки */ }
+        setStep(`Шукаю на карті «${String(s.name).slice(0, 40)}»…`);
+        const g = await geocodeNear(s.name, near).catch(() => null);
+        if (g) stops.push({ ...s, lat: g.lat, lng: g.lng });
+        else notes.push(`Зупинку «${s.name}» не знайдено на карті — її пропущено.`);
       }
       if (stops.length < 2) throw routeFail("geo");
+      const t = RT.trimStops(stops, routeLimits(kind).leg);
+      t.dropped.forEach((x) => notes.push(dropNote(x)));
       setStep("Прокладаю пішохідну дорогу між зупинками…");
-      const g = await RT.routeThroughStops(stops, r.j.travel === "bicycling" || kind === "bike" ? "bike" : "foot");
-      return { source: "gmaps", label: "маршрут Google Maps", track: g.track, wpts: [], stops, straight: g.straight, url };
+      const g = await RT.routeThroughStops(t.stops, r.j.travel === "bicycling" || kind === "bike" ? "bike" : "foot");
+      return { source: "gmaps", label: "маршрут Google Maps", track: g.track, wpts: [], stops: t.stops, straight: g.straight, url, notes };
     });
   };
 
@@ -8745,16 +9002,16 @@ function RouteImport({ trip, pin, onApply, onRestore }) {
             <input type="file" style={{ display: "none" }} onChange={onFile} />
           </label>
           <p style={hint}>
-            <b>Komoot:</b> відкрий маршрут → у його меню «GPX» (завантажити файл). <b>Google My Maps:</b> ⋮ → експорт у KML/KMZ, галочка «KML». Підійде й GPX з Bergfex чи Outdooractive.
+            <b>Komoot:</b> відкрий маршрут → у його меню «GPX» (завантажити файл). <b>Google My Maps:</b> ⋮ → «Експортувати в KML/KMZ» (підійде і KML, і KMZ). Підійде й GPX з Bergfex чи Outdooractive.
           </p>
-          <div style={{ fontSize: 12, fontWeight: 800, color: C.ink, margin: "12px 0 6px" }}>або посилання на маршрут у Google Maps</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: C.ink, margin: "12px 0 6px" }}>або посилання на маршрут у Google Maps чи на карту My Maps</div>
           <div style={{ display: "flex", gap: 8 }}>
             <input data-route="gurl" value={gurl} onChange={(e) => setGurl(e.target.value)} placeholder="https://maps.app.goo.gl/…"
               style={{ ...inp, marginBottom: 0, flex: 1, minWidth: 0 }} />
             <button data-route="gread" onClick={onGoogle} disabled={gurl.trim() === ""}
               style={{ ...btn, background: gurl.trim() === "" ? C.greenSoft : C.green, color: gurl.trim() === "" ? C.greenDark : "#fff", border: "none", padding: "0 14px", flexShrink: 0 }}>Прочитати</button>
           </div>
-          <p style={hint}>У Google Maps прокладіть маршрут «пішки» з кількома зупинками → «Поділитися» → «Копіювати посилання».</p>
+          <p style={hint}>У Google Maps прокладіть маршрут «пішки» з кількома зупинками → «Поділитися» → «Копіювати посилання». Починайте зі старту прогулянки, а не з «Мого місцезнаходження». Карта My Maps має бути відкрита «усім, хто має посилання».</p>
         </>
       )}
       {working && (
@@ -8763,6 +9020,7 @@ function RouteImport({ trip, pin, onApply, onRestore }) {
         </div>
       )}
       {phase === "error" && <p data-route="error" style={{ margin: "10px 0 0", fontSize: 12.5, color: C.rasp, lineHeight: 1.5, fontWeight: 600 }}>{err}</p>}
+      {phase === "error" && errDetail && <p data-route="error-detail" style={{ margin: "5px 0 0", fontSize: 11.5, color: C.muted, lineHeight: 1.45 }}>{errDetail}</p>}
       {phase === "preview" && d && tm && (
         <div data-route="preview" style={{ background: "#fff", borderRadius: 12, padding: "12px", marginTop: 2 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: C.greenDark, lineHeight: 1.4 }}>✓ Прочитано: {d.label}</div>
@@ -9015,6 +9273,9 @@ function TripForm({ initial, onSave, onCancel, others, pin }) {
     { k: "forest", n: "Ліс" }, { k: "valley", n: "Долина" },
     { k: "river", n: "Ріка" }, { k: "museum", n: "Музей" },
     { k: "waterfall", n: "Водоспад" }, { k: "bike", n: "Вело" },
+    // v150: не лише природа.
+    { k: "quest", n: "Квест-кімната" }, { k: "boardgames", n: "Настільні ігри" },
+    { k: "market", n: "Ярмарок" },
   ];
 
   // Зберегти можна, коли є назва й КАЛЕНДАРНА дата: підпис дати тепер
@@ -9183,13 +9444,16 @@ function TripForm({ initial, onSave, onCancel, others, pin }) {
             </label>
             <input style={inp} value={t.image} onChange={(e) => set({ image: e.target.value })} placeholder="…або вставте URL фото вручну" />
           </Field>
-          <Field label="Тип місця (іконка для заглушки)">
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          {/* Біля кожної рубрики — її значок (v150): видно, що з'явиться на
+              картці поїздки, поки фото немає. */}
+          <Field label="Рубрика (значок на картці без фото)">
+            <div data-form="place-types" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
               {placeTypes.map((p) => (
-                <button key={p.k} onClick={() => set({ placeType: p.k })} style={{
+                <button key={p.k} data-place={p.k} onClick={() => set({ placeType: p.k })} style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
                   border: `1.5px solid ${t.placeType === p.k ? C.green : C.line}`, background: t.placeType === p.k ? C.greenSoft : "#fff",
-                  color: t.placeType === p.k ? C.greenDark : C.muted, borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                }}>{p.n}</button>
+                  color: t.placeType === p.k ? C.greenDark : C.muted, borderRadius: 10, padding: "8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                }}>{placeIcon(p.k, 16)}{p.n}</button>
               ))}
             </div>
           </Field>
@@ -10348,8 +10612,12 @@ export default function App() {
     );
   }
 
+  // Новорічний сезон (v150): сніг на головному екрані й на сторінці поїздки
+  // (у редакторі — ні, там друкують) і шапочка над «T».
+  const xmas = xmasSeason();
   return (
     <div style={{ minHeight: "100vh", background: C.page, fontFamily: "'Inter', system-ui, sans-serif", color: C.ink }}>
+      {xmas && <Snowfall />}
       <div style={{ maxWidth: 440, margin: "0 auto", background: C.page, minHeight: "100vh", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "relative", zIndex: 1 }}>
         {trip && !(isDraft(trip) && !isAdmin) ? (
@@ -10376,7 +10644,7 @@ export default function App() {
             <div style={{ padding: "calc(26px + env(safe-area-inset-top)) 4px 20px", display: "flex", alignItems: "center", gap: 12 }}>
               <img src={LOGO} alt={t("appName")} style={{ width: 60, height: 60, borderRadius: 14, display: "block", objectFit: "cover", border: "1.5px solid rgba(253,228,70,0.45)", boxShadow: "0 3px 10px rgba(0,0,0,0.18)" }} />
               <div style={{ flex: 1 }}>
-                <h1 style={{ margin: 0, fontSize: 21, fontWeight: 800, letterSpacing: -0.4, color: "#fff" }}>{t("appName")}</h1>
+                <h1 data-hat={xmas ? "1" : undefined} style={{ margin: 0, fontSize: 21, fontWeight: 800, letterSpacing: -0.4, color: "#fff", position: "relative" }}>{xmas ? <XmasName name={t("appName")} /> : t("appName")}</h1>
                 <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,0.75)" }}>{t("appSubtitle")}</p>
               </div>
               {isAdmin && (
