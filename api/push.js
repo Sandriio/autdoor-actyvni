@@ -1,4 +1,12 @@
-// ═══ Tropa Club · api/push.js · ВЕРСІЯ p5 ═══
+// ═══ Tropa Club · api/push.js · ВЕРСІЯ p6 ═══
+// p6 (v153) — перевірка «із заблокованим екраном»: testDevice.delay (до 40 с)
+//      — сервер чекає й лише тоді надсилає тестове на цей телефон. Людина
+//      встигає заблокувати телефон, і тестове приходить так само, як
+//      справжні оголошення: коли застосунок закритий. Звичайна перевірка
+//      йде, поки застосунок відкритий, тож проходила навіть там, де телефон
+//      притримує сповіщення браузера у фоні (23.11: тестове надходило, а
+//      оголошення о 18:00, прийняте сервером Google для всіх 8 телефонів,
+//      на екран організатора не потрапило). Функція може працювати до 60 с.
 // p5 — перевірка сповіщень на ОДНОМУ телефоні (режим testDevice, за PIN):
 //      тестове йде лише на телефон, з якого натиснули, а відповідь каже,
 //      що відповів сервер сповіщень Apple чи Google (201 — прийняв, 410 —
@@ -33,6 +41,9 @@
 // ═══════════════════════════════════════════════════════════════════
 
 import crypto from "crypto";
+
+// Перевірка із заблокованим екраном чекає до 40 с (p6).
+export const config = { maxDuration: 60 };
 
 const b64u = (b) => Buffer.from(b).toString("base64url");
 const fromB64u = (s) => Buffer.from(String(s), "base64url");
@@ -234,6 +245,12 @@ const TEST_MSG = {
   en: { title: "Notification test", body: "Notifications work on this phone." },
   ru: { title: "Проверка уведомлений", body: "Уведомления на этом телефоне работают." },
 };
+// Тестове «із заблокованим екраном» (p6) — прийшло, коли застосунок закритий.
+const TEST_LOCK_MSG = {
+  uk: { title: "Сповіщення доходять і у фоні", body: "Це тестове прийшло, коли застосунок був закритий — оголошення поїздок теж дійдуть." },
+  en: { title: "Notifications reach you in the background", body: "This test arrived while the app was closed — trip announcements will reach you too." },
+  ru: { title: "Уведомления доходят и в фоне", body: "Это тестовое пришло, когда приложение было закрыто, — объявления поездок тоже дойдут." },
+};
 
 async function sb(fn, body) {
   const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
@@ -372,12 +389,16 @@ export default async function handler(req, res) {
       const list = Array.isArray(subs) ? subs : [];
       const sub = list.find((x) => x && x.endpoint === endpoint);
       if (!sub) { res.status(200).json({ test: true, sent: 0, note: "not in db", total: list.length }); return; }
-      const payload = JSON.stringify({ ...TEST_MSG[langOf(sub.lang)], url: "/", tag: "test" });
+      // p6: затримка — щоб людина встигла заблокувати телефон.
+      const delay = Math.max(0, Math.min(40, Math.round(Number(testDevice.delay) || 0)));
+      if (delay) await new Promise((ok) => setTimeout(ok, delay * 1000));
+      const payload = JSON.stringify({ ...(delay ? TEST_LOCK_MSG : TEST_MSG)[langOf(sub.lang)], url: "/", tag: delay ? "test-lock" : "test" });
       let r = { ok: false, status: 0, gone: false, reason: "" }, err = "";
       try { r = await sendOne(sub, payload); } catch (e) { err = String((e && e.message) || e).slice(0, 160); }
       if (r.gone) await sb("push_unsubscribe", { p_endpoint: endpoint }).catch(() => {});
       res.status(200).json({
         test: true, sent: r.ok ? 1 : 0, status: Number(r.status) || 0, gone: Boolean(r.gone), service: serviceOf(endpoint),
+        ...(delay ? { delay, sentAt: new Date().toISOString() } : {}),
         ...(r.reason ? { reason: r.reason } : {}), ...(err ? { error: err } : {}),
       });
       return;
