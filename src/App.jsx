@@ -1,4 +1,4 @@
-// ═══ Tropa Club · App.jsx · ВЕРСІЯ v152 ═══
+// ═══ Tropa Club · App.jsx · ВЕРСІЯ v153 ═══
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   MapPin, Clock, Cloud, Coffee, Mountain, Train, ChevronRight,
@@ -28,7 +28,7 @@ const LANGS = [
 const SIGNUP_TELEGRAM = "@Sku_la";
 // Позначка версії — біля напису ОРГАНІЗАТОР, щоб одразу було видно,
 // чи на сайті свіжа збірка.
-const APP_VERSION = "v152";
+const APP_VERSION = "v153";
 
 // ── Анімації (v146) ──────────────────────────────────────────────────
 // Сторінка поїздки виїжджає знизу, головний екран і вкладки з'являються
@@ -355,15 +355,30 @@ async function pushSendMsgs(pin, msgs, tag, url) {
 // Тестове сповіщення лише на ЦЕЙ телефон (api/push.js p5; v149). У запиті
 // свідомо немає тексту: старий сервер (p4) цього режиму не знає й з текстом
 // розіслав би тестове всій групі; без тексту він просто відмовляє.
-async function pushTestDevice(pin, endpoint) {
+// delay (v153, api/push.js p6) — сервер чекає стільки секунд і лише тоді
+// надсилає: людина встигає заблокувати телефон.
+async function pushTestDevice(pin, endpoint, delay = 0) {
   const r = await fetch("/api/push", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pin, testDevice: { endpoint } }),
+    body: JSON.stringify({ pin, testDevice: delay ? { endpoint, delay } : { endpoint } }),
   });
   const j = await r.json().catch(() => ({}));
   if (r.status === 400 && j && j.error === "no title") return { old: true };
   if (!r.ok) throw new Error((j && j.error) || `сервер відповів ${r.status}`);
   return j || {};
+}
+// Яким браузером відкрито застосунок — щоб підказати, ЯКИЙ додаток у
+// налаштуваннях телефона дозволити (v153).
+function browserName() {
+  const ua = (typeof navigator !== "undefined" && navigator.userAgent) || "";
+  if (/SamsungBrowser/i.test(ua)) return "Samsung Internet";
+  if (/EdgA|Edg\//i.test(ua)) return "Microsoft Edge";
+  if (/OPR\/|Opera/i.test(ua)) return "Opera";
+  if (/Firefox|FxiOS/i.test(ua)) return "Firefox";
+  if (typeof navigator !== "undefined" && navigator.brave) return "Brave";
+  if (/Chrome|CriOS/i.test(ua)) return "Chrome";
+  if (/Safari/i.test(ua)) return "Safari";
+  return "браузер";
 }
 // Що означає відмова сервера сповіщень — словами, з яких видно, що робити.
 function pushFailText(r) {
@@ -6792,6 +6807,62 @@ function PushDiagnostics({ pin, trip }) {
     } finally { setBusy(false); }
   };
 
+  // Перевірка із заблокованим екраном (v153, api/push.js p6). Звичайна
+  // перевірка йде, поки застосунок відкритий, — а справжні оголошення
+  // приходять, коли телефон лежить заблокований. 23.11 тестове надходило,
+  // а оголошення о 18:00 (сервер Google прийняв для всіх 8 телефонів) на
+  // екран організатора не потрапило: так буває, коли телефон «присипляє»
+  // браузер у фоні. Тут сервер чекає 30 с — людина встигає заблокувати
+  // телефон, — і тестове приходить точно як справжнє.
+  const LOCK_DELAY = 30;
+  const lockTest = async () => {
+    setBusy(true); setState(""); setCheck("");
+    const L = [];
+    const say = (line) => { L.push(line); setCheck(L.join("\n")); };
+    const bn = browserName();
+    const fixSteps = () => {
+      if (isIOS()) {
+        say("Не прийшло — iPhone не показує сповіщення на заблокованому екрані:");
+        say("1. Параметри → Сповіщення → Tropa Club: дозволити, «Заблокований екран», «Банери».");
+        say("2. Режим «Фокус» чи «Не турбувати» вимкнено (або Tropa Club серед дозволених).");
+      } else {
+        say(`Не прийшло — телефон «присипляє» ${bn} у фоні й притримує його сповіщення. Виправ у налаштуваннях телефона:`);
+        say(`1. Налаштування → Додатки → ${bn} → Батарея → «Без обмежень».`);
+        say(`2. Там само → Сповіщення → дозволити (і для сайту tropa-club.vercel.app).`);
+        say("3. Якщо Tropa Club стоїть окремою іконкою як застосунок — ті самі два пункти й для «Tropa Club».");
+        say(`4. Режим енергозбереження вимкнено або ${bn} у винятках.`);
+      }
+      say("Потім натисни цю перевірку ще раз.");
+    };
+    try {
+      if (isIOS() && !isStandalone()) { say("✗ На iPhone сповіщення працюють лише в застосунку, відкритому з іконки на початковому екрані, — не у вкладці Safari."); return; }
+      if (!pushSupported()) { say("✗ Цей браузер не підтримує сповіщень."); return; }
+      if (Notification.permission !== "granted") { say("✗ Спершу натисни «Перевірити сповіщення на цьому телефоні» — вона скаже, що з дозволом."); return; }
+      await pushRegister();
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (!sub) { say("✗ На цьому телефоні немає підписки. Спершу натисни «Перевірити сповіщення на цьому телефоні» — вона створить нову."); return; }
+      await pushSave(sub.toJSON(), CURRENT_LANG).catch(() => {});
+      say(`Заблокуй телефон кнопкою живлення ЗАРАЗ і не відкривай його ${LOCK_DELAY} секунд.`);
+      say("Тоді на заблокованому екрані має з'явитися «Сповіщення доходять і у фоні».");
+      let r;
+      try { r = await pushTestDevice(pin, sub.endpoint, LOCK_DELAY); }
+      catch (e) { r = { lost: true }; }
+      say("");
+      if (r.old || (r.sent && !r.delay)) { say("✗ На сервері ще стара версія api/push.js (тестове пішло одразу, без очікування) — завантаж у папку api файл push.js (p6) з v153."); return; }
+      if (r.lost) say("Відповіді сервера не дочекався — телефон був заблокований, це нормально.");
+      else if (r.sent) {
+        const at = r.sentAt ? new Date(r.sentAt).toLocaleTimeString("uk-UA", { timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
+        say(`Сервер надіслав тестове${at ? ` о ${at}` : ""} — сервер сповіщень${r.service ? ` ${r.service}` : ""} прийняв (відповідь ${r.status}).`);
+      } else { say(`✗ ${pushFailText(r)}`); return; }
+      // Чи з'явилось — знає лише людина, тож обидва випадки словами.
+      say("Прийшло на заблокований екран — усе гаразд: оголошення теж доходять.");
+      fixSteps();
+    } catch (e) {
+      say("✗ Не вдалося перевірити: " + String((e && e.message) || e).slice(0, 200));
+    } finally { setBusy(false); }
+  };
+
   const test = async () => {
     if (!window.confirm("Надіслати тестове сповіщення ВСІМ, хто ввімкнув сповіщення?\n\nЩоб перевірити лише свій телефон, є кнопка «Перевірити сповіщення на цьому телефоні».")) return;
     setBusy(true); setState(""); setCheck("");
@@ -6934,6 +7005,12 @@ function PushDiagnostics({ pin, trip }) {
         style={{ width: "100%", border: "none", background: busy ? C.greenSoft : C.green, color: busy ? C.greenDark : "#fff", borderRadius: 10, padding: "12px", fontSize: 12.5, fontWeight: 800, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
         {busy ? "Перевіряю…" : "Перевірити сповіщення на цьому телефоні"}
       </button>
+      {/* Перевірка із заблокованим екраном (v153): тестове приходить так
+          само, як справжні оголошення, — коли застосунок закритий. */}
+      <button data-push="locktest" onClick={lockTest} disabled={busy}
+        style={{ width: "100%", marginTop: 9, border: `1.5px solid ${C.green}`, background: busy ? C.greenSoft : "#fff", color: C.greenDark, borderRadius: 10, padding: "11px", fontSize: 12.5, fontWeight: 800, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+        {busy ? "Чекаю…" : "Перевірити із заблокованим екраном (30 с)"}
+      </button>
       {check !== "" && (
         <pre data-push="result" style={{ background: "#fff", border: `1px solid ${/^✓/m.test(check) ? C.green : /^✗/m.test(check) ? C.rasp : C.line}`, borderRadius: 10, padding: 11, fontSize: 11.5, color: C.ink, lineHeight: 1.55, whiteSpace: "pre-wrap", fontFamily: "inherit", margin: "9px 0 0" }}>{check}</pre>
       )}
@@ -6954,12 +7031,23 @@ function PushDiagnostics({ pin, trip }) {
         const at = autoOpenMoment(trip);
         const tonight = at && at.getTime() <= Date.now();
         const day = at ? `${String(at.getDate()).padStart(2, "0")}.${String(at.getMonth() + 1).padStart(2, "0")}` : "";
+        // Уже пішло за розкладом (v153): журнал цієї поїздки має рядок
+        // «open:…» — тоді не обіцяємо «піде сьогодні», а кажемо, коли пішло
+        // й скільки телефонів прийняли.
+        const sentOpen = Array.isArray(journal) ? journal.find((j) => /^open:/.test(String(j.key || ""))) : null;
+        const sentLine = sentOpen ? (() => {
+          const w = new Date(sentOpen.sent_at).toLocaleString("uk-UA", { timeZone: "Europe/Berlin", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+          const n = Number(sentOpen.sent) || 0;
+          return `Автоматичне «набір відкрито» вже надіслано ${w.replace(",", " о")}${n ? ` — сервери сповіщень прийняли для ${n} ${n % 10 === 1 && n % 100 !== 11 ? "телефона" : "телефонів"}` : ""}. Повторно кнопкою не надішлеш: група не отримає його двічі.`;
+        })() : "";
         return (
           <div data-push="open-hint" style={{ marginTop: 10, border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, background: "#fff" }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: C.ink, marginBottom: 6 }}>Нова поїздка</div>
-            <p style={{ fontSize: 11.5, color: draft ? C.rasp : C.muted, lineHeight: 1.5, margin: "0 0 9px" }}>
+            <p style={{ fontSize: 11.5, color: draft ? C.rasp : sentOpen ? C.greenDark : C.muted, lineHeight: 1.5, margin: "0 0 9px" }}>
               {draft
                 ? "Поїздка ще в розробці. Спершу опублікуй і збережи її: сповіщення містить назву, тож надіслане зараз розкрило б чернетку."
+                : sentOpen
+                ? sentLine
                 : tonight
                   ? "Автоматичне «набір відкрито» піде сьогодні до опівночі — годинник перевіряє кожні 15 хвилин. Якщо вже надсилалось, повтору не буде."
                   : at
